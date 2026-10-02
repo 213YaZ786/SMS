@@ -1,0 +1,43 @@
+# Once a week: is there a newer chatmail core than the one the app is
+# built with? If so, an issue says which, with the SHA-256 of its two
+# Android builds, so it can be tried, tested and pinned. Nothing changes
+# by itself: a new engine is tested before it reaches anyone.
+name: Chatmail core
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Compare with the newest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pinned=$(grep -oP 'val chatmailVersion = "\K[0-9.]+' app/build.gradle.kts)
+          latest=$(gh release view -R chatmail/core --json tagName -q .tagName | sed 's/^v//')
+          echo "pinned $pinned, latest $latest"
+          newest=$(printf '%s\n%s\n' "$pinned" "$latest" | sort -V | tail -1)
+          if [ "$latest" = "$pinned" ] || [ "$newest" = "$pinned" ]; then exit 0; fi
+          title="chatmail core $latest is out (the app uses $pinned)"
+          if gh issue list --state open --search "\"$title\" in:title" --json number -q '.[0].number' | grep -q .; then exit 0; fi
+          sums=""
+          for abi in arm64-v8a armeabi-v7a; do
+            name="deltachat-rpc-server-$abi-android"
+            curl -fsSL -o "$name" "https://github.com/chatmail/core/releases/download/v$latest/$name"
+            sums="$sums- $abi: \`$(sha256sum "$name" | cut -d' ' -f1)\`"$'\n'
+          done
+          body="Release notes: https://github.com/chatmail/core/releases/tag/v$latest"$'\n\n'"SHA-256 of the Android builds:"$'\n'"$sums"$'\n'"To try it: set chatmailVersion and these sums in app/build.gradle.kts, then test the encrypted chat before releasing."
+          gh issue create --title "$title" --body "$body"
