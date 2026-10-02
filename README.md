@@ -2,9 +2,14 @@
 
 A messaging app for Android. No account, no tracking, no ads.
 
-- Your conversations, with the people still waiting for an answer on top.
-- Reply from the notification, copy a received code in one tap.
-- Pin, archive, search; links opened without their trackers.
+- Your conversations: people first, banks, deliveries and codes folded
+  apart, the people still waiting for an answer on top.
+- The last code received always at hand, copied in one tap.
+- Long press a conversation to read and answer it without opening it;
+  swipe a message to answer it.
+- Photos, videos and group messages (MMS).
+- Reply from the notification; pin, archive, search; links opened
+  without their trackers.
 - Light and dark themes in your wallpaper's colours.
 
 ## Install
