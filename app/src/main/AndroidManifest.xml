@@ -78,6 +78,16 @@
             </intent-filter>
         </activity>
 
+        <!-- A conversation in a floating bubble. -->
+        <activity
+            android:name=".BubbleActivity"
+            android:exported="false"
+            android:allowEmbedded="true"
+            android:documentLaunchMode="always"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Sms" />
+
         <!-- A new SMS. Only the system may deliver it. -->
         <receiver
             android:name=".core.sms.SmsReceiver"

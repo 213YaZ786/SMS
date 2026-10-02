@@ -66,6 +66,35 @@ class MessageNotifier(private val context: Context) {
                     .setContentTitle(if (unread.size == 1) "New message" else "${unread.size} new messages")
                     .build()
             )
+        // A conversation of Android's own, so it can float as a bubble.
+        val shortcut = "thread_$threadId"
+        runCatching {
+            androidx.core.content.pm.ShortcutManagerCompat.pushDynamicShortcut(
+                context,
+                androidx.core.content.pm.ShortcutInfoCompat.Builder(context, shortcut)
+                    .setShortLabel(name)
+                    .setLongLived(true)
+                    .setPerson(sender)
+                    .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(context, R.mipmap.ic_launcher))
+                    .setIntent(
+                        Intent(context, MainActivity::class.java).setAction(MainActivity.ACTION_THREAD)
+                            .putExtra(MainActivity.EXTRA_THREAD, threadId).putExtra(MainActivity.EXTRA_ADDRESS, address)
+                    )
+                    .build()
+            )
+            builder.setShortcutId(shortcut)
+            builder.setBubbleMetadata(
+                NotificationCompat.BubbleMetadata.Builder(
+                    PendingIntent.getActivity(
+                        context, threadId.toInt(),
+                        Intent(context, com.sms.app.BubbleActivity::class.java)
+                            .putExtra(MainActivity.EXTRA_THREAD, threadId).putExtra(MainActivity.EXTRA_ADDRESS, address),
+                        PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                    ),
+                    androidx.core.graphics.drawable.IconCompat.createWithResource(context, R.mipmap.ic_launcher)
+                ).setDesiredHeight(640).build()
+            )
+        }
         if (code != null) {
             builder.addAction(
                 NotificationCompat.Action.Builder(null, "Copy $code", action(NotificationActions.ACTION_COPY, threadId, address, code)).build()

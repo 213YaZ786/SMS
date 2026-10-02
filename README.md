@@ -10,8 +10,12 @@ A messaging app for Android. No account, no tracking, no ads.
 - Photos, videos and group messages (MMS).
 - Encrypted chat with other SMS users: read receipts, reactions, photos
   in full quality, found by their phone number; SMS for everyone else.
-- Reply from the notification; pin, archive, search; links opened
-  without their trackers.
+- Reply from the notification or from a floating bubble; pin, archive,
+  search; links opened without their trackers.
+- A few seconds to take a message back; hold Send to send it later;
+  swipe a conversation left to have it back later.
+- Parcel numbers and appointments found in messages, copied or added to
+  the calendar in one tap; a vibration of their own for chosen people.
 - Light and dark themes in your wallpaper's colours.
 
 ## Install
