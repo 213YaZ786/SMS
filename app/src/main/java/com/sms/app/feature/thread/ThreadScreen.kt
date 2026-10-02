@@ -293,7 +293,7 @@ private fun Bubble(m: Message, last: Boolean, onRetry: () -> Unit, onDelete: () 
             Spacer(Modifier.height(6.dp))
             FloatingPane(shape = CircleShape, accent = true, onClick = {
                 haptics.done()
-                copy(context, "Code", code)
+                copy(context, "Code", code, sensitive = true)
             }) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
                     Icon(AppIcons.Copy, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -320,8 +320,11 @@ private fun Bubble(m: Message, last: Boolean, onRetry: () -> Unit, onDelete: () 
     }
 }
 
-private fun copy(context: android.content.Context, label: String, text: String) {
-    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText(label, text))
+private fun copy(context: android.content.Context, label: String, text: String, sensitive: Boolean = false) {
+    val clip = ClipData.newPlainText(label, text)
+    // A code stays out of the clipboard's preview and history where Android offers it.
+    if (sensitive) clip.description.extras = android.os.PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
+    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
 }
 
 /** The text with its web links tappable, each opened cleaned of trackers. */
