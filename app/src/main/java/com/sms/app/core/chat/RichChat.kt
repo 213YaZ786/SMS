@@ -116,16 +116,20 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     /** How long messages last in each chat, in seconds, as last heard. */
     private val timers = java.util.concurrent.ConcurrentHashMap<Int, Int>()
 
-    /** The engine's word first, the last one heard when it cannot answer. */
-    private suspend fun timerOf(chat: Int): Int =
-        runCatching { engine.call("get_chat_ephemeral_timer", account, chat).jsonPrimitive.int }.getOrNull()?.also { timers[chat] = it }
-            ?: timers[chat] ?: 0
-
-    /** A message's countdown from now, when its chat makes messages vanish. */
-    private suspend fun counted(ref: RichRef): RichRef {
-        val t = timerOf(ref.chat)
-        return if (t > 0) ref.copy(vanishAt = System.currentTimeMillis() + t * 1000L, vanishFor = t) else ref
+    /**
+     * When the engine will delete a message, as it says itself: its timer
+     * and, once the countdown has started (sent, or read when received),
+     * the moment it ends.
+     */
+    private suspend fun withExpiry(msgId: Int, ref: RichRef): RichRef {
+        val info = runCatching { engine.call("get_message_info_object", account, msgId).jsonObject }.getOrNull() ?: return ref
+        val duration = (info["ephemeralTimer"] as? JsonObject)?.get("duration")?.jsonPrimitive?.intOrNull ?: return ref.copy(vanishAt = 0, vanishFor = 0)
+        val at = info["ephemeralTimestamp"]?.jsonPrimitive?.longOrNull ?: 0L
+        return ref.copy(vanishAt = at * 1000, vanishFor = duration)
     }
+
+    /** Messages whose countdown was asked of the engine in this run. */
+    private val expiryKnown = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<Int, Boolean>())
 
     /** Bumped on every change of the chats, for open screens to read again. */
     private val _changes = MutableStateFlow(0)
@@ -161,6 +165,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             engine.call("start_io", account)
             _ready.value = true
             scope.launch { backUp() }
+            scope.launch { prune() }
             _status.value = "Connected"
         }.onFailure { error ->
             _status.value = "Not connected"
@@ -198,6 +203,21 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                 return
             }
         }
+    }
+
+    /**
+     * Forgets the chat side of messages no longer in Android's store
+     * (deleted here), before their number is given to another message.
+     */
+    suspend fun prune() = withContext(Dispatchers.IO) {
+        val gone = _refs.value.filter { (_, r) ->
+            val uri = Uri.parse(if (r.mms) "content://mms/${r.id}" else "content://sms/${r.id}")
+            runCatching { context.contentResolver.query(uri, arrayOf("_id"), null, null, null)?.use { it.count == 0 } }.getOrNull() ?: false
+        }.keys
+        if (gone.isEmpty()) return@withContext
+        val updated = _refs.value - gone
+        _refs.value = updated
+        runCatching { refsFile.writeTextAtomically(json.encodeToString(updated)) }
     }
 
     /** One more relay for the profile, chosen by hand. */
@@ -386,9 +406,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             if (attachments.isEmpty()) {
                 val id = engine.call("send_msg", account, chatId, mapOf("text" to text, "quotedText" to quote)).jsonPrimitive.int
                 if (phones.size == 1) {
-                    SmsStore.saveSending(context, phone, text)?.let { saveRef(id, counted(RichRef(false, it, mine = true, chat = chatId))) }
+                    SmsStore.saveSending(context, phone, text)?.let { saveRef(id, withExpiry(id, RichRef(false, it, mine = true, chat = chatId))) }
                 } else {
-                    MmsStore.saveSendingParts(context, phones, text, null, null)?.let { saveRef(id, counted(RichRef(true, it, mine = true, chat = chatId))) }
+                    MmsStore.saveSendingParts(context, phones, text, null, null)?.let { saveRef(id, withExpiry(id, RichRef(true, it, mine = true, chat = chatId))) }
                 }
             } else {
                 attachments.forEachIndexed { i, a ->
@@ -406,7 +426,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                         "send_msg", account, chatId,
                         mapOf("text" to caption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (i == 0) quote else null)
                     ).jsonPrimitive.int
-                    MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy.readBytes())?.let { saveRef(id, counted(RichRef(true, it, mine = true, chat = chatId))) }
+                    MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy.readBytes())?.let { saveRef(id, withExpiry(id, RichRef(true, it, mine = true, chat = chatId))) }
                     // The engine keeps its own copy.
                     copy.parentFile?.deleteRecursively()
                 }
@@ -427,8 +447,15 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         runCatching {
             val ids = engine.call("get_message_ids", account, chatId, false, false).jsonArray.map { it.jsonPrimitive.int }
             if (ids.isNotEmpty()) engine.call("markseen_msgs", account, ids)
-            // Read now: the received ones of a vanishing chat start their countdown.
-            ids.forEach { id -> _refs.value[id]?.takeIf { !it.mine && it.vanishAt == 0L }?.let { ref -> counted(ref.copy(chat = chatId)).takeIf { it.vanishAt > 0 }?.let { saveRef(id, it) } } }
+            // Read now: the received ones of a vanishing chat start their
+            // countdown; the engine says when each one ends.
+            ids.takeLast(60).forEach { id ->
+                val ref = _refs.value[id] ?: return@forEach
+                if (ref.vanishAt > 0 && id in expiryKnown) return@forEach
+                val now = withExpiry(id, ref.copy(chat = chatId))
+                if (now.vanishAt > 0 || ref.vanishAt == 0L) expiryKnown += id
+                if (now != ref) saveRef(id, now)
+            }
         }
     }
 
@@ -549,7 +576,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     }
 
     private fun saveRef(msgId: Int, ref: RichRef) {
-        val updated = _refs.value + (msgId to ref)
+        // Android reuses a deleted message's number: the newest message holding it wins.
+        val updated = _refs.value.filterNot { (id, r) -> id != msgId && r.mms == ref.mms && r.id == ref.id } + (msgId to ref)
         _refs.value = updated
         runCatching { refsFile.writeTextAtomically(json.encodeToString(updated)) }
     }

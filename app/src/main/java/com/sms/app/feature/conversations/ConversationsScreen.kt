@@ -85,6 +85,8 @@ import org.koin.compose.koinInject
 @Composable
 fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String) -> Unit) {
     val messages: Messages = koinInject()
+    val chat: com.sms.app.core.chat.RichChat = koinInject()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val book: PhoneBook = koinInject()
     val store: SettingsStore = koinInject()
     // Read again on each return: the role may have been given meanwhile.
@@ -215,7 +217,12 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             onRead = { messages.markRead(c.threadId) },
             onLater = { setAside = c },
             onDelete = {
-                messages.delete(c.threadId)
+                val gone = messages.delete(c.threadId)
+                // The chat side of its messages goes too, before their numbers are reused.
+                scope.launch {
+                    gone.join()
+                    chat.prune()
+                }
                 store.update { s -> s.copy(pinned = s.pinned - c.threadId, archived = s.archived - c.threadId) }
             }
         )

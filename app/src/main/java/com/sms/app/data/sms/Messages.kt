@@ -253,13 +253,13 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
         scope.launch(Dispatchers.IO) { markRead(context, threadId) }
     }
 
-    fun delete(threadId: Long) {
+    fun delete(threadId: Long) = run {
         scope.launch(Dispatchers.IO) {
             runCatching { context.contentResolver.delete(Uri.withAppendedPath(Telephony.Threads.CONTENT_URI, threadId.toString()), null, null) }
         }
     }
 
-    fun deleteMessage(message: Message) {
+    fun deleteMessage(message: Message) = run {
         val base = if (message.mms) Telephony.Mms.CONTENT_URI else Telephony.Sms.CONTENT_URI
         scope.launch(Dispatchers.IO) {
             runCatching { context.contentResolver.delete(Uri.withAppendedPath(base, message.id.toString()), null, null) }

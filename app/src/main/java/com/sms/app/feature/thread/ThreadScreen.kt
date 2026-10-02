@@ -352,7 +352,13 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                                 scope.launch(Dispatchers.IO) { SmsSender.retry(context, row.message.id, row.message.address, row.message.body, row.message.subId) }
                             }
                         },
-                        onDelete = { messages.deleteMessage(row.message) },
+                        onDelete = {
+                            val gone = messages.deleteMessage(row.message)
+                            scope.launch {
+                                gone.join()
+                                chat.prune()
+                            }
+                        },
                         onQuote = { quote = row.message.body.ifBlank { com.sms.app.core.mms.mediaWord(row.message.parts.firstOrNull()?.contentType) } },
                         onEdit = { id -> editing = id to row.message.body },
                         onDeleteForAll = { id -> scope.launch { if (!chat.deleteForAll(id)) haptics.reject() } },
@@ -390,28 +396,33 @@ private fun rowsOf(list: List<Message>): List<Row> {
 @Composable
 private fun PersonPill(title: String, address: String, contactId: Long?, group: Boolean, vanish: Int?, onVanish: (Int) -> Unit) {
     val context = LocalContext.current
-    val menu = rememberPillMenu()
+    val haptics = rememberHaptics()
+    var menuOpen by remember { mutableStateOf(false) }
+    var pillBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     var blocked by remember(address) { mutableStateOf(NumberActions.isBlocked(context, address)) }
     var confirmBlock by remember { mutableStateOf(false) }
     var choosingSignature by remember { mutableStateOf(false) }
     if (choosingSignature) SignatureDialog(address) { choosingSignature = false }
     var choosingVanish by remember { mutableStateOf(false) }
     if (choosingVanish && vanish != null) VanishDialog(vanish, onPick = onVanish) { choosingVanish = false }
-    Box(Modifier.then(menu.tracker)) {
-        FloatingPane(shape = CircleShape, onClick = menu::open) {
+    Box(Modifier.onGloballyPositioned { pillBounds = it.boundsInWindow() }) {
+        FloatingPane(shape = CircleShape, onClick = {
+            haptics.firm()
+            menuOpen = true
+        }) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
         }
         val digits = !group && address.count(Char::isDigit) >= 3
-        PillMenu(
-            menu,
+        if (menuOpen) PaletteMenu(
+            pillBounds,
             listOfNotNull(
-                if (digits && NumberActions.canShowCalls(context)) PillItem(AppIcons.Recents, "Calls", PillMotion.BOUNCE) { NumberActions.showCalls(context, address) } else null,
-                if (contactId != null) PillItem(AppIcons.Person, "Contact", PillMotion.BOUNCE) { NumberActions.openContact(context, contactId) }
-                else if (digits) PillItem(AppIcons.PersonAdd, "Add to contacts", PillMotion.BOUNCE) { NumberActions.addContact(context, address) } else null,
-                if (!group) PillItem(AppIcons.Copy, "Copy number", PillMotion.BOUNCE) { NumberActions.copy(context, address) } else null,
-                if (!group) PillItem(AppIcons.Vibration, "Vibration", PillMotion.WIGGLE) { choosingSignature = true } else null,
-                if (vanish != null) PillItem(AppIcons.Timer, "Vanishing messages", PillMotion.BOUNCE) { choosingVanish = true } else null,
-                if (!group && NumberActions.canBlock(context)) PillItem(AppIcons.Block, if (blocked) "Unblock" else "Block", PillMotion.DROP) {
+                if (digits && NumberActions.canShowCalls(context)) MessageAction(AppIcons.Recents, "Calls") { NumberActions.showCalls(context, address) } else null,
+                if (contactId != null) MessageAction(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
+                else if (digits) MessageAction(AppIcons.PersonAdd, "Add to contacts") { NumberActions.addContact(context, address) } else null,
+                if (!group) MessageAction(AppIcons.Copy, "Copy number") { NumberActions.copy(context, address) } else null,
+                if (!group) MessageAction(AppIcons.Vibration, "Vibration") { choosingSignature = true } else null,
+                if (vanish != null) MessageAction(AppIcons.Timer, "Vanishing") { choosingVanish = true } else null,
+                if (!group && NumberActions.canBlock(context)) MessageAction(AppIcons.Block, if (blocked) "Unblock" else "Block", danger = !blocked) {
                     if (blocked) {
                         NumberActions.unblock(context, address)
                         blocked = NumberActions.isBlocked(context, address)
@@ -419,7 +430,8 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
                         confirmBlock = true
                     }
                 } else null
-            )
+            ),
+            onDismiss = { menuOpen = false }
         )
     }
     if (confirmBlock) {
@@ -479,7 +491,8 @@ private fun Bubble(
         }
     }
     val ringAccent = MaterialTheme.colorScheme.primary
-    val ringGround = MaterialTheme.colorScheme.surfaceContainerHighest
+    val ringGround = MaterialTheme.colorScheme.surface
+    val ringTrack = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
     var confirmDeleteAll by remember { mutableStateOf(false) }
     if (confirmDeleteAll && chatId != null) {
         ZoneAlertDialog(
@@ -597,6 +610,7 @@ private fun Bubble(
                             val r = 9.dp.toPx()
                             val c = androidx.compose.ui.geometry.Offset(size.width - r * 0.6f, r * 0.6f)
                             drawCircle(ringGround, radius = r, center = c)
+                            drawCircle(ringTrack, radius = r * 0.7f, center = c, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
                             drawArc(
                                 ringAccent, startAngle = -90f, sweepAngle = 360f * left, useCenter = false,
                                 topLeft = c - androidx.compose.ui.geometry.Offset(r * 0.7f, r * 0.7f),

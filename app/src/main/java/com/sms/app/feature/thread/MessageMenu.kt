@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -28,6 +27,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -152,35 +153,102 @@ fun MessageMenu(
                 }
             }
 
-            ZoneSurface(
-                shape = RoundedCornerShape(22.dp),
-                shadowElevation = 6.dp,
-                modifier = Modifier
-                    .offset { IntOffset(xFor(listSize.width), listY) }
-                    .widthIn(min = 200.dp, max = 280.dp)
+            Palette(
+                actions,
+                onDismiss,
+                Modifier
+                    .offset { IntOffset(if (mine) (window.width - edge - listSize.width).coerceAtLeast(edge) else edge, listY) }
+                    .width(with(density) { (window.width - 2 * edge).toDp() }.coerceAtMost(420.dp))
                     .onSizeChanged { listSize = it }
-                    .popIn(1)
-            ) {
-                Column(Modifier.padding(vertical = 6.dp)) {
-                    actions.forEach { action ->
+            )
+        }
+    }
+}
+
+/**
+ * The actions as a palette: a pane of glass with a tile for each, the
+ * icon over its word, four to a line, rising one by one. Nothing scrolls,
+ * everything reads at a glance; what takes something away is in red.
+ */
+@Composable
+fun Palette(actions: List<MessageAction>, onDismiss: () -> Unit, modifier: Modifier) {
+    val haptics = rememberHaptics()
+    ZoneSurface(shape = RoundedCornerShape(26.dp), shadowElevation = 6.dp, modifier = modifier.popIn(1)) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            actions.chunked(4).forEachIndexed { line, four ->
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    four.forEachIndexed { i, action ->
+                        val rise = remember { Animatable(1f) }
+                        LaunchedEffect(Unit) {
+                            delay(30L * (line * 4 + i))
+                            rise.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 500f))
+                        }
                         val tint = if (action.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                        Row(
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        Column(
+                            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
                             modifier = Modifier
-                                .clickable {
+                                .weight(1f)
+                                .graphicsLayer {
+                                    translationY = rise.value * 8.dp.toPx()
+                                    alpha = 1f - rise.value
+                                }
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable(onClickLabel = action.label) {
                                     haptics.tick()
                                     onDismiss()
                                     action.run()
                                 }
-                                .padding(horizontal = 18.dp, vertical = 12.dp)
+                                .padding(vertical = 10.dp, horizontal = 2.dp)
                         ) {
-                            Icon(action.icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(14.dp))
-                            Text(action.label, style = MaterialTheme.typography.bodyLarge, color = tint)
+                            Icon(action.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                action.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = tint,
+                                maxLines = 2,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
                         }
                     }
+                    repeat(4 - four.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
+        }
+    }
+}
+
+/**
+ * A palette under something tapped (the name at the top of a
+ * conversation), over a veil that closes it.
+ */
+@Composable
+fun PaletteMenu(bounds: Rect, actions: List<MessageAction>, onDismiss: () -> Unit) {
+    val density = LocalDensity.current
+    val edge = with(density) { 12.dp.roundToPx() }
+    val gap = with(density) { 10.dp.roundToPx() }
+    Popup(
+        popupPositionProvider = remember { Whole },
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true, clippingEnabled = false)
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.18f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
+        ) {
+            var window by remember { mutableStateOf(IntSize.Zero) }
+            Box(Modifier.fillMaxSize().onSizeChanged { window = it })
+            var size by remember { mutableStateOf(IntSize.Zero) }
+            Palette(
+                actions,
+                onDismiss,
+                Modifier
+                    .offset { IntOffset(((window.width - size.width) / 2).coerceAtLeast(edge), bounds.bottom.roundToInt() + gap) }
+                    .width(with(density) { (window.width - 2 * edge).toDp() }.coerceAtMost(420.dp))
+                    .onSizeChanged { size = it }
+            )
         }
     }
 }
