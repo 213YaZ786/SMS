@@ -66,7 +66,12 @@ data class RichRef(
     val edited: Boolean = false,
     val pinned: Boolean = false,
     /** Ours: we may edit it or delete it for everyone. */
-    val mine: Boolean = false
+    val mine: Boolean = false,
+    /** The chat it belongs to. */
+    val chat: Int = 0,
+    /** When it vanishes, in milliseconds, and how long it was given; 0 when it stays. */
+    val vanishAt: Long = 0,
+    val vanishFor: Int = 0
 )
 
 /**
@@ -106,6 +111,20 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     /** The chat's own id of a message of the store, when it went over the chat. */
     fun chatIdOf(mms: Boolean, id: Long): Int? = _refs.value.entries.firstOrNull { it.value.mms == mms && it.value.id == id }?.key
+
+    /** How long messages last in each chat, in seconds, as last heard. */
+    private val timers = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+
+    /** The engine's word first, the last one heard when it cannot answer. */
+    private suspend fun timerOf(chat: Int): Int =
+        runCatching { engine.call("get_chat_ephemeral_timer", account, chat).jsonPrimitive.int }.getOrNull()?.also { timers[chat] = it }
+            ?: timers[chat] ?: 0
+
+    /** A message's countdown from now, when its chat makes messages vanish. */
+    private suspend fun counted(ref: RichRef): RichRef {
+        val t = timerOf(ref.chat)
+        return if (t > 0) ref.copy(vanishAt = System.currentTimeMillis() + t * 1000L, vanishFor = t) else ref
+    }
 
     /** Bumped on every change of the chats, for open screens to read again. */
     private val _changes = MutableStateFlow(0)
@@ -244,6 +263,11 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             // Edited or pinned on the other side, or a vanishing message gone.
             "MsgsChanged" -> if (msgId != null) _refs.value[msgId]?.let { refresh(msgId, it) }
             "MsgDeleted" -> if (msgId != null) _refs.value[msgId]?.let { forget(msgId, it) }
+            "ChatEphemeralTimerModified" -> {
+                val chat = event.data["chatId"]?.jsonPrimitive?.intOrNull
+                val timer = event.data["timer"]?.jsonPrimitive?.intOrNull
+                if (chat != null && timer != null) timers[chat] = timer
+            }
             "ReactionsChanged", "IncomingReaction" -> if (msgId != null) _refs.value[msgId]?.let { ref ->
                 val emojis = runCatching {
                     engine.call("get_message_reactions", account, msgId).jsonObject["reactions"]?.jsonArray
@@ -279,9 +303,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         val stored = if (link != null) withContext(Dispatchers.IO) {
             if (file != null) {
                 val data = runCatching { File(file).readBytes() }.getOrNull() ?: return@withContext null
-                MmsStore.saveReceivedParts(context, link.phone, text, mime, data)?.let { RichRef(true, it.second) to it.first }
+                MmsStore.saveReceivedParts(context, link.phone, text, mime, data)?.let { RichRef(true, it.second, chat = chat) to it.first }
             } else {
-                SmsStore.saveReceived(context, link.phone, text)?.let { RichRef(false, it.second) to it.first }
+                SmsStore.saveReceived(context, link.phone, text)?.let { RichRef(false, it.second, chat = chat) to it.first }
             }
         } else {
             // A group: kept as a group message from its sender, to the others.
@@ -291,7 +315,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             val others = group.phones.filter { key(it) != key(sender) }
             withContext(Dispatchers.IO) {
                 val data = file?.let { runCatching { File(it).readBytes() }.getOrNull() }
-                MmsStore.saveReceivedParts(context, sender, text, if (data != null) mime else null, data, others)?.let { RichRef(true, it.second) to it.first }
+                MmsStore.saveReceivedParts(context, sender, text, if (data != null) mime else null, data, others)?.let { RichRef(true, it.second, chat = chat) to it.first }
             }
         } ?: return
         saveRef(msgId, stored.first)
@@ -320,9 +344,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             if (attachments.isEmpty()) {
                 val id = engine.call("send_msg", account, chatId, mapOf("text" to text, "quotedText" to quote)).jsonPrimitive.int
                 if (phones.size == 1) {
-                    SmsStore.saveSending(context, phone, text)?.let { saveRef(id, RichRef(false, it, mine = true)) }
+                    SmsStore.saveSending(context, phone, text)?.let { saveRef(id, counted(RichRef(false, it, mine = true, chat = chatId))) }
                 } else {
-                    MmsStore.saveSendingParts(context, phones, text, null, null)?.let { saveRef(id, RichRef(true, it, mine = true)) }
+                    MmsStore.saveSendingParts(context, phones, text, null, null)?.let { saveRef(id, counted(RichRef(true, it, mine = true, chat = chatId))) }
                 }
             } else {
                 attachments.forEachIndexed { i, a ->
@@ -340,7 +364,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                         "send_msg", account, chatId,
                         mapOf("text" to caption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (i == 0) quote else null)
                     ).jsonPrimitive.int
-                    MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy.readBytes())?.let { saveRef(id, RichRef(true, it, mine = true)) }
+                    MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy.readBytes())?.let { saveRef(id, counted(RichRef(true, it, mine = true, chat = chatId))) }
                     // The engine keeps its own copy.
                     copy.parentFile?.deleteRecursively()
                 }
@@ -361,6 +385,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         runCatching {
             val ids = engine.call("get_message_ids", account, chatId, false, false).jsonArray.map { it.jsonPrimitive.int }
             if (ids.isNotEmpty()) engine.call("markseen_msgs", account, ids)
+            // Read now: the received ones of a vanishing chat start their countdown.
+            ids.forEach { id -> _refs.value[id]?.takeIf { !it.mine && it.vanishAt == 0L }?.let { ref -> counted(ref.copy(chat = chatId)).takeIf { it.vanishAt > 0 }?.let { saveRef(id, it) } } }
         }
     }
 
@@ -406,14 +432,19 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     suspend fun timer(phones: List<String>): Int {
         if (!start()) return 0
         val chatId = chatOf(phones) ?: return 0
-        return runCatching { engine.call("get_chat_ephemeral_timer", account, chatId).jsonPrimitive.int }.getOrDefault(0)
+        return runCatching { engine.call("get_chat_ephemeral_timer", account, chatId).jsonPrimitive.int }.getOrDefault(0).also { timers[chatId] = it }
     }
 
     /** Messages with [phones] vanish [seconds] after they are read, on both sides; 0 turns it off. */
     suspend fun setTimer(phones: List<String>, seconds: Int): Boolean {
         if (!start()) return false
         val chatId = chatOf(phones) ?: return false
-        return runCatching { engine.call("set_chat_ephemeral_timer", account, chatId, seconds) }.isSuccess.also { if (it) _changes.value++ }
+        return runCatching { engine.call("set_chat_ephemeral_timer", account, chatId, seconds) }.isSuccess.also {
+            if (it) {
+                timers[chatId] = seconds
+                _changes.value++
+            }
+        }
     }
 
     /** What the chat now says of a message: its text after an edit, its pin. */

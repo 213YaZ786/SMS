@@ -465,6 +465,19 @@ private fun Bubble(
     var menuOpen by remember { mutableStateOf(false) }
     var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val mine = m.box != MessageBox.RECEIVED
+    // A vanishing message's ring: what is left of its time, emptying as it goes.
+    var left by remember { mutableStateOf(1f) }
+    val vanishAt = rich?.vanishAt ?: 0L
+    LaunchedEffect(vanishAt) {
+        val total = (rich?.vanishFor ?: 0) * 1000L
+        while (vanishAt > 0 && total > 0) {
+            left = ((vanishAt - System.currentTimeMillis()).toFloat() / total).coerceIn(0f, 1f)
+            if (left <= 0f) break
+            kotlinx.coroutines.delay((total / 200).coerceIn(250L, 60_000L))
+        }
+    }
+    val ringAccent = MaterialTheme.colorScheme.primary
+    val ringGround = MaterialTheme.colorScheme.surfaceContainerHighest
     var confirmDeleteAll by remember { mutableStateOf(false) }
     if (confirmDeleteAll && chatId != null) {
         ZoneAlertDialog(
@@ -576,6 +589,20 @@ private fun Bubble(
                 modifier = Modifier
                     .onGloballyPositioned { bounds = it.boundsInWindow() }
                     .graphicsLayer { alpha = if (menuOpen) 0f else 1f }
+                    .drawWithContent {
+                        drawContent()
+                        if (vanishAt > 0) {
+                            val r = 9.dp.toPx()
+                            val c = androidx.compose.ui.geometry.Offset(size.width - r * 0.6f, r * 0.6f)
+                            drawCircle(ringGround, radius = r, center = c)
+                            drawArc(
+                                ringAccent, startAngle = -90f, sweepAngle = 360f * left, useCenter = false,
+                                topLeft = c - androidx.compose.ui.geometry.Offset(r * 0.7f, r * 0.7f),
+                                size = androidx.compose.ui.geometry.Size(r * 1.4f, r * 1.4f),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                            )
+                        }
+                    }
                     .clip(shape).combinedClickable(
                     onClick = { if (m.box == MessageBox.FAILED) onRetry() },
                     // A double tap gives a heart, over the rich chat.
