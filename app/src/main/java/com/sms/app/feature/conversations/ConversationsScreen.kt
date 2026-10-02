@@ -174,7 +174,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 }
                 if (waiting.isNotEmpty()) {
                     item(key = "waiting") {
-                        Waiting(waiting, index) { c -> onOpenThread(c.threadId, c.addresses.joinToString(",")) }
+                        Waiting(waiting, index, ::nameOf) { c -> onOpenThread(c.threadId, c.addresses.joinToString(",")) }
                     }
                 }
                 // People first; every service (banks, deliveries, codes) in one stack.
@@ -258,7 +258,7 @@ private fun Filters(filter: Filter, onFilter: (Filter) -> Unit, query: String, o
 
 /** The people waiting for an answer, side by side on one or two lines: a tap opens the conversation. */
 @Composable
-private fun Waiting(waiting: List<Conversation>, index: PhoneIndex, onOpen: (Conversation) -> Unit) {
+private fun Waiting(waiting: List<Conversation>, index: PhoneIndex, nameOf: (Conversation) -> String?, onOpen: (Conversation) -> Unit) {
     val context = LocalContext.current
     Column(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth()) {
         Text(
@@ -276,8 +276,9 @@ private fun Waiting(waiting: List<Conversation>, index: PhoneIndex, onOpen: (Con
                 waiting.take(columns * 2).chunked(columns).forEach { line ->
                     Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
                         line.forEach { c ->
-                            val entry = index.find(T9.clean(c.address))
-                            val name = entry?.name ?: Numbers.format(context, c.address)
+                            // A group under its name or its members, never as its first member alone.
+                            val entry = if (c.group) null else index.find(T9.clean(c.address))
+                            val name = nameOf(c) ?: Numbers.format(context, c.address)
                             Face(name, entry?.photo, timeLabel(context, c.date), Modifier.weight(1f)) { onOpen(c) }
                         }
                         repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
