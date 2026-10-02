@@ -9,6 +9,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -22,7 +23,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -163,7 +163,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             )
             else -> LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding()),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding() + 96.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -249,7 +249,7 @@ private fun Filters(filter: Filter, onFilter: (Filter) -> Unit, query: String, o
     }
 }
 
-/** The people waiting for an answer, side by side: a tap opens the conversation. */
+/** The people waiting for an answer, side by side on one or two lines: a tap opens the conversation. */
 @Composable
 private fun Waiting(waiting: List<Conversation>, index: PhoneIndex, onOpen: (Conversation) -> Unit) {
     val context = LocalContext.current
@@ -260,18 +260,29 @@ private fun Waiting(waiting: List<Conversation>, index: PhoneIndex, onOpen: (Con
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 8.dp)
         )
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(horizontal = 2.dp)) {
-            items(waiting, key = { it.threadId }) { c ->
-                val entry = index.find(T9.clean(c.address))
-                val name = entry?.name ?: Numbers.format(context, c.address)
-                Face(name, entry?.photo, timeLabel(context, c.date)) { onOpen(c) }
+        // Side by side, the next ones on a second line, never scrolled
+        // sideways; past two lines they stay in the list below.
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val gap = 10.dp
+            val columns = ((maxWidth + gap) / (120.dp + gap)).toInt().coerceIn(2, 5)
+            Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                waiting.take(columns * 2).chunked(columns).forEach { line ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                        line.forEach { c ->
+                            val entry = index.find(T9.clean(c.address))
+                            val name = entry?.name ?: Numbers.format(context, c.address)
+                            Face(name, entry?.photo, timeLabel(context, c.date), Modifier.weight(1f)) { onOpen(c) }
+                        }
+                        repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun Face(name: String, photo: String?, under: String, onClick: () -> Unit) {
+private fun Face(name: String, photo: String?, under: String, modifier: Modifier, onClick: () -> Unit) {
     val haptics = rememberHaptics()
     val press = remember { MutableInteractionSource() }
     val pressed by press.collectIsPressedAsState()
@@ -279,8 +290,7 @@ private fun Face(name: String, photo: String?, under: String, onClick: () -> Uni
     val shape = RoundedCornerShape(24.dp)
     ZoneSurface(
         shape = shape,
-        modifier = Modifier
-            .width(116.dp)
+        modifier = modifier
             .graphicsLayer {
                 scaleX = sink
                 scaleY = sink
@@ -291,9 +301,9 @@ private fun Face(name: String, photo: String?, under: String, onClick: () -> Uni
                 onClick()
             })
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 8.dp, vertical = 14.dp)) {
-            ContactAvatar(name, photo, 56.dp)
-            Spacer(Modifier.height(10.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp)) {
+            ContactAvatar(name, photo, 44.dp)
+            Spacer(Modifier.height(6.dp))
             Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
             Text(under, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
         }
@@ -391,19 +401,22 @@ private fun ConversationLine(
                 }
                 Column(Modifier.weight(1f).padding(start = 14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            title,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        if (pinned) {
-                            Spacer(Modifier.width(6.dp))
-                            Icon(AppIcons.PushPin, contentDescription = "Pinned", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                        // The name takes all the room the time leaves, the pin right after it.
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (pinned) {
+                                Spacer(Modifier.width(6.dp))
+                                Icon(AppIcons.PushPin, contentDescription = "Pinned", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                            }
                         }
-                        Spacer(Modifier.weight(1f))
+                        Spacer(Modifier.width(8.dp))
                         Text(
                             timeLabel(context, c.date),
                             style = MaterialTheme.typography.labelMedium,

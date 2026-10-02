@@ -272,8 +272,9 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         LazyColumn(
             reverseLayout = true,
             modifier = Modifier.fillMaxSize().padding(horizontal = inset),
-            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding()),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 14.dp),
+            // A short conversation sits by the composer, as a long one does.
+            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom)
         ) {
             // Messages scheduled for later, at the very bottom; a tap cancels one.
             items(scheduled.filter { it.to.toSet() == people.toSet() }, key = { "sched/${it.id}" }) { sc ->
