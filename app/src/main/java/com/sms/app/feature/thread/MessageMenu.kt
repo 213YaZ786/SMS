@@ -158,7 +158,6 @@ fun MessageMenu(
                 onDismiss,
                 Modifier
                     .offset { IntOffset(if (mine) (window.width - edge - listSize.width).coerceAtLeast(edge) else edge, listY) }
-                    .width(with(density) { (window.width - 2 * edge).toDp() }.coerceAtMost(420.dp))
                     .onSizeChanged { listSize = it }
             )
         }
@@ -173,45 +172,56 @@ fun MessageMenu(
 @Composable
 fun Palette(actions: List<MessageAction>, onDismiss: () -> Unit, modifier: Modifier) {
     val haptics = rememberHaptics()
-    ZoneSurface(shape = RoundedCornerShape(26.dp), shadowElevation = 6.dp, modifier = modifier.popIn(1)) {
-        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            actions.chunked(4).forEachIndexed { line, four ->
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    four.forEachIndexed { i, action ->
+    // Lines as even as can be: 5 = 3 + 2, 6 = 3 + 3, 7 = 4 + 3, 8 = 4 + 4.
+    val lines = (actions.size + 3) / 4
+    val perLine = if (lines == 0) 1 else (actions.size + lines - 1) / lines
+    ZoneSurface(shape = RoundedCornerShape(28.dp), shadowElevation = 6.dp, modifier = modifier.popIn(1)) {
+        Column(
+            Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+        ) {
+            actions.chunked(perLine).forEachIndexed { line, row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    row.forEachIndexed { i, action ->
                         val rise = remember { Animatable(1f) }
                         LaunchedEffect(Unit) {
-                            delay(30L * (line * 4 + i))
+                            delay(30L * (line * perLine + i))
                             rise.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 500f))
                         }
-                        val tint = if (action.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                        val tint = if (action.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         Column(
                             horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
                             modifier = Modifier
-                                .weight(1f)
+                                .width(78.dp)
                                 .graphicsLayer {
                                     translationY = rise.value * 8.dp.toPx()
                                     alpha = 1f - rise.value
                                 }
-                                .clip(RoundedCornerShape(18.dp))
+                                .clip(RoundedCornerShape(20.dp))
                                 .clickable(onClickLabel = action.label) {
                                     haptics.tick()
                                     onDismiss()
                                     action.run()
                                 }
-                                .padding(vertical = 10.dp, horizontal = 2.dp)
+                                .padding(vertical = 4.dp)
                         ) {
-                            Icon(action.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+                            // Each action in a drop of glass of its own, the icon large in it.
+                            ZoneSurface(shape = CircleShape, accent = !action.danger, modifier = Modifier.size(56.dp)) {
+                                Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                    Icon(action.icon, contentDescription = null, tint = tint, modifier = Modifier.size(28.dp))
+                                }
+                            }
                             Spacer(Modifier.height(6.dp))
                             Text(
                                 action.label,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = tint,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (action.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                                 maxLines = 2,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
                         }
                     }
-                    repeat(4 - four.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
@@ -246,7 +256,6 @@ fun PaletteMenu(bounds: Rect, actions: List<MessageAction>, onDismiss: () -> Uni
                 onDismiss,
                 Modifier
                     .offset { IntOffset(((window.width - size.width) / 2).coerceAtLeast(edge), bounds.bottom.roundToInt() + gap) }
-                    .width(with(density) { (window.width - 2 * edge).toDp() }.coerceAtMost(420.dp))
                     .onSizeChanged { size = it }
             )
         }
