@@ -11,7 +11,20 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import android.view.Surface
 import org.webrtc.AudioTrack
+import org.webrtc.Camera2Capturer
+import org.webrtc.CameraVideoCapturer
+import org.webrtc.DefaultVideoDecoderFactory
+import org.webrtc.DefaultVideoEncoderFactory
+import org.webrtc.EglBase
+import org.webrtc.EglRenderer
+import org.webrtc.GlRectDrawer
+import org.webrtc.SurfaceTextureHelper
+import org.webrtc.VideoFrame
+import org.webrtc.VideoSink
+import org.webrtc.VideoSource
+import org.webrtc.VideoTrack
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
@@ -25,12 +38,21 @@ import org.webrtc.audio.JavaAudioDeviceModule
 
 /**
  * An encrypted call's media, with WebRTC's own Android library: no screen
- * and no page, so it runs while Dialer shows the call. The whole
+ * and no page, so it runs while Dialer shows the call; a video call's
+ * pictures are drawn into the surfaces Dialer's screen lends through
+ * Telecom. The whole
  * description, candidates included, goes through the chat in one message.
  * WebRTC encrypts the media itself (DTLS-SRTP); the description travels
  * end-to-end encrypted in the chat, so only the two phones know its keys.
  */
-class CallMedia(context: Context, iceJson: String, private val onState: (String) -> Unit) {
+class CallMedia(
+    private val context: Context,
+    iceJson: String,
+    val video: Boolean,
+    private val onState: (String) -> Unit,
+    /** The size of each picture as it comes, so Dialer frames it without stretching it. */
+    private val onSize: (remote: Boolean, width: Int, height: Int) -> Unit = { _, _, _ -> }
+) {
 
     private val factory: PeerConnectionFactory
     private val audio: JavaAudioDeviceModule
@@ -38,13 +60,27 @@ class CallMedia(context: Context, iceJson: String, private val onState: (String)
     private val track: AudioTrack
     private val gathered = CompletableDeferred<Unit>()
 
+    // Video: one GL context for the codecs and the two pictures Dialer lends.
+    private val egl: EglBase? = if (video) EglBase.create() else null
+    private var videoSource: VideoSource? = null
+    private var camera: CameraVideoCapturer? = null
+    private var cameraHelper: SurfaceTextureHelper? = null
+    private var localTrack: VideoTrack? = null
+    private val remoteView = Screen("remote", remote = true)
+    private val localView = Screen("local", remote = false, mirror = true)
+
     init {
         init(context)
         audio = JavaAudioDeviceModule.builder(context)
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
             .createAudioDeviceModule()
-        factory = PeerConnectionFactory.builder().setAudioDeviceModule(audio).createPeerConnectionFactory()
+        factory = PeerConnectionFactory.builder().setAudioDeviceModule(audio).apply {
+            egl?.let {
+                setVideoEncoderFactory(DefaultVideoEncoderFactory(it.eglBaseContext, true, true))
+                setVideoDecoderFactory(DefaultVideoDecoderFactory(it.eglBaseContext))
+            }
+        }.createPeerConnectionFactory()
         val config = PeerConnection.RTCConfiguration(iceServers(iceJson)).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
@@ -55,6 +91,76 @@ class CallMedia(context: Context, iceJson: String, private val onState: (String)
         val source = factory.createAudioSource(MediaConstraints())
         track = factory.createAudioTrack("voice", source)
         pc.addTrack(track, listOf("call"))
+        if (video) {
+            val vs = factory.createVideoSource(false).also { videoSource = it }
+            localTrack = factory.createVideoTrack("camera", vs).also {
+                pc.addTrack(it, listOf("call"))
+                it.addSink(localView)
+            }
+        }
+    }
+
+    /**
+     * The camera Dialer chose (an id of Android's camera list), or none:
+     * the other side then gets no picture until one is chosen again.
+     */
+    fun camera(id: String?) {
+        runCatching { camera?.stopCapture() }
+        camera?.dispose()
+        camera = null
+        val source = videoSource ?: return
+        if (id == null) return
+        val helper = cameraHelper ?: SurfaceTextureHelper.create("camera", egl!!.eglBaseContext).also { cameraHelper = it }
+        camera = Camera2Capturer(context, id, null).also {
+            it.initialize(helper, context, source.capturerObserver)
+            it.startCapture(1280, 720, 30)
+        }
+        localView.mirror = runCatching {
+            context.getSystemService(android.hardware.camera2.CameraManager::class.java).getCameraCharacteristics(id)
+                .get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
+        }.getOrDefault(true)
+    }
+
+    /** Where the other side's picture goes, in Dialer's screen. */
+    fun showRemote(surface: Surface?) = remoteView.attach(surface)
+
+    /** Where one's own picture goes, the small one in Dialer's screen. */
+    fun showLocal(surface: Surface?) = localView.attach(surface)
+
+    /**
+     * A picture Dialer lends: frames are drawn into its surface while it
+     * is there, and dropped while it is not.
+     */
+    private inner class Screen(name: String, private val remote: Boolean, var mirror: Boolean = false) : VideoSink {
+        private val renderer = EglRenderer(name)
+        private var attached = false
+        private var size = 0 to 0
+
+        init {
+            egl?.let { renderer.init(it.eglBaseContext, EglBase.CONFIG_PLAIN, GlRectDrawer()) }
+        }
+
+        fun attach(surface: Surface?) {
+            if (egl == null) return
+            if (attached) renderer.releaseEglSurface { }
+            attached = false
+            if (surface != null) {
+                renderer.setMirror(mirror)
+                renderer.createEglSurface(surface)
+                attached = true
+            }
+        }
+
+        override fun onFrame(frame: VideoFrame) {
+            val now = frame.rotatedWidth to frame.rotatedHeight
+            if (now != size) {
+                size = now
+                onSize(remote, now.first, now.second)
+            }
+            if (attached) renderer.onFrame(frame)
+        }
+
+        fun release() = runCatching { renderer.release() }
     }
 
     /** Our offer for a call we make. */
@@ -82,9 +188,15 @@ class CallMedia(context: Context, iceJson: String, private val onState: (String)
     }
 
     fun close() {
+        camera(null)
+        runCatching { cameraHelper?.dispose() }
+        remoteView.release()
+        localView.release()
         runCatching { pc.dispose() }
         runCatching { factory.dispose() }
         runCatching { audio.release() }
+        runCatching { videoSource?.dispose() }
+        runCatching { egl?.release() }
     }
 
     private suspend fun describe(make: (SdpObserver) -> Unit): SessionDescription = suspendCancellableCoroutine { done ->
@@ -129,7 +241,9 @@ class CallMedia(context: Context, iceJson: String, private val onState: (String)
         override fun onRemoveStream(stream: MediaStream?) = Unit
         override fun onDataChannel(channel: DataChannel?) = Unit
         override fun onRenegotiationNeeded() = Unit
-        override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) = Unit
+        override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+            (receiver?.track() as? VideoTrack)?.addSink(remoteView)
+        }
     }
 
     companion object {

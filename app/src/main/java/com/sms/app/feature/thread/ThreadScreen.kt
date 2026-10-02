@@ -412,13 +412,20 @@ private fun CallButton(phone: String, encrypted: Boolean) {
     var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     // Dialer shows the encrypted calls: only offered when it is the phone app.
     val line = encrypted && remember { com.sms.app.core.call.CallLine.dialerShowsCalls(context) }
-    fun encryptedCall() {
-        if (!com.sms.app.core.call.CallBook.place(context, phone, video = false)) {
+    fun encryptedCall(video: Boolean) {
+        if (!com.sms.app.core.call.CallBook.place(context, phone, video)) {
             android.widget.Toast.makeText(context, "The call cannot be made now.", android.widget.Toast.LENGTH_LONG).show()
         }
     }
-    val askMic = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) encryptedCall()
+    var wantVideo by remember { mutableStateOf(false) }
+    val askMedia = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        if (granted[android.Manifest.permission.RECORD_AUDIO] != false) encryptedCall(wantVideo)
+    }
+    fun call(video: Boolean) {
+        wantVideo = video
+        val needed = listOfNotNull(android.Manifest.permission.RECORD_AUDIO, if (video) android.Manifest.permission.CAMERA else null)
+            .filter { androidx.core.content.ContextCompat.checkSelfPermission(context, it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+        if (needed.isEmpty()) encryptedCall(video) else askMedia.launch(needed.toTypedArray())
     }
     Box(Modifier.onGloballyPositioned { bounds = it.boundsInWindow() }) {
         FloatingAction(AppIcons.Call, "Call", { if (line) open = true else NumberActions.dial(context, phone) })
@@ -426,10 +433,8 @@ private fun CallButton(phone: String, encrypted: Boolean) {
     if (open) PaletteMenu(
         bounds,
         listOf(
-            MessageAction(AppIcons.Lock, "Encrypted call") {
-                if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) encryptedCall()
-                else askMic.launch(android.Manifest.permission.RECORD_AUDIO)
-            },
+            MessageAction(AppIcons.Lock, "Encrypted call") { call(video = false) },
+            MessageAction(AppIcons.Videocam, "Video call") { call(video = true) },
             MessageAction(AppIcons.Call, "Phone call") { NumberActions.dial(context, phone) }
         ),
         onDismiss = { open = false }

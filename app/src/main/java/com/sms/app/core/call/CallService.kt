@@ -30,7 +30,10 @@ class CallService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        val camera = CallBook.call.value?.video == true &&
+            androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+            (if (camera) ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA else 0)
         runCatching { startForeground(CallNotices.ID, CallNotices.line(this), types) }
             .onFailure { runCatching { startForeground(CallNotices.ID, CallNotices.line(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL) } }
         return START_NOT_STICKY

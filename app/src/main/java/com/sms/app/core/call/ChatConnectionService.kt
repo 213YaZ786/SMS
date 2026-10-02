@@ -35,6 +35,7 @@ class ChatConnectionService : ConnectionService() {
         return ChatConnection(applicationContext).apply {
             setAddress(request.address, TelecomManager.PRESENTATION_ALLOWED)
             videoState = if (call.video) VideoProfile.STATE_BIDIRECTIONAL else VideoProfile.STATE_AUDIO_ONLY
+            if (call.video) withVideo()
             setDialing()
             CallBook.connection = this
             CallLine.start(applicationContext)
@@ -52,6 +53,7 @@ class ChatConnectionService : ConnectionService() {
         return ChatConnection(applicationContext).apply {
             setAddress(android.net.Uri.fromParts("tel", call.phone, null), TelecomManager.PRESENTATION_ALLOWED)
             videoState = if (call.video) VideoProfile.STATE_BIDIRECTIONAL else VideoProfile.STATE_AUDIO_ONLY
+            if (call.video) withVideo()
             setRinging()
             CallBook.connection = this
         }
@@ -72,6 +74,12 @@ class ChatConnection(private val context: Context) : Connection(), KoinComponent
         connectionProperties = PROPERTY_SELF_MANAGED
         connectionCapabilities = CAPABILITY_MUTE
         audioModeIsVoip = true
+    }
+
+    /** A video call: Dialer's screen lends its pictures and picks the camera through this. */
+    fun withVideo() {
+        connectionCapabilities = connectionCapabilities or CAPABILITY_SUPPORTS_VT_LOCAL_BIDIRECTIONAL or CAPABILITY_SUPPORTS_VT_REMOTE_BIDIRECTIONAL
+        videoProvider = ChatVideoProvider()
     }
 
     /**
@@ -181,4 +189,32 @@ object Ringer {
         vibrating?.let { runCatching { it.getSystemService(VibratorManager::class.java)?.defaultVibrator?.cancel() } }
         vibrating = null
     }
+}
+
+/**
+ * Telecom's video channel between Dialer's call screen and this line:
+ * Dialer gives the camera to use and the surfaces to draw in; the line
+ * captures and draws. Turning the call into audio only (or back) is not
+ * offered: the chat's call carries one description, made at the start.
+ */
+class ChatVideoProvider : Connection.VideoProvider() {
+    override fun onSetCamera(cameraId: String?) {
+        CallLine.camera(cameraId)
+        if (cameraId != null) changeCameraCapabilities(VideoProfile.CameraCapabilities(1280, 720))
+    }
+    override fun onSetPreviewSurface(surface: android.view.Surface?) {
+        CallLine.showLocal(surface)
+    }
+    override fun onSetDisplaySurface(surface: android.view.Surface?) {
+        CallLine.showRemote(surface)
+    }
+    override fun onSetDeviceOrientation(rotation: Int) = Unit
+    override fun onSetZoom(value: Float) = Unit
+    override fun onSendSessionModifyRequest(fromProfile: VideoProfile?, toProfile: VideoProfile?) {
+        receiveSessionModifyResponse(SESSION_MODIFY_REQUEST_FAIL, fromProfile, fromProfile)
+    }
+    override fun onSendSessionModifyResponse(responseProfile: VideoProfile?) = Unit
+    override fun onRequestCameraCapabilities() = changeCameraCapabilities(VideoProfile.CameraCapabilities(1280, 720))
+    override fun onRequestConnectionDataUsage() = setCallDataUsage(0)
+    override fun onSetPauseImage(uri: android.net.Uri?) = Unit
 }

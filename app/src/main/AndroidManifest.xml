@@ -117,7 +117,7 @@
         <service
             android:name=".core.call.CallService"
             android:exported="false"
-            android:foregroundServiceType="phoneCall|microphone" />
+            android:foregroundServiceType="phoneCall|microphone|camera" />
 
         <!-- A new SMS. Only the system may deliver it. -->
         <receiver
