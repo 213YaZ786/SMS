@@ -89,7 +89,7 @@ object MmsStore {
      * thread and id. In a group, [others] are the rest of its members, so it
      * joins the group's conversation; then a text alone comes this way too.
      */
-    fun saveReceivedParts(context: Context, phone: String, text: String, mime: String?, data: ByteArray?, others: List<String> = emptyList()): Pair<Long, Long>? = runCatching {
+    fun saveReceivedParts(context: Context, phone: String, text: String, mime: String?, data: java.io.File?, others: List<String> = emptyList()): Pair<Long, Long>? = runCatching {
         val thread = Telephony.Threads.getOrCreateThreadId(context, (listOf(phone) + others).toSet())
         val uri = context.contentResolver.insert(
             Telephony.Mms.Inbox.CONTENT_URI,
@@ -111,10 +111,11 @@ object MmsStore {
     }.getOrNull()
 
     /** A message going out over the rich chat to one number or a group, kept in the outbox: its id. */
-    fun saveSendingParts(context: Context, phones: List<String>, text: String, mime: String?, data: ByteArray?): Long? =
+    fun saveSendingParts(context: Context, phones: List<String>, text: String, mime: String?, data: java.io.File?): Long? =
         saveOutgoing(context, phones, bodyOf(text, mime, data), -1)?.let { ContentUris.parseId(it) }
 
-    private fun bodyOf(text: String, mime: String?, data: ByteArray?) = PduBody().apply {
+    /** The text and a file, the file read as a stream when written, never whole in memory. */
+    private fun bodyOf(text: String, mime: String?, data: java.io.File?) = PduBody().apply {
         if (text.isNotBlank()) addPart(com.sms.app.core.mms.pdu.PduPart().apply {
             setContentType(ContentType.TEXT_PLAIN.toByteArray())
             setCharset(CharacterSets.UTF_8)
@@ -124,7 +125,7 @@ object MmsStore {
         if (mime != null && data != null) addPart(com.sms.app.core.mms.pdu.PduPart().apply {
             setContentType(mime.toByteArray())
             setContentLocation("file0".toByteArray())
-            setData(data)
+            setDataUri(Uri.fromFile(data))
         })
     }
 
@@ -188,8 +189,14 @@ object MmsStore {
             }
             val partUri = context.contentResolver.insert(partsUri, values) ?: continue
             if (type != ContentType.TEXT_PLAIN && type != ContentType.APP_SMIL) {
-                val data = part.data ?: continue
-                context.contentResolver.openOutputStream(partUri)?.use { it.write(data) }
+                val data = part.data
+                val from = part.dataUri
+                when {
+                    data != null -> context.contentResolver.openOutputStream(partUri)?.use { it.write(data) }
+                    from != null -> context.contentResolver.openInputStream(from)?.use { input ->
+                        context.contentResolver.openOutputStream(partUri)?.use { input.copyTo(it) }
+                    }
+                }
             }
         }
     }

@@ -190,11 +190,11 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     var scheduling by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var scheduled by remember { mutableStateOf(com.sms.app.core.sms.Timed.scheduled(context)) }
     // Received messages that arrive while the conversation is open drop in.
-    var known by remember { mutableStateOf<Set<Long>?>(null) }
-    var fresh by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var known by remember { mutableStateOf<Set<String>?>(null) }
+    var fresh by remember { mutableStateOf<Set<String>>(emptySet()) }
     val haptics = rememberHaptics()
     LaunchedEffect(list) {
-        val received = list.filter { it.box == MessageBox.RECEIVED }.map { it.id }.toSet()
+        val received = list.filter { it.box == MessageBox.RECEIVED }.map { it.uid }.toSet()
         val before = known
         if (before != null) {
             val new = received - before
@@ -351,7 +351,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     is Row.Bubble -> Box(Modifier.fillMaxWidth().animateItem(fadeOutSpec = androidx.compose.animation.core.tween(450))) { Bubble(
                         row.message,
                         row.last,
-                        fresh = row.message.box == MessageBox.RECEIVED && row.message.id in fresh,
+                        fresh = row.message.box == MessageBox.RECEIVED && row.message.uid in fresh,
                         rich = chat.refOf(row.message.mms, row.message.id).also { refs.size },
                         onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },
                         sender = if (group && row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null,
@@ -382,7 +382,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
 /** A line of the conversation: a day's heading or a message. */
 private sealed class Row(val key: String) {
     class Day(val label: String, day: String) : Row("day/$day")
-    class Bubble(val message: Message, val last: Boolean) : Row("m/${message.id}")
+    // An SMS and a picture message may hold the same number: the kind is part of the key.
+    class Bubble(val message: Message, val last: Boolean) : Row("m/${message.uid}")
 }
 
 private fun rowsOf(list: List<Message>): List<Row> {

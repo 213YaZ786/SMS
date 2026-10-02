@@ -46,7 +46,10 @@ data class Message(
     /** The other side read it (rich chat). */
     val seen: Boolean = false,
     val reactions: List<String> = emptyList()
-)
+) {
+    /** Unique among SMS and picture messages, whose numbers overlap. */
+    val uid: String get() = (if (mms) "mms/" else "sms/") + id
+}
 
 /** One conversation: who with, its last message, how many are unread. */
 data class Conversation(

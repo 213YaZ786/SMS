@@ -406,7 +406,11 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                     if (nonce != null) runCatching { engine.call("misc_send_text_message", account, chat, Hello.proofText(nonce)) }
                 }
             }
-            "MsgDelivered" -> if (msgId != null) _refs.value[msgId]?.let { mark(it, failed = false) }
+            "MsgDelivered" -> if (msgId != null) _refs.value[msgId]?.let {
+                mark(it, failed = false)
+                // Sent, its media is in Android's store: the engine's copy goes.
+                if (it.mms) runCatching { engine.call("get_message", account, msgId).jsonObject["file"]?.jsonPrimitive?.contentOrNull?.let { f -> File(f).delete() } }
+            }
             "MsgFailed" -> if (msgId != null) _refs.value[msgId]?.let { mark(it, failed = true) }
             "MsgRead" -> if (msgId != null) _refs.value[msgId]?.let { saveRef(msgId, it.copy(seen = true)) }
             // Edited or pinned on the other side, or a vanishing message gone.
@@ -471,7 +475,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         val link = _links.value.values.firstOrNull { it.proven && it.chatId == chat }
         val stored = if (link != null) withContext(Dispatchers.IO) {
             if (file != null) {
-                val data = runCatching { File(file).readBytes() }.getOrNull() ?: return@withContext null
+                val data = File(file).takeIf { it.canRead() } ?: return@withContext null
                 MmsStore.saveReceivedParts(context, link.phone, text, mime, data)?.let { RichRef(true, it.second, chat = chat) to it.first }
             } else {
                 SmsStore.saveReceived(context, link.phone, text)?.let { RichRef(false, it.second, chat = chat) to it.first }
@@ -483,11 +487,13 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             val sender = _links.value.values.firstOrNull { it.proven && it.address == from }?.phone ?: return
             val others = group.phones.filter { key(it) != key(sender) }
             withContext(Dispatchers.IO) {
-                val data = file?.let { runCatching { File(it).readBytes() }.getOrNull() }
+                val data = file?.let { File(it).takeIf { f -> f.canRead() } }
                 MmsStore.saveReceivedParts(context, sender, text, if (data != null) mime else null, data, others)?.let { RichRef(true, it.second, chat = chat) to it.first }
             }
         } ?: return
         saveRef(msgId, stored.first)
+        // Kept in Android's store now, the media need not stay twice on the phone.
+        if (file != null) runCatching { File(file).delete() }
         MessageNotifier(context).show(stored.second)
     }
 
@@ -533,7 +539,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                         "send_msg", account, chatId,
                         mapOf("text" to caption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (i == 0) quote else null)
                     ).jsonPrimitive.int
-                    MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy.readBytes())?.let { saveRef(id, withExpiry(id, RichRef(true, it, mine = true, chat = chatId))) }
+                    MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy)?.let { saveRef(id, withExpiry(id, RichRef(true, it, mine = true, chat = chatId))) }
                     // The engine keeps its own copy.
                     copy.parentFile?.deleteRecursively()
                 }
