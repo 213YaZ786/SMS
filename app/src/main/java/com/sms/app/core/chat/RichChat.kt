@@ -52,6 +52,10 @@ data class ChatLink(
     val askedAt: Long = 0
 )
 
+/** An encrypted group of several proven numbers, and its chat. */
+@Serializable
+data class ChatGroup(val chatId: Int, val phones: List<String>)
+
 /** A message of Android's store that went over the rich chat: where it is, what the chat says of it. */
 @Serializable
 data class RichRef(
@@ -88,6 +92,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     val links: StateFlow<Map<String, ChatLink>> = _links.asStateFlow()
 
     private val refsFile = File(context.filesDir, "chat-messages.json")
+    private val groupsFile = File(context.filesDir, "chat-groups.json")
+
+    /** The encrypted groups, by their members' numbers. */
+    private val _groups = MutableStateFlow(loadGroups())
 
     /** The rich chat's messages in Android's store, by the chat's message id. */
     private val _refs = MutableStateFlow(loadRefs())
@@ -144,6 +152,39 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     /** The proven chat of [phone], or null: then SMS. */
     fun linkFor(phone: String): ChatLink? = _links.value[key(phone)]?.takeIf { it.proven && it.chatId > 0 }
+
+    /** Every member proven: the group goes over the encrypted chat. */
+    fun groupReady(phones: List<String>): Boolean = phones.size > 1 && phones.all { linkFor(it) != null }
+
+    /** The chat of one number or of a group, made for the group the first time. */
+    private suspend fun chatOf(phones: List<String>): Int? {
+        if (phones.size == 1) return linkFor(phones[0])?.chatId
+        if (!groupReady(phones)) return null
+        _groups.value[groupKey(phones)]?.let { return it.chatId }
+        return runCatching {
+            val chat = engine.call("create_group_chat", account, "SMS", false).jsonPrimitive.int
+            phones.forEach { phone ->
+                val one = linkFor(phone)!!.chatId
+                val contact = engine.call("get_chat_contacts", account, one).jsonArray.map { it.jsonPrimitive.int }.first { it != SELF }
+                engine.call("add_contact_to_chat", account, chat, contact)
+            }
+            saveGroup(ChatGroup(chat, phones))
+            chat
+        }.getOrNull()
+    }
+
+    /**
+     * A group someone else made: known when each of its other members is a
+     * proven number, so its messages join that group's conversation.
+     */
+    private suspend fun adopt(chat: Int): ChatGroup? = runCatching {
+        val contacts = engine.call("get_chat_contacts", account, chat).jsonArray.map { it.jsonPrimitive.int }.filter { it != SELF }
+        val phones = contacts.map { id ->
+            val address = engine.call("get_contact", account, id).jsonObject["address"]?.jsonPrimitive?.contentOrNull
+            _links.value.values.firstOrNull { it.proven && it.address == address }?.phone ?: return@runCatching null
+        }
+        if (phones.size < 2) null else ChatGroup(chat, phones).also(::saveGroup)
+    }.getOrNull()
 
     /**
      * Asks [phone] whether it has SMS too, at most once a month (unless
@@ -232,15 +273,25 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             return
         }
         if (message["isInfo"]?.jsonPrimitive?.booleanOrNull == true) return
-        val link = _links.value.values.firstOrNull { it.proven && it.chatId == chat } ?: return
         val file = message["file"]?.jsonPrimitive?.contentOrNull
         val mime = message["fileMime"]?.jsonPrimitive?.contentOrNull ?: "application/octet-stream"
-        val stored = withContext(Dispatchers.IO) {
+        val link = _links.value.values.firstOrNull { it.proven && it.chatId == chat }
+        val stored = if (link != null) withContext(Dispatchers.IO) {
             if (file != null) {
                 val data = runCatching { File(file).readBytes() }.getOrNull() ?: return@withContext null
                 MmsStore.saveReceivedParts(context, link.phone, text, mime, data)?.let { RichRef(true, it.second) to it.first }
             } else {
                 SmsStore.saveReceived(context, link.phone, text)?.let { RichRef(false, it.second) to it.first }
+            }
+        } else {
+            // A group: kept as a group message from its sender, to the others.
+            val group = _groups.value.values.firstOrNull { it.chatId == chat } ?: adopt(chat) ?: return
+            val from = (message["sender"] as? JsonObject)?.get("address")?.jsonPrimitive?.contentOrNull
+            val sender = _links.value.values.firstOrNull { it.proven && it.address == from }?.phone ?: return
+            val others = group.phones.filter { key(it) != key(sender) }
+            withContext(Dispatchers.IO) {
+                val data = file?.let { runCatching { File(it).readBytes() }.getOrNull() }
+                MmsStore.saveReceivedParts(context, sender, text, if (data != null) mime else null, data, others)?.let { RichRef(true, it.second) to it.first }
             }
         } ?: return
         saveRef(msgId, stored.first)
@@ -260,13 +311,19 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
      * each kept in Android's store as going out; the chat's reports turn
      * it sent, read or failed.
      */
-    suspend fun send(phone: String, text: String, attachments: List<Attachment>, quote: String?): Boolean {
-        val link = linkFor(phone) ?: return false
+    suspend fun send(phones: List<String>, text: String, attachments: List<Attachment>, quote: String?): Boolean {
+        if (phones.isEmpty() || (phones.size == 1 && linkFor(phones[0]) == null) || (phones.size > 1 && !groupReady(phones))) return false
         if (!start()) return false
+        val chatId = chatOf(phones) ?: return false
+        val phone = phones[0]
         return runCatching {
             if (attachments.isEmpty()) {
-                val id = engine.call("send_msg", account, link.chatId, mapOf("text" to text, "quotedText" to quote)).jsonPrimitive.int
-                SmsStore.saveSending(context, phone, text)?.let { saveRef(id, RichRef(false, it, mine = true)) }
+                val id = engine.call("send_msg", account, chatId, mapOf("text" to text, "quotedText" to quote)).jsonPrimitive.int
+                if (phones.size == 1) {
+                    SmsStore.saveSending(context, phone, text)?.let { saveRef(id, RichRef(false, it, mine = true)) }
+                } else {
+                    MmsStore.saveSendingParts(context, phones, text, null, null)?.let { saveRef(id, RichRef(true, it, mine = true)) }
+                }
             } else {
                 attachments.forEachIndexed { i, a ->
                     val copy = copyIn(a) ?: return@forEachIndexed
@@ -277,10 +334,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                     }
                     val caption = if (i == 0) text else ""
                     val id = engine.call(
-                        "send_msg", account, link.chatId,
+                        "send_msg", account, chatId,
                         mapOf("text" to caption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (i == 0) quote else null)
                     ).jsonPrimitive.int
-                    MmsStore.saveSendingParts(context, phone, caption, a.contentType, copy.readBytes())?.let { saveRef(id, RichRef(true, it, mine = true)) }
+                    MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy.readBytes())?.let { saveRef(id, RichRef(true, it, mine = true)) }
                 }
             }
             _changes.value++
@@ -289,11 +346,15 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     }
 
     /** What the user has seen, so the other side gets its read receipt. */
-    suspend fun markSeen(phone: String) {
-        val link = linkFor(phone) ?: return
+    suspend fun markSeen(phones: List<String>) {
+        val chatId = when {
+            phones.size == 1 -> linkFor(phones[0])?.chatId
+            groupReady(phones) -> _groups.value[groupKey(phones)]?.chatId
+            else -> null
+        } ?: return
         if (!start()) return
         runCatching {
-            val ids = engine.call("get_message_ids", account, link.chatId, false, false).jsonArray.map { it.jsonPrimitive.int }
+            val ids = engine.call("get_message_ids", account, chatId, false, false).jsonArray.map { it.jsonPrimitive.int }
             if (ids.isNotEmpty()) engine.call("markseen_msgs", account, ids)
         }
     }
@@ -336,18 +397,18 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         }
     }
 
-    /** How long messages with [phone] last before they vanish, in seconds; 0 for always. */
-    suspend fun timer(phone: String): Int {
-        val link = linkFor(phone) ?: return 0
+    /** How long messages with [phones] last before they vanish, in seconds; 0 for always. */
+    suspend fun timer(phones: List<String>): Int {
         if (!start()) return 0
-        return runCatching { engine.call("get_chat_ephemeral_timer", account, link.chatId).jsonPrimitive.int }.getOrDefault(0)
+        val chatId = chatOf(phones) ?: return 0
+        return runCatching { engine.call("get_chat_ephemeral_timer", account, chatId).jsonPrimitive.int }.getOrDefault(0)
     }
 
-    /** Messages with [phone] vanish [seconds] after they are read, on both sides; 0 turns it off. */
-    suspend fun setTimer(phone: String, seconds: Int): Boolean {
-        val link = linkFor(phone) ?: return false
+    /** Messages with [phones] vanish [seconds] after they are read, on both sides; 0 turns it off. */
+    suspend fun setTimer(phones: List<String>, seconds: Int): Boolean {
         if (!start()) return false
-        return runCatching { engine.call("set_chat_ephemeral_timer", account, link.chatId, seconds) }.isSuccess.also { if (it) _changes.value++ }
+        val chatId = chatOf(phones) ?: return false
+        return runCatching { engine.call("set_chat_ephemeral_timer", account, chatId, seconds) }.isSuccess.also { if (it) _changes.value++ }
     }
 
     /** What the chat now says of a message: its text after an edit, its pin. */
@@ -414,6 +475,17 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         runCatching { refsFile.writeTextAtomically(json.encodeToString(updated)) }
     }
 
+    private fun saveGroup(group: ChatGroup) {
+        val updated = _groups.value + (groupKey(group.phones) to group)
+        _groups.value = updated
+        runCatching { groupsFile.writeTextAtomically(json.encodeToString(updated)) }
+    }
+
+    private fun loadGroups(): Map<String, ChatGroup> =
+        runCatching { json.decodeFromString<Map<String, ChatGroup>>(groupsFile.readText()) }.getOrDefault(emptyMap())
+
+    private fun groupKey(phones: List<String>) = phones.map(::key).sorted().joinToString(",")
+
     private fun loadRefs(): Map<Int, RichRef> =
         runCatching { json.decodeFromString<Map<Int, RichRef>>(refsFile.readText()) }.getOrDefault(emptyMap())
 
@@ -427,6 +499,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     companion object {
         /** The port the data SMS carrying an invite go to. */
         const val PORT: Short = 18471
+        /** The engine's id for the user themselves among a chat's contacts. */
+        private const val SELF = 1
         /** A number without SMS is asked again only a month later. */
         private const val ASK_AGAIN_MS = 30L * 24 * 60 * 60 * 1000
     }

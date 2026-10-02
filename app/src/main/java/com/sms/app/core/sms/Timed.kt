@@ -103,7 +103,8 @@ class TimedReceiver : BroadcastReceiver(), KoinComponent {
                     Timed.SEND -> {
                         val s = Timed.take(app, intent.getLongExtra("id", -1)) ?: return@launch
                         val one = s.to.singleOrNull()
-                        if (one != null && chat.linkFor(one) != null && chat.send(one, s.text, emptyList(), null)) return@launch
+                        // Over the encrypted chat when the number, or every member of the group, has it.
+                        if (chat.send(s.to, s.text, emptyList(), null)) return@launch
                         if (one != null) SmsSender.send(app, one, s.text, s.sub)
                         else com.sms.app.core.mms.MmsTransport.send(app, s.to, s.text, emptyList(), s.sub)
                     }

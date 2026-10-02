@@ -31,7 +31,7 @@ class NotificationActions : BroadcastReceiver() {
                         if (text.isNotBlank() && address.isNotBlank()) {
                             // Over the rich chat when the number has it, else SMS.
                             val chat = GlobalContext.get().get<RichChat>()
-                            if (chat.linkFor(address) == null || !chat.send(address, text, emptyList(), null)) SmsSender.send(app, address, text)
+                            if (chat.linkFor(address) == null || !chat.send(listOf(address), text, emptyList(), null)) SmsSender.send(app, address, text)
                         }
                         Messages.markRead(app, thread)
                         MessageNotifier(app).cancel(thread)

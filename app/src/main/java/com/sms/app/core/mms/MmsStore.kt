@@ -84,9 +84,13 @@ object MmsStore {
         uri
     }.getOrNull()
 
-    /** A picture or file that came over the rich chat, kept in the inbox: its thread and id. */
-    fun saveReceivedParts(context: Context, phone: String, text: String, mime: String, data: ByteArray): Pair<Long, Long>? = runCatching {
-        val thread = Telephony.Threads.getOrCreateThreadId(context, phone)
+    /**
+     * A picture or file that came over the rich chat, kept in the inbox: its
+     * thread and id. In a group, [others] are the rest of its members, so it
+     * joins the group's conversation; then a text alone comes this way too.
+     */
+    fun saveReceivedParts(context: Context, phone: String, text: String, mime: String?, data: ByteArray?, others: List<String> = emptyList()): Pair<Long, Long>? = runCatching {
+        val thread = Telephony.Threads.getOrCreateThreadId(context, (listOf(phone) + others).toSet())
         val uri = context.contentResolver.insert(
             Telephony.Mms.Inbox.CONTENT_URI,
             ContentValues().apply {
@@ -102,21 +106,22 @@ object MmsStore {
         val id = ContentUris.parseId(uri)
         writeParts(context, id, bodyOf(text, mime, data))
         writeAddress(context, id, phone, PduHeaders.FROM)
+        others.forEach { writeAddress(context, id, it, PduHeaders.TO) }
         thread to id
     }.getOrNull()
 
-    /** A picture or file going out over the rich chat, kept in the outbox: its id. */
-    fun saveSendingParts(context: Context, phone: String, text: String, mime: String, data: ByteArray): Long? =
-        saveOutgoing(context, listOf(phone), bodyOf(text, mime, data), -1)?.let { ContentUris.parseId(it) }
+    /** A message going out over the rich chat to one number or a group, kept in the outbox: its id. */
+    fun saveSendingParts(context: Context, phones: List<String>, text: String, mime: String?, data: ByteArray?): Long? =
+        saveOutgoing(context, phones, bodyOf(text, mime, data), -1)?.let { ContentUris.parseId(it) }
 
-    private fun bodyOf(text: String, mime: String, data: ByteArray) = PduBody().apply {
+    private fun bodyOf(text: String, mime: String?, data: ByteArray?) = PduBody().apply {
         if (text.isNotBlank()) addPart(com.sms.app.core.mms.pdu.PduPart().apply {
             setContentType(ContentType.TEXT_PLAIN.toByteArray())
             setCharset(CharacterSets.UTF_8)
             setContentLocation("text0.txt".toByteArray())
             setData(text.toByteArray(Charsets.UTF_8))
         })
-        addPart(com.sms.app.core.mms.pdu.PduPart().apply {
+        if (mime != null && data != null) addPart(com.sms.app.core.mms.pdu.PduPart().apply {
             setContentType(mime.toByteArray())
             setContentLocation("file0".toByteArray())
             setData(data)

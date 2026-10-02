@@ -67,7 +67,8 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_SENDTO, Intent.ACTION_SEND -> {
                 val to = OpenRequests.addressesOf(intent.data?.schemeSpecificPart)
                 val text = OpenRequests.textOf(intent.getStringExtra("sms_body") ?: intent.getCharSequenceExtra(Intent.EXTRA_TEXT))
-                requests.open(OpenRequest(null, to.firstOrNull(), text))
+                // Several numbers (smsto:a,b) open their group.
+                requests.open(OpenRequest(null, to.joinToString(",").ifEmpty { null }, text))
             }
         }
     }

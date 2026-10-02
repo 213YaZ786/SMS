@@ -159,7 +159,9 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val canCall = !group && to.count(Char::isDigit) >= 3
     // With one number: the rich chat when it has SMS too, else SMS.
     val linked = remember(links, to) { if (group || to.isBlank()) null else chat.linkFor(to) }
-    LaunchedEffect(linked, chatChanges, shown) { if (linked != null && shown) chat.markSeen(to) }
+    // A group goes over the encrypted chat when each of its members does.
+    val encrypted = remember(links, people) { linked != null || (group && chat.groupReady(people)) }
+    LaunchedEffect(encrypted, chatChanges, shown) { if (encrypted && shown) chat.markSeen(people) }
 
     val density = LocalDensity.current
     var composerHeight by remember { mutableStateOf(0.dp) }
@@ -169,7 +171,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     var editing by remember { mutableStateOf<Pair<Int, String>?>(null) }
     // How long messages last in the encrypted chat, in seconds; 0 for always.
     var vanish by remember { mutableIntStateOf(0) }
-    LaunchedEffect(linked, chatChanges) { vanish = if (linked != null) chat.timer(to) else 0 }
+    LaunchedEffect(encrypted, chatChanges) { vanish = if (encrypted) chat.timer(people) else 0 }
     // Messages waiting their few seconds before they go, and text taken back.
     val store: SettingsStore = koinInject()
     var waiting by remember { mutableStateOf<List<Pending>>(emptyList()) }
@@ -197,7 +199,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         scope.launch(Dispatchers.IO) {
             // Over the rich chat when the number has it, quote included;
             // else a group or a picture as a picture message, the rest as SMS.
-            if (linked != null && chat.send(to, p.text, p.attachments, p.quoted)) return@launch
+            if (encrypted && chat.send(people, p.text, p.attachments, p.quoted)) return@launch
             val text = p.quoted?.let { "«${excerpt(it)}»\n${p.text}" } ?: p.text
             if (group || p.attachments.isNotEmpty()) MmsTransport.send(context, people, text, p.attachments, p.sub)
             else SmsSender.send(context, to, text, p.sub)
@@ -224,12 +226,12 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                 leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) },
                 trailing = { if (canCall) FloatingAction(AppIcons.Call, "Call", { NumberActions.dial(context, to) }) },
                 center = {
-                    PersonPill(title, to, entry?.contactId, group, vanish = if (linked != null) vanish else null) { seconds ->
-                        scope.launch { if (chat.setTimer(to, seconds)) vanish = seconds }
+                    PersonPill(title, to, entry?.contactId, group, vanish = if (encrypted) vanish else null) { seconds ->
+                        scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds }
                     }
                 }
             )
-            androidx.compose.animation.AnimatedVisibility(visible = linked != null, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            androidx.compose.animation.AnimatedVisibility(visible = encrypted, modifier = Modifier.align(Alignment.CenterHorizontally)) {
                 FloatingPane(shape = CircleShape) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                         Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
@@ -387,7 +389,7 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
     if (choosingVanish && vanish != null) VanishDialog(vanish, onPick = onVanish) { choosingVanish = false }
     Box(Modifier.then(menu.tracker)) {
         FloatingPane(shape = CircleShape, onClick = menu::open) {
-            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
+            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
         }
         val digits = !group && address.count(Char::isDigit) >= 3
         PillMenu(
