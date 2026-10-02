@@ -8,8 +8,12 @@ A messaging app for Android. No account, no tracking, no ads.
 - Long press a conversation to read and answer it without opening it;
   swipe a message to answer it.
 - Photos, videos and group messages (MMS).
-- Encrypted chat with other SMS users: read receipts, reactions, photos
-  in full quality, found by their phone number; SMS for everyone else.
+- Encrypted chat with other SMS users, found by their phone number:
+  read receipts, reactions, photos and files in full quality, voice
+  messages, groups, edit or delete a message for everyone, pinned and
+  vanishing messages; SMS for everyone else.
+- Send photos, a photo taken now, any file or a contact card; hold the
+  microphone for a voice message.
 - Reply from the notification or from a floating bubble; pin, archive,
   search; links opened without their trackers.
 - A few seconds to take a message back; hold Send to send it later;
