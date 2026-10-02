@@ -63,13 +63,16 @@ object CallBook {
             .setCapabilities(PhoneAccount.CAPABILITY_SELF_MANAGED or PhoneAccount.CAPABILITY_VIDEO_CALLING or PhoneAccount.CAPABILITY_SUPPORTS_VIDEO_CALLING)
             .setShortDescription("Encrypted calls")
             .setSupportedUriSchemes(listOf(PhoneAccount.SCHEME_TEL))
+            // In Android's call history, so Dialer's Recents hold them with the other calls.
+            .setExtras(Bundle().apply { putBoolean(PhoneAccount.EXTRA_LOG_SELF_MANAGED_CALLS, true) })
             .build()
         runCatching { telecom.registerPhoneAccount(account) }
     }
 
     /** An encrypted call to [phone]: Telecom first, the media once it says yes. */
     fun place(context: Context, phone: String, video: Boolean): Boolean {
-        if (_call.value != null) return false
+        forgetStale()
+        if (_call.value != null || !CallLine.dialerShowsCalls(context)) return false
         register(context)
         val telecom = context.getSystemService(TelecomManager::class.java) ?: return false
         if (!telecom.isOutgoingCallPermitted(handle(context))) return false
@@ -82,9 +85,15 @@ object CallBook {
             .onFailure { set(null) }.isSuccess
     }
 
+    /** A call kept here that Telecom no longer holds (it ended it on its side) is let go. */
+    private fun forgetStale() {
+        if (_call.value != null && connection == null) _call.value = null
+    }
+
     /** A call comes in over the chat: it rings unless one is already going. */
     fun ring(context: Context, msgId: Int, phone: String, offer: String, video: Boolean): Boolean {
-        if (_call.value != null) return false
+        forgetStale()
+        if (_call.value != null || !CallLine.dialerShowsCalls(context)) return false
         register(context)
         val telecom = context.getSystemService(TelecomManager::class.java) ?: return false
         if (!telecom.isIncomingCallPermitted(handle(context))) return false

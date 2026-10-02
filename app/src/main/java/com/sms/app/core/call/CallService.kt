@@ -15,7 +15,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import com.sms.app.R
 import com.sms.app.core.dial.Numbers
-import com.sms.app.feature.call.CallActivity
 
 /**
  * Keeps the call's microphone (and camera, for a video call) while the
@@ -27,30 +26,14 @@ class CallService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val call = CallBook.call.value ?: run {
+        CallBook.call.value ?: run {
             stopSelf()
             return START_NOT_STICKY
         }
-        var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-        if (call.video) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-        runCatching { startForeground(CallNotices.ID, CallNotices.ongoing(this, call), types) }
-            .onFailure { startForeground(CallNotices.ID, CallNotices.ongoing(this, call), ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL) }
+        val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        runCatching { startForeground(CallNotices.ID, CallNotices.line(this), types) }
+            .onFailure { runCatching { startForeground(CallNotices.ID, CallNotices.line(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL) } }
         return START_NOT_STICKY
-    }
-}
-
-/** Hang up or decline from the notification. Not exported: only this app's notifications send it. */
-class CallActions : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        when (intent.action) {
-            ACTION_HANG_UP -> CallBook.connection?.hangUp(DisconnectCause.LOCAL)
-            ACTION_DECLINE -> CallBook.connection?.hangUp(DisconnectCause.REJECTED)
-        }
-    }
-
-    companion object {
-        const val ACTION_HANG_UP = "com.sms.app.call.HANG_UP"
-        const val ACTION_DECLINE = "com.sms.app.call.DECLINE"
     }
 }
 
@@ -68,50 +51,24 @@ object CallNotices {
             setSound(null, null)
             enableVibration(false)
         })
-        manager.createNotificationChannel(NotificationChannel(ONGOING, "Encrypted call in progress", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel(ONGOING, "Encrypted call line", NotificationManager.IMPORTANCE_MIN))
     }
 
-    fun screen(context: Context, answer: Boolean = false): Intent =
-        Intent(context, CallActivity::class.java).setAction(if (answer) CallActivity.ACTION_ANSWER else CallActivity.ACTION_SHOW)
-
-    private fun person(context: Context, phone: String) =
-        Person.Builder().setName(com.sms.app.core.dial.ContactLookup.nameOf(context, phone) ?: Numbers.format(context, phone)).setImportant(true).build()
-
-    private fun broadcast(context: Context, action: String, code: Int) = PendingIntent.getBroadcast(
-        context, code, Intent(context, CallActions::class.java).setAction(action), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-    )
-
-    private fun activity(context: Context, answer: Boolean, code: Int) = PendingIntent.getActivity(
-        context, code, screen(context, answer).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-    )
-
-    fun incoming(context: Context, call: ChatCall) {
-        channels(context)
-        val notice = NotificationCompat.Builder(context, RINGING)
-            .setSmallIcon(R.drawable.ic_stat_sms)
-            .setContentText(if (call.video) "Encrypted video call" else "Encrypted call")
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setOngoing(true)
-            .setFullScreenIntent(activity(context, answer = false, code = 1), true)
-            .setContentIntent(activity(context, answer = false, code = 1))
-            .setStyle(NotificationCompat.CallStyle.forIncomingCall(person(context, call.phone), broadcast(context, CallActions.ACTION_DECLINE, 2), activity(context, answer = true, code = 3)))
-            .build()
-        runCatching { context.getSystemService(NotificationManager::class.java).notify(ID, notice) }
-    }
-
-    fun ongoing(context: Context, call: ChatCall): Notification {
+    /** What Android asks while the line keeps the microphone; Dialer shows the call itself. */
+    fun line(context: Context): Notification {
         channels(context)
         return NotificationCompat.Builder(context, ONGOING)
             .setSmallIcon(R.drawable.ic_stat_sms)
-            .setContentText(if (call.video) "Encrypted video call" else "Encrypted call")
-            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setContentText("Encrypted call line")
             .setOngoing(true)
-            .setUsesChronometer(call.since > 0)
-            .setWhen(if (call.since > 0) call.since else System.currentTimeMillis())
-            .setContentIntent(activity(context, answer = false, code = 1))
-            .setStyle(NotificationCompat.CallStyle.forOngoingCall(person(context, call.phone), broadcast(context, CallActions.ACTION_HANG_UP, 4)))
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
     }
+
+    private fun person(context: Context, phone: String) =
+        Person.Builder().setName(com.sms.app.core.dial.ContactLookup.nameOf(context, phone) ?: Numbers.format(context, phone)).build()
 
     fun missed(context: Context, phone: String, video: Boolean) {
         channels(context)

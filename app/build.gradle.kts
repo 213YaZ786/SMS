@@ -67,6 +67,8 @@ android {
     packaging {
         // The chat engine is a program, run from where Android unpacks it.
         jniLibs.useLegacyPackaging = true
+        // WebRTC's builds for x86 computers (emulators) stay out of the phone APK.
+        jniLibs.excludes += setOf("lib/x86/libjingle_peerconnection_so.so", "lib/x86_64/libjingle_peerconnection_so.so")
         resources.excludes += setOf(
             "/META-INF/{AL2.0,LGPL2.1}",
             "/META-INF/INDEX.LIST",
@@ -76,6 +78,8 @@ android {
 }
 
 dependencies {
+    // The encrypted calls' voice: WebRTC's Android build by webrtc-sdk (MIT, LiveKit's community).
+    implementation("io.github.webrtc-sdk:android:150.7871.01")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

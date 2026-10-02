@@ -410,15 +410,27 @@ private fun CallButton(phone: String, encrypted: Boolean) {
     val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
     var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    // Dialer shows the encrypted calls: only offered when it is the phone app.
+    val line = encrypted && remember { com.sms.app.core.call.CallLine.dialerShowsCalls(context) }
+    fun encryptedCall() {
+        if (!com.sms.app.core.call.CallBook.place(context, phone, video = false)) {
+            android.widget.Toast.makeText(context, "The call cannot be made now.", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+    val askMic = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) encryptedCall()
+    }
     Box(Modifier.onGloballyPositioned { bounds = it.boundsInWindow() }) {
-        FloatingAction(AppIcons.Call, "Call", { if (encrypted) open = true else NumberActions.dial(context, phone) })
+        FloatingAction(AppIcons.Call, "Call", { if (line) open = true else NumberActions.dial(context, phone) })
     }
     if (open) PaletteMenu(
         bounds,
         listOf(
-            MessageAction(AppIcons.Call, "Encrypted call") { com.sms.app.feature.call.CallActivity.start(context, phone, video = false) },
-            MessageAction(AppIcons.Videocam, "Video call") { com.sms.app.feature.call.CallActivity.start(context, phone, video = true) },
-            MessageAction(AppIcons.Dialpad, "Phone call") { NumberActions.dial(context, phone) }
+            MessageAction(AppIcons.Lock, "Encrypted call") {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) encryptedCall()
+                else askMic.launch(android.Manifest.permission.RECORD_AUDIO)
+            },
+            MessageAction(AppIcons.Call, "Phone call") { NumberActions.dial(context, phone) }
         ),
         onDismiss = { open = false }
     )

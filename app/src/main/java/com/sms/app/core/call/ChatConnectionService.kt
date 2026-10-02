@@ -1,7 +1,6 @@
 package com.sms.app.core.call
 
 import android.content.Context
-import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.Ringtone
@@ -38,6 +37,7 @@ class ChatConnectionService : ConnectionService() {
             videoState = if (call.video) VideoProfile.STATE_BIDIRECTIONAL else VideoProfile.STATE_AUDIO_ONLY
             setDialing()
             CallBook.connection = this
+            CallLine.start(applicationContext)
         }
     }
 
@@ -74,16 +74,21 @@ class ChatConnection(private val context: Context) : Connection(), KoinComponent
         audioModeIsVoip = true
     }
 
-    override fun onShowIncomingCallUi() {
-        val call = CallBook.call.value ?: return
-        Ringer.start(context)
-        CallNotices.incoming(context, call)
-    }
+    /**
+     * Dialer's call screen shows it; the line rings, as Telecom rings for a
+     * SIM (a self-managed line plays its own ringtone).
+     */
+    override fun onShowIncomingCallUi() = Ringer.start(context)
 
-    /** Answered from a headset or a watch: the call screen takes it. */
+    /** Silenced from Dialer's screen, or the phone turned face down. */
+    override fun onSilence() = Ringer.stop()
+
+    /** Answered on Dialer's screen, a headset or a watch. */
     override fun onAnswer(videoState: Int) {
         Ringer.stop()
-        context.startActivity(CallNotices.screen(context, answer = true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        // Answered is active for Telecom at once; the voice joins a moment later.
+        setActive()
+        CallLine.answer(context)
     }
 
     override fun onAnswer() = onAnswer(VideoProfile.STATE_AUDIO_ONLY)
@@ -94,12 +99,23 @@ class ChatConnection(private val context: Context) : Connection(), KoinComponent
 
     override fun onAbort() = hangUp(DisconnectCause.LOCAL)
 
-    override fun onCallAudioStateChanged(state: CallAudioState?) {
-        CallBook.update { it.copy(speaker = state?.route == CallAudioState.ROUTE_SPEAKER) }
+    /** Telecom let go of it on its side (a failed answer, a time limit): it ends here too. */
+    override fun onStateChanged(state: Int) {
+        if (state == STATE_DISCONNECTED && CallBook.connection === this) {
+            CallBook.call.value?.msgId?.let { endInEngine(context, it) }
+            CallBook.end()
+            CallBook.set(null)
+            CallLine.close(context)
+        }
     }
 
-    @Suppress("DEPRECATION")
-    fun speaker(on: Boolean) = setAudioRoute(if (on) CallAudioState.ROUTE_SPEAKER else CallAudioState.ROUTE_WIRED_OR_EARPIECE)
+    /** Mute and the sound's way, as Dialer's screen sets them through Telecom. */
+    @Deprecated("Telecom still calls it on every Android this app runs on")
+    override fun onCallAudioStateChanged(state: CallAudioState?) {
+        val muted = state?.isMuted == true
+        CallLine.mute(muted)
+        CallBook.update { it.copy(muted = muted, speaker = state?.route == CallAudioState.ROUTE_SPEAKER) }
+    }
 
     /** Ended here: the other side is told through the engine. */
     fun hangUp(cause: Int) {
@@ -114,8 +130,8 @@ class ChatConnection(private val context: Context) : Connection(), KoinComponent
         setDisconnected(DisconnectCause(cause))
         destroy()
         CallBook.end()
-        CallNotices.clear(context)
-        context.stopService(Intent(context, CallService::class.java))
+        CallBook.set(null)
+        CallLine.close(context)
     }
 
     companion object : KoinComponent {
