@@ -41,6 +41,9 @@ object AppIcons {
     /** End-to-end encrypted. */
     val Lock: ImageVector by lazy { build("Lock", "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z") }
 
+    /** A vibration of one's own for a person. */
+    val Vibration: ImageVector by lazy { build("Vibration", "M0 15h2V9H0v6zm3 2h2V7H3v10zm19-8v6h2V9h-2zm-3 8h2V7h-2v10zM16.5 3h-9C6.67 3 6 3.67 6 4.5v15c0 .83.67 1.5 1.5 1.5h9c.83 0 1.5-.67 1.5-1.5v-15c0-.83-.67-1.5-1.5-1.5zM16 19H8V5h8v14z") }
+
     /** Send a message. */
     val Send: ImageVector by lazy { build("Send", "M2.01 21L23 12 2.01 3 2 10l15 2-15 2z") }
 

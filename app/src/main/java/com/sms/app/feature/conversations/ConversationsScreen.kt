@@ -178,7 +178,9 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     item(key = "services") {
                         ServicesStack(services, open = servicesOpen) { servicesOpen = !servicesOpen }
                     }
-                    if (servicesOpen) items(services, key = { "s/${it.threadId}" }) { c -> line(c) }
+                    if (servicesOpen) items(services, key = { "s/${it.threadId}" }) { c ->
+                        Box(Modifier.animateItem()) { line(c) }
+                    }
                 }
             }
         }

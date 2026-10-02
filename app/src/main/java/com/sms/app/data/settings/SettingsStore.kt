@@ -37,6 +37,8 @@ data class Settings(
     val composeY: Float = -1f,
     /** The little show of the new message button moving was seen. */
     val composeHintSeen: Boolean = false,
+    /** A vibration of their own for some people, by the last nine digits of their number. */
+    val signatures: Map<String, String> = emptyMap(),
     /** Seconds a message waits before it goes, to take it back with a tap; 0 sends at once. */
     val undoSeconds: Int = 4,
     /** Encrypted chat with other SMS users, over a chatmail relay. */

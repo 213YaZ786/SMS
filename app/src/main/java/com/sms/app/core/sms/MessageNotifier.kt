@@ -47,7 +47,11 @@ class MessageNotifier(private val context: Context) {
         val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
         unread.forEach { (_, body, date) -> style.addMessage(body, date, sender) }
         val code = Codes.find(unread.last().second)
-        val builder = NotificationCompat.Builder(context, CHANNEL)
+        // Someone with a vibration of their own rings on its channel.
+        val signature = runCatching {
+            org.koin.core.context.GlobalContext.get().get<com.sms.app.data.settings.SettingsStore>().current.signatures[Signatures.key(address)]
+        }.getOrNull()
+        val builder = NotificationCompat.Builder(context, signature?.let { Signatures.channel(context, it) } ?: CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_sms)
             .setStyle(style)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)

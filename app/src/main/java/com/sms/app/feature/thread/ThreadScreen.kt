@@ -75,6 +75,8 @@ import com.sms.app.core.chat.RichChat
 import com.sms.app.data.settings.SettingsStore
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
 import com.sms.app.core.chat.RichRef
 import com.sms.app.data.contacts.PhoneBook
 import com.sms.app.data.contacts.PhoneIndex
@@ -319,6 +321,8 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
     val menu = rememberPillMenu()
     var blocked by remember(address) { mutableStateOf(NumberActions.isBlocked(context, address)) }
     var confirmBlock by remember { mutableStateOf(false) }
+    var choosingSignature by remember { mutableStateOf(false) }
+    if (choosingSignature) SignatureDialog(address) { choosingSignature = false }
     Box(Modifier.then(menu.tracker)) {
         FloatingPane(shape = CircleShape, onClick = menu::open) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
@@ -331,6 +335,7 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
                 if (contactId != null) PillItem(AppIcons.Person, "Contact", PillMotion.BOUNCE) { NumberActions.openContact(context, contactId) }
                 else if (digits) PillItem(AppIcons.PersonAdd, "Add to contacts", PillMotion.BOUNCE) { NumberActions.addContact(context, address) } else null,
                 if (!group) PillItem(AppIcons.Copy, "Copy number", PillMotion.BOUNCE) { NumberActions.copy(context, address) } else null,
+                if (!group) PillItem(AppIcons.Vibration, "Vibration", PillMotion.WIGGLE) { choosingSignature = true } else null,
                 if (!group && NumberActions.canBlock(context)) PillItem(AppIcons.Block, if (blocked) "Unblock" else "Block", PillMotion.DROP) {
                     if (blocked) {
                         NumberActions.unblock(context, address)
@@ -514,7 +519,17 @@ private fun Bubble(m: Message, last: Boolean, fresh: Boolean, rich: RichRef?, on
                     else -> Triple(AppIcons.Done, "Sent · " + timeLabel(context, m.date), false)
                 }
                 val tint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(14.dp))
+                // Read draws itself, stroke by stroke, the moment it comes.
+                val read = rich?.seen == true
+                val draw = remember { Animatable(if (read) 1f else 0f) }
+                LaunchedEffect(read) { if (read) draw.animateTo(1f, androidx.compose.animation.core.tween(520)) }
+                Icon(
+                    icon, contentDescription = null,
+                    tint = if (read) MaterialTheme.colorScheme.primary else tint,
+                    modifier = Modifier.size(14.dp).drawWithContent {
+                        if (!read) drawContent() else clipRect(right = size.width * draw.value) { this@drawWithContent.drawContent() }
+                    }
+                )
                 Spacer(Modifier.width(4.dp))
                 Text(word, style = MaterialTheme.typography.labelSmall, color = tint)
             }
@@ -590,4 +605,36 @@ private fun PendingBubble(p: Pending, seconds: Int, modifier: Modifier, onCancel
         }
         Text("Tap to take it back", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, end = 6.dp))
     }
+}
+
+/** A vibration of their own for this person: felt while choosing. */
+@Composable
+private fun SignatureDialog(address: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val store: SettingsStore = koinInject()
+    val settings by store.settings.collectAsState()
+    val key = com.sms.app.core.sms.Signatures.key(address)
+    val current = settings.signatures[key]
+    ZoneAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Vibration") },
+        text = {
+            Column {
+                (listOf<String?>(null) + com.sms.app.core.sms.Signatures.patterns.keys).forEach { name ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            if (name != null) com.sms.app.core.sms.Signatures.play(context, name)
+                            store.update { s -> s.copy(signatures = if (name == null) s.signatures - key else s.signatures + (key to name)) }
+                        }.padding(vertical = 10.dp)
+                    ) {
+                        androidx.compose.material3.RadioButton(selected = current == name, onClick = null)
+                        Spacer(Modifier.width(12.dp))
+                        Text(name ?: "As usual", style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+    )
 }

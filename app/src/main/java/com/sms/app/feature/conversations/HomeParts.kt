@@ -68,6 +68,12 @@ internal fun CodeChip(c: Conversation, code: String, from: String?) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var copied by remember(code) { mutableStateOf(false) }
+    // A new code unfolds from the top with a tick.
+    val unfold = remember(code) { androidx.compose.animation.core.Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(code) {
+        haptics.tick()
+        unfold.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 300f))
+    }
     val pop by animateFloatAsState(if (copied) 1.04f else 1f, spring(dampingRatio = 0.4f, stiffness = 600f), label = "pop")
     val shape = RoundedCornerShape(22.dp)
     ZoneSurface(
@@ -77,7 +83,9 @@ internal fun CodeChip(c: Conversation, code: String, from: String?) {
             .fillMaxWidth()
             .graphicsLayer {
                 scaleX = pop
-                scaleY = pop
+                scaleY = pop * (0.3f + 0.7f * unfold.value)
+                alpha = unfold.value.coerceIn(0f, 1f)
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
             }
             .clip(shape)
             .clickable {
@@ -92,7 +100,7 @@ internal fun CodeChip(c: Conversation, code: String, from: String?) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
             Column(Modifier.weight(1f)) {
                 Text("Code from ${from ?: c.address} · ${minutesAgo(c.date)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(code.chunked(3).joinToString(" "), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                RollingCode(code.chunked(3).joinToString(" "))
             }
             ZoneSurface(shape = CircleShape, accent = true) {
                 AnimatedContent(copied, transitionSpec = { (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut()) }, label = "copied") { done ->
@@ -167,3 +175,27 @@ internal fun ServicesStack(services: List<Conversation>, open: Boolean, onToggle
 
 /** Fills the box its siblings set, under them. */
 private fun Modifier.matchParentSizeOf(): Modifier = this.fillMaxWidth().height(64.dp)
+
+/** The digits roll up into place one after the other, as Dialer's timer does. */
+@Composable
+private fun RollingCode(text: String) {
+    Row {
+        text.forEachIndexed { i, c ->
+            val roll = remember(text) { androidx.compose.animation.core.Animatable(0f) }
+            androidx.compose.runtime.LaunchedEffect(text) {
+                kotlinx.coroutines.delay(i * 45L)
+                roll.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 420f))
+            }
+            Text(
+                c.toString(),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.graphicsLayer {
+                    translationY = (1f - roll.value) * 40f
+                    alpha = roll.value.coerceIn(0f, 1f)
+                }
+            )
+        }
+    }
+}
