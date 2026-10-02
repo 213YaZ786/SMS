@@ -1,5 +1,13 @@
 package com.sms.app.feature.thread
 
+import kotlinx.coroutines.delay
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import android.content.ClipData
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
@@ -575,7 +583,7 @@ private fun Bubble(
     val appointment = remember(m.body) { if (code != null) null else com.sms.app.core.sms.Finds.appointment(m.body) }
     val accent = MaterialTheme.colorScheme.primary
     // Links in what was received are looked at for what they may hide; one tapped asks first.
-    val danger = MaterialTheme.colorScheme.error
+    val danger = cautionColor()
     val listVersion by com.sms.app.core.link.BadHosts.version.collectAsState()
     val checks = remember(m.body, stranger, listVersion, mine) {
         if (mine) emptyMap() else links(m.body).associateWith { url ->
@@ -723,8 +731,6 @@ private fun Bubble(
                     val blur by transition.animateDp(label = "blur") { if (it == androidx.compose.animation.EnterExitState.Visible) 0.dp else 6.dp }
                     Text(words, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.blur(blur).padding(horizontal = 16.dp, vertical = 10.dp))
                 }
-                // What each doubtful link may hide, in a line of red under the words.
-                checks.values.distinctBy { it.words }.forEach { verdict -> LinkWarning(verdict) }
               }
             }
             if (menuOpen) MessageMenu(
@@ -749,6 +755,14 @@ private fun Bubble(
                 ZoneSurface(shape = shape, accent = mine, shadowElevation = 8.dp) {
                     Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                 }
+            }
+        }
+        // A link not recognized: one capsule of glass just under the message, a tap tells where it goes.
+        // Never an accusation (it may be a sound link), except a site on the public list.
+        checks.entries.firstOrNull()?.let { (url, verdict) ->
+            SuspiciousCapsule(several = checks.size > 1, dangerous = checks.values.any { it.risk == com.sms.app.core.link.LinkCheck.Risk.LISTED }) {
+                haptics.reject()
+                risky = url to verdict
             }
         }
         if (!rich?.reactions.isNullOrEmpty()) {
@@ -951,7 +965,7 @@ private fun linked(
     val matcher = android.util.Patterns.WEB_URL.matcher(body)
     var at = 0
     val style = TextLinkStyles(SpanStyle(color = accent, textDecoration = TextDecoration.Underline))
-    val doubtful = TextLinkStyles(SpanStyle(color = danger, textDecoration = TextDecoration.LineThrough, background = danger.copy(alpha = 0.12f)))
+    val doubtful = TextLinkStyles(SpanStyle(color = danger, textDecoration = TextDecoration.Underline))
     while (matcher.find()) {
         val found = matcher.group()
         val url = linkOf(found) ?: continue
@@ -967,44 +981,92 @@ private fun linked(
     append(body.substring(at))
 }
 
-/** Under a message's words: what a doubtful link may be, the sign beating once as it shows. */
+/**
+ * Under a message's words: a capsule of red liquid glass with the warning
+ * sign, popping in as the message shows, the sign beating once; a tap
+ * says why and where the link goes.
+ */
 @Composable
-private fun LinkWarning(verdict: com.sms.app.core.link.LinkCheck.Verdict) {
-    val red = MaterialTheme.colorScheme.error
+private fun SuspiciousCapsule(several: Boolean, dangerous: Boolean, onClick: () -> Unit) {
+    val red = if (dangerous) MaterialTheme.colorScheme.error else cautionColor()
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val pop = remember { Animatable(0.6f) }
     val beat = remember { Animatable(1f) }
     LaunchedEffect(Unit) {
-        beat.animateTo(1.25f, androidx.compose.animation.core.tween(120))
+        launch { pop.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 500f)) }
+        delay(160)
+        beat.animateTo(1.3f, androidx.compose.animation.core.tween(110))
         beat.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 600f))
     }
-    Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 10.dp)) {
-        Icon(
-            AppIcons.Warning,
-            contentDescription = null,
-            tint = red,
-            modifier = Modifier.padding(top = 1.dp).size(15.dp).graphicsLayer { scaleX = beat.value; scaleY = beat.value }
-        )
+    val shape = CircleShape
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .padding(start = 6.dp, end = 6.dp, top = 4.dp)
+            .graphicsLayer {
+                scaleX = pop.value
+                scaleY = pop.value
+                alpha = ((pop.value - 0.6f) / 0.4f).coerceIn(0f, 1f)
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+            }
+            .clip(shape)
+            // Red glass: the colour through it, light caught on top, a soft rim all around.
+            .drawBehind {
+                drawRect(Brush.verticalGradient(listOf(red.copy(alpha = if (dark) 0.30f else 0.20f), red.copy(alpha = if (dark) 0.18f else 0.10f))))
+                drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = if (dark) 0.10f else 0.35f), 0.5f to Color.Transparent))
+                val r = size.height / 2
+                listOf(1f to 0.55f, 3f to 0.22f).forEach { (dp, k) ->
+                    val w = dp.dp.toPx()
+                    drawRoundRect(
+                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.5f * k), red.copy(alpha = 0.6f * k))),
+                        topLeft = Offset(w / 2, w / 2),
+                        size = Size(size.width - w, size.height - w),
+                        cornerRadius = CornerRadius(r - w / 2),
+                        style = Stroke(w)
+                    )
+                }
+            }
+            .clickable(onClickLabel = "Why", onClick = onClick)
+            .padding(start = 10.dp, end = 14.dp, top = 6.dp, bottom = 6.dp)
+    ) {
+        Icon(AppIcons.Warning, contentDescription = null, tint = red, modifier = Modifier.size(16.dp).graphicsLayer { scaleX = beat.value; scaleY = beat.value })
         Spacer(Modifier.width(6.dp))
-        Text(verdict.words, style = MaterialTheme.typography.labelMedium, color = red)
+        Text(
+            when {
+                dangerous -> if (several) "Dangerous links" else "Dangerous link"
+                else -> if (several) "Unrecognized links" else "Unrecognized link"
+            },
+            style = MaterialTheme.typography.labelLarge,
+            color = red
+        )
     }
 }
 
+/** The tone of a link that was not recognized: a warm red, a caution rather than an alarm. */
+@Composable
+private fun cautionColor(): Color = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.error, Color(0xFFE8890C), 0.4f)
+
 /**
- * A doubtful link tapped: why it may be a scam and where it really goes;
- * Cancel first, opening it is a choice made on purpose.
+ * A link not recognized, tapped: where it goes, and to open it only when
+ * the sender is trusted; Cancel first, opening it is a choice made on purpose.
  */
 @Composable
 private fun RiskyLinkDialog(url: String, verdict: com.sms.app.core.link.LinkCheck.Verdict, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val host = remember(url) { runCatching { java.net.URI(url).host }.getOrNull() ?: url }
+    val listed = verdict.risk == com.sms.app.core.link.LinkCheck.Risk.LISTED
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(AppIcons.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-        title = { Text("This link may be a scam") },
+        icon = { Icon(AppIcons.Warning, contentDescription = null, tint = if (listed) MaterialTheme.colorScheme.error else cautionColor()) },
+        title = { Text(if (listed) "Dangerous link" else "Unrecognized link") },
         text = {
             Column {
-                Text(verdict.words + ".")
+                Text(
+                    if (listed) "This site is on a public list of dangerous sites." else "Open it only if you trust the sender.",
+                    style = MaterialTheme.typography.bodyLarge
+                )
                 Spacer(Modifier.height(8.dp))
-                Text("It goes to $host", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Goes to $host", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
@@ -1014,7 +1076,7 @@ private fun RiskyLinkDialog(url: String, verdict: com.sms.app.core.link.LinkChec
                 runCatching {
                     context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(LinkCleaner.clean(url))).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
-            }) { Text("Open anyway", color = MaterialTheme.colorScheme.error) }
+            }) { Text("Open", color = if (listed) MaterialTheme.colorScheme.error else cautionColor()) }
         }
     )
 }

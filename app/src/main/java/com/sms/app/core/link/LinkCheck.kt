@@ -17,14 +17,14 @@ object LinkCheck {
     enum class Risk { LISTED, BARE_ADDRESS, DISGUISED, LOOKALIKE, SHORTENED }
 
     data class Verdict(val risk: Risk, val brand: String? = null) {
-        /** What the person reads under the link, in one line. */
+        /** Why, in a few words. */
         val words: String
             get() = when (risk) {
-                Risk.LISTED -> "This site is on a public list of dangerous sites"
-                Risk.BARE_ADDRESS -> "Goes to a bare internet address, not a site's name"
-                Risk.DISGUISED -> "Its address imitates another one"
-                Risk.LOOKALIKE -> "Uses the name $brand but is not $brand's site"
-                Risk.SHORTENED -> "A shortened link from someone you don't know: where it goes is hidden"
+                Risk.LISTED -> "A known dangerous site"
+                Risk.BARE_ADDRESS -> "An address with no site name"
+                Risk.DISGUISED -> "A disguised address"
+                Risk.LOOKALIKE -> "Not $brand's site"
+                Risk.SHORTENED -> "A shortened link from a stranger"
             }
     }
 
@@ -77,13 +77,29 @@ object LinkCheck {
         val tokens = host.split('.', '-').filter { it.isNotEmpty() }
         val flat = host.replace(".", "").replace("-", "")
         for (brand in BRANDS) {
-            val named = brand.keys.any { key -> key in tokens || key.length >= 7 && flat.contains(key) }
-            if (!named) continue
+            val key = brand.keys.firstOrNull { key -> key in tokens || key.length >= 7 && flat.contains(key) } ?: continue
             if (brand.domains.any { domain == it || host.endsWith(".$it") || host == it }) return null
+            // A name that is also an everyday word (apple, orange, chase) needs a scam's own word beside it.
+            if (key in EVERYDAY && tokens.none { t -> SCAM_WORDS.any { w -> if (w.length < 4) t == w else t.contains(w) } }) continue
             return brand.name
         }
         return null
     }
+
+    /** Brand keys that are also ordinary words or letters. */
+    private val EVERYDAY = setOf("apple", "orange", "chase", "ing", "sat", "ato", "caf", "ants", "edf", "ups", "att", "cra", "gls", "dpd", "free", "citi", "wise", "steam", "engie", "lcl", "sfr", "bnp")
+
+    /** Words scam addresses lean on, in the major languages. */
+    private val SCAM_WORDS = listOf(
+        "login", "signin", "secure", "security", "verify", "verif", "account", "update", "billing", "support", "pay", "payment", "refund",
+        "track", "deliver", "parcel", "package", "unlock", "locked", "confirm", "auth", "id", "wallet", "bonus", "prize",
+        "colis", "suivi", "livraison", "paiement", "rembours", "compte", "amende",
+        "sicherheit", "konto", "zahlung", "paket", "zustell",
+        "envio", "pago", "cuenta", "entrega", "paquete",
+        "pagament", "conta", "entrega", "encomenda",
+        "rimborso", "verifica", "pacco", "consegna",
+        "betaling", "pakket", "bezorg", "rekening"
+    )
 
     /**
      * The name a site registers, roughly: the last two labels, three under
@@ -110,9 +126,9 @@ object LinkCheck {
      */
     private val BRANDS = listOf(
         // Worldwide.
-        brand("PayPal", "paypal", "paypal.com paypal.fr paypal.de paypal.me"),
-        brand("Amazon", "amazon", "amazon.com amazon.fr amazon.de amazon.co.uk amazon.es amazon.it amazon.nl amazon.ca amazon.com.au amazon.in amazon.com.br amazon.co.jp amazon.com.mx amzn.to"),
-        brand("Apple", "apple icloud appleid", "apple.com icloud.com"),
+        brand("PayPal", "paypal", "paypal.com paypal.fr paypal.de paypal.me paypal-communication.com paypal-community.com paypalobjects.com"),
+        brand("Amazon", "amazon", "amazon.com amazon.fr amazon.de amazon.co.uk amazon.es amazon.it amazon.nl amazon.ca amazon.com.au amazon.in amazon.com.br amazon.co.jp amazon.com.mx amazon.pl amazon.se amazon.com.be amazon.ae amazon.sa amazon.sg amazon.com.tr amazon.eg amzn.to amzn.eu"),
+        brand("Apple", "apple icloud appleid", "apple.com icloud.com apple.news apple.co"),
         brand("Microsoft", "microsoft outlook office365 hotmail", "microsoft.com live.com office.com outlook.com hotmail.com"),
         brand("Google", "google gmail", "google.com gmail.com youtube.com goo.gl"),
         brand("Netflix", "netflix", "netflix.com"),
@@ -155,7 +171,7 @@ object LinkCheck {
         brand("Colissimo", "colissimo", "colissimo.fr laposte.fr"),
         brand("Chronopost", "chronopost", "chronopost.fr chronopost.com"),
         brand("Mondial Relay", "mondialrelay", "mondialrelay.fr mondialrelay.com"),
-        brand("Vinted", "vinted", "vinted.fr vinted.com"),
+        brand("Vinted", "vinted", "vinted.fr vinted.com vinted.de vinted.es vinted.it vinted.nl vinted.be vinted.co.uk vinted.pl vinted.pt"),
         brand("Leboncoin", "leboncoin", "leboncoin.fr"),
         brand("Crédit Agricole", "creditagricole credit-agricole", "credit-agricole.fr credit-agricole.com"),
         brand("Société Générale", "societegenerale", "societegenerale.fr societegenerale.com"),
@@ -221,7 +237,7 @@ object LinkCheck {
         brand("the Belastingdienst", "belastingdienst", "belastingdienst.nl"),
         brand("Rabobank", "rabobank", "rabobank.nl rabobank.com"),
         brand("ABN AMRO", "abnamro", "abnamro.nl abnamro.com"),
-        brand("bpost", "bpost", "bpost.be"),
+        brand("bpost", "bpost", "bpost.be bpost.cloud"),
         brand("itsme", "itsme", "itsme-id.com itsme.be"),
         // Canada, Australia.
         brand("Canada Post", "canadapost postescanada", "canadapost-postescanada.ca canadapost.ca"),
