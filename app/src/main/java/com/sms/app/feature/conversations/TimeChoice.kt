@@ -16,13 +16,16 @@ import com.sms.app.ui.component.rememberHaptics
 
 /** When: in an hour, this evening, tomorrow morning. */
 @Composable
-fun TimeChoice(title: String, onPick: (Long) -> Unit, onDismiss: () -> Unit) {
+fun TimeChoice(title: String, onPick: (Long) -> Unit, onDismiss: () -> Unit, explain: String? = null) {
     val haptics = rememberHaptics()
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
             Column {
+                explain?.let {
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+                }
                 Timed.choices().forEach { (label, at) ->
                     Text(
                         label,

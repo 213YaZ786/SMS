@@ -192,7 +192,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     }
 
     setAside?.let { c ->
-        TimeChoice("Back in this list", onPick = { at ->
+        TimeChoice("Remind me later", explain = "The conversation leaves the list and comes back on top, with a notification, at the time you choose.", onPick = { at ->
             com.sms.app.core.sms.Timed.later(context, store, c.threadId, at)
             setAside = null
         }, onDismiss = { setAside = null })
@@ -334,11 +334,7 @@ private fun ConversationLine(
     val pull = remember { androidx.compose.animation.core.Animatable(0f) }
     var armed by remember { mutableStateOf(false) }
     val reach = with(androidx.compose.ui.platform.LocalDensity.current) { 72.dp.toPx() }
-    Box(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().graphicsLayer {
-        scaleX = sink
-        scaleY = sink
-        translationX = pull.value
-    }.pointerInput(c.threadId) {
+    Box(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().pointerInput(c.threadId) {
         detectHorizontalDragGestures(
             onDragEnd = {
                 if (armed) onLater()
@@ -361,10 +357,28 @@ private fun ConversationLine(
             }
         )
     }) {
+        // Under the line as it slides: what letting go will do.
+        if (pull.value < 0f) Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 20.dp).graphicsLayer {
+                val shown = (-pull.value / reach).coerceIn(0f, 1f)
+                alpha = shown
+                scaleX = 0.7f + 0.3f * shown
+                scaleY = 0.7f + 0.3f * shown
+            }
+        ) {
+            Icon(AppIcons.Schedule, contentDescription = null, tint = if (armed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(8.dp))
+            Text("Later", style = MaterialTheme.typography.labelLarge, color = if (armed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         val shape = RoundedCornerShape(22.dp)
         ZoneSurface(
             shape = shape,
-            modifier = Modifier.fillMaxWidth().clip(shape).combinedClickable(
+            modifier = Modifier.fillMaxWidth().graphicsLayer {
+                scaleX = sink
+                scaleY = sink
+                translationX = pull.value
+            }.clip(shape).combinedClickable(
                 interactionSource = press,
                 indication = null,
                 onClickLabel = "Open",
