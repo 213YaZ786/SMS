@@ -54,7 +54,16 @@ data class ChatLink(
 
 /** A message of Android's store that went over the rich chat: where it is, what the chat says of it. */
 @Serializable
-data class RichRef(val mms: Boolean, val id: Long, val seen: Boolean = false, val reactions: List<String> = emptyList())
+data class RichRef(
+    val mms: Boolean,
+    val id: Long,
+    val seen: Boolean = false,
+    val reactions: List<String> = emptyList(),
+    val edited: Boolean = false,
+    val pinned: Boolean = false,
+    /** Ours: we may edit it or delete it for everyone. */
+    val mine: Boolean = false
+)
 
 /**
  * The rich chat between SMS users, over chatmail: end-to-end encrypted,
@@ -86,6 +95,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     /** The chat side of a message of the store, when it went over the chat. */
     fun refOf(mms: Boolean, id: Long): RichRef? = _refs.value.values.firstOrNull { it.mms == mms && it.id == id }
+
+    /** The chat's own id of a message of the store, when it went over the chat. */
+    fun chatIdOf(mms: Boolean, id: Long): Int? = _refs.value.entries.firstOrNull { it.value.mms == mms && it.value.id == id }?.key
 
     /** Bumped on every change of the chats, for open screens to read again. */
     private val _changes = MutableStateFlow(0)
@@ -188,6 +200,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             "MsgDelivered" -> if (msgId != null) _refs.value[msgId]?.let { mark(it, failed = false) }
             "MsgFailed" -> if (msgId != null) _refs.value[msgId]?.let { mark(it, failed = true) }
             "MsgRead" -> if (msgId != null) _refs.value[msgId]?.let { saveRef(msgId, it.copy(seen = true)) }
+            // Edited or pinned on the other side, or a vanishing message gone.
+            "MsgsChanged" -> if (msgId != null) _refs.value[msgId]?.let { refresh(msgId, it) }
+            "MsgDeleted" -> if (msgId != null) _refs.value[msgId]?.let { forget(msgId, it) }
             "ReactionsChanged", "IncomingReaction" -> if (msgId != null) _refs.value[msgId]?.let { ref ->
                 val emojis = runCatching {
                     engine.call("get_message_reactions", account, msgId).jsonObject["reactions"]?.jsonArray
@@ -251,7 +266,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         return runCatching {
             if (attachments.isEmpty()) {
                 val id = engine.call("send_msg", account, link.chatId, mapOf("text" to text, "quotedText" to quote)).jsonPrimitive.int
-                SmsStore.saveSending(context, phone, text)?.let { saveRef(id, RichRef(false, it)) }
+                SmsStore.saveSending(context, phone, text)?.let { saveRef(id, RichRef(false, it, mine = true)) }
             } else {
                 attachments.forEachIndexed { i, a ->
                     val copy = copyIn(a) ?: return@forEachIndexed
@@ -265,7 +280,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                         "send_msg", account, link.chatId,
                         mapOf("text" to caption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (i == 0) quote else null)
                     ).jsonPrimitive.int
-                    MmsStore.saveSendingParts(context, phone, caption, a.contentType, copy.readBytes())?.let { saveRef(id, RichRef(true, it)) }
+                    MmsStore.saveSendingParts(context, phone, caption, a.contentType, copy.readBytes())?.let { saveRef(id, RichRef(true, it, mine = true)) }
                 }
             }
             _changes.value++
@@ -287,6 +302,90 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         if (!start()) return
         runCatching { engine.call("send_reaction", account, messageId.toInt(), listOfNotNull(emoji)) }
         _changes.value++
+    }
+
+    /** Our own message, changed for both sides. */
+    suspend fun edit(msgId: Int, text: String): Boolean {
+        val ref = _refs.value[msgId]?.takeIf { it.mine } ?: return false
+        if (text.isBlank() || !start()) return false
+        val done = runCatching { engine.call("send_edit_request", account, msgId, text) }.isSuccess
+        if (done) {
+            withContext(Dispatchers.IO) { rewrite(ref, text) }
+            saveRef(msgId, ref.copy(edited = true))
+            _changes.value++
+        }
+        return done
+    }
+
+    /** Our own message, deleted here and on the other side. */
+    suspend fun deleteForAll(msgId: Int): Boolean {
+        val ref = _refs.value[msgId]?.takeIf { it.mine } ?: return false
+        if (!start()) return false
+        val done = runCatching { engine.call("delete_messages_for_all", account, listOf(msgId)) }.isSuccess
+        if (done) forget(msgId, ref)
+        return done
+    }
+
+    /** Pinned for both sides, to find it again at the top of the conversation. */
+    suspend fun pin(msgId: Int, on: Boolean) {
+        val ref = _refs.value[msgId] ?: return
+        if (!start()) return
+        if (runCatching { engine.call("set_pinned_message_state", account, msgId, on) }.isSuccess) {
+            saveRef(msgId, ref.copy(pinned = on))
+            _changes.value++
+        }
+    }
+
+    /** How long messages with [phone] last before they vanish, in seconds; 0 for always. */
+    suspend fun timer(phone: String): Int {
+        val link = linkFor(phone) ?: return 0
+        if (!start()) return 0
+        return runCatching { engine.call("get_chat_ephemeral_timer", account, link.chatId).jsonPrimitive.int }.getOrDefault(0)
+    }
+
+    /** Messages with [phone] vanish [seconds] after they are read, on both sides; 0 turns it off. */
+    suspend fun setTimer(phone: String, seconds: Int): Boolean {
+        val link = linkFor(phone) ?: return false
+        if (!start()) return false
+        return runCatching { engine.call("set_chat_ephemeral_timer", account, link.chatId, seconds) }.isSuccess.also { if (it) _changes.value++ }
+    }
+
+    /** What the chat now says of a message: its text after an edit, its pin. */
+    private suspend fun refresh(msgId: Int, ref: RichRef) {
+        val message = runCatching { engine.call("get_message", account, msgId).jsonObject }.getOrNull() ?: return
+        val edited = message["isEdited"]?.jsonPrimitive?.booleanOrNull == true
+        val pinned = message["isPinned"]?.jsonPrimitive?.booleanOrNull == true
+        if (edited) {
+            message["text"]?.jsonPrimitive?.contentOrNull?.let { text -> withContext(Dispatchers.IO) { rewrite(ref, text) } }
+        }
+        if (edited != ref.edited || pinned != ref.pinned) saveRef(msgId, ref.copy(edited = edited || ref.edited, pinned = pinned))
+    }
+
+    /** A message gone from the chat leaves Android's store too. */
+    private suspend fun forget(msgId: Int, ref: RichRef) {
+        withContext(Dispatchers.IO) {
+            runCatching { context.contentResolver.delete(Uri.parse(if (ref.mms) "content://mms/${ref.id}" else "content://sms/${ref.id}"), null, null) }
+        }
+        val updated = _refs.value - msgId
+        _refs.value = updated
+        runCatching { refsFile.writeTextAtomically(json.encodeToString(updated)) }
+        _changes.value++
+    }
+
+    /** The text of a message in Android's store replaced, after an edit. */
+    private fun rewrite(ref: RichRef, text: String) {
+        runCatching {
+            if (ref.mms) {
+                val values = android.content.ContentValues().apply { put(Telephony.Mms.Part.TEXT, text) }
+                context.contentResolver.update(
+                    Uri.parse("content://mms/part"), values,
+                    "${Telephony.Mms.Part.MSG_ID} = ? AND ${Telephony.Mms.Part.CONTENT_TYPE} = ?", arrayOf(ref.id.toString(), "text/plain")
+                )
+            } else {
+                val values = android.content.ContentValues().apply { put(Telephony.Sms.BODY, text) }
+                context.contentResolver.update(Uri.parse("content://sms/${ref.id}"), values, null, null)
+            }
+        }
     }
 
     /** A picked file copied where the engine may read it. */

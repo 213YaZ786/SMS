@@ -477,6 +477,120 @@ object AppIcons {
         )
     }
 
+    /** Pass a message on to someone else. Material Icons, Apache-2.0. */
+    val Forward: ImageVector by lazy {
+        build(
+            "Forward",
+            "M12 8V4l8 8-8 8v-4H4V8z"
+        )
+    }
+
+    /** Messages that vanish. Material Icons, Apache-2.0. */
+    val Timer: ImageVector by lazy {
+        build(
+            "Timer",
+            "M19.03,7.39l1.42-1.42c-0.43-0.51-0.9-0.99-1.41-1.41l-1.42,1.42C16.07,4.74,14.12,4,12,4c-4." +
+                "97,0-9,4.03-9,9 c0,4.97,4.02,9,9,9s9-4.03,9-9C21,10.88,20.26,8.93,19.03,7.39z M13,14h-2V8h" +
+                "2V14zM9 1h6v2H9z"
+        )
+    }
+
+    /** A video call. Material Icons, Apache-2.0. */
+    val Videocam: ImageVector by lazy {
+        build(
+            "Videocam",
+            "M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 " +
+                "4v-11l-4 4z"
+        )
+    }
+
+    /** The camera turned off in a call. Material Icons, Apache-2.0. */
+    val VideocamOff: ImageVector by lazy {
+        build(
+            "VideocamOff",
+            "M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v" +
+                "10c0 .55.45 1 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2z"
+        )
+    }
+
+    /** Take a photo. Material Icons, Apache-2.0. */
+    val PhotoCamera: ImageVector by lazy {
+        build(
+            "PhotoCamera",
+            "M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15" +
+                " 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zM12 15.2a3.2 3.2 0 1 0 0-6." +
+                "4 3.2 3.2 0 0 0 0 6.4z"
+        )
+    }
+
+    /** Send a file. Material Icons, Apache-2.0. */
+    val AttachFile: ImageVector by lazy {
+        build(
+            "AttachFile",
+            "M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5" +
+                "c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.7" +
+                "9-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"
+        )
+    }
+
+    /** Send a contact card. Material Icons, Apache-2.0. */
+    val ContactPage: ImageVector by lazy {
+        build(
+            "ContactPage",
+            "M14,2H6C4.9,2,4,2.9,4,4v16c0,1.1,0.9,2,2,2h12c1.1,0,2-0.9,2-2V8L14,2z M12,10c1.1,0,2,0.9,2" +
+                ",2c0,1.1-0.9,2-2,2s-2-0.9-2-2 C10,10.9,10.9,10,12,10z M16,18H8v-0.57c0-0.81,0.48-1.53,1.22" +
+                "-1.85C10.07,15.21,11.01,15,12,15c0.99,0,1.93,0.21,2.78,0.58 C15.52,15.9,16,16.62,16,17.43V" +
+                "18z"
+        )
+    }
+
+    /** Start a group. Material Icons, Apache-2.0. */
+    val GroupAdd: ImageVector by lazy {
+        build(
+            "GroupAdd",
+            "M8,12c2.21,0,4-1.79,4-4s-1.79-4-4-4S4,5.79,4,8S5.79,12,8,12zM8,13c-2.67,0-8,1.34-8,4v3h16v" +
+                "-3C16,14.34,10.67,13,8,13zM12.51,4.05C13.43,5.11,14,6.49,14,8s-0.57,2.89-1.49,3.95C14.47,1" +
+                "1.7,16,10.04,16,8S14.47,4.3,12.51,4.05zM16.53,13.83C17.42,14.66,18,15.7,18,17v3h2v-3C20,15" +
+                ".55,18.41,14.49,16.53,13.83zM22 9V7h-2v2h-2v2h2v2h2v-2h2V9z"
+        )
+    }
+
+    /** Stop a recording. Material Icons, Apache-2.0. */
+    val Stop: ImageVector by lazy {
+        build(
+            "Stop",
+            "M6 6h12v12H6z"
+        )
+    }
+
+    /** Pause a voice message. Material Icons, Apache-2.0. */
+    val Pause: ImageVector by lazy {
+        build(
+            "Pause",
+            "M6 19h4V5H6v14zm8-14v14h4V5h-4z"
+        )
+    }
+
+    /** More to send: photos, camera, file, contact. Material Icons, Apache-2.0. */
+    val Add: ImageVector by lazy {
+        build(
+            "Add",
+            "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"
+        )
+    }
+
+    /** Front or back camera. Material Icons, Apache-2.0. */
+    val CameraSwitch: ImageVector by lazy {
+        build(
+            "CameraSwitch",
+            "M16,7h-1l-1-1h-4L9,7H8C6.9,7,6,7.9,6,9v6c0,1.1,0.9,2,2,2h8c1.1,0,2-0.9,2-2V" +
+                "9C18,7.9,17.1,7,16,7z M12,14 c-1.1,0-2-0.9-2-2c0-1.1,0.9-2,2-2s2,0.9,2,2C14,13.1,13.1,14,1" +
+                "2,14zM8.57,0.51l4.48,4.48V2.04c4.72,0.47,8.48,4.23,8.95,8.95c0,0,2,0,2,0C23.34,3.02,15.49-" +
+                "1.59,8.57,0.51zM10.95,21.96C6.23,21.49,2.47,17.73,2,13.01c0,0-2,0-2,0c0.66,7.97,8.51,12.58" +
+                ",15.43,10.48l-4.48-4.48V21.96z"
+        )
+    }
+
     private fun build(name: String, pathData: String): ImageVector =
         ImageVector.Builder(
             name = name,

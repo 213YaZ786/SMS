@@ -62,7 +62,19 @@ import com.sms.app.ui.icon.AppIcons
  * two, how many SMS it makes once it is long, and Send on its own pane.
  */
 @Composable
-fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier: Modifier, restore: String? = null, onRestored: () -> Unit = {}, onSchedule: ((String, Int) -> Unit)? = null, onSend: (String, Int, List<Attachment>) -> Boolean) {
+fun Composer(
+    initial: String,
+    quote: String?,
+    onClearQuote: () -> Unit,
+    modifier: Modifier,
+    restore: String? = null,
+    onRestored: () -> Unit = {},
+    onSchedule: ((String, Int) -> Unit)? = null,
+    editing: String? = null,
+    onCancelEdit: () -> Unit = {},
+    onEdit: (String) -> Unit = {},
+    onSend: (String, Int, List<Attachment>) -> Boolean
+) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var text by rememberSaveable { mutableStateOf(initial) }
@@ -71,6 +83,14 @@ fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier
         if (restore != null) {
             text = restore
             onRestored()
+        }
+    }
+    // One of the user's own messages being changed: its text in the field until sent or let go.
+    var before by remember { mutableStateOf("") }
+    androidx.compose.runtime.LaunchedEffect(editing) {
+        if (editing != null) {
+            before = text
+            text = editing
         }
     }
     val sims = remember { activeSims(context) }
@@ -96,16 +116,21 @@ fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier
                 }
             }
         }
-        // The message being answered, until sent or let go.
-        androidx.compose.animation.AnimatedVisibility(visible = quote != null) {
+        // The message being answered or changed, until sent or let go.
+        androidx.compose.animation.AnimatedVisibility(visible = quote != null || editing != null) {
             var shown by remember { mutableStateOf("") }
-            quote?.let { shown = it }
+            (editing ?: quote)?.let { shown = it }
             FloatingPane(shape = RoundedCornerShape(18.dp), onClick = {
                 haptics.tick()
-                onClearQuote()
+                if (editing != null) {
+                    text = before
+                    onCancelEdit()
+                } else {
+                    onClearQuote()
+                }
             }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    Icon(AppIcons.Reply, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    Icon(if (editing != null) AppIcons.Create else AppIcons.Reply, contentDescription = if (editing != null) "Editing" else null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                     Text(
                         shown,
                         style = MaterialTheme.typography.bodyMedium,
@@ -171,6 +196,12 @@ fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier
             // A tap sends; held, Send offers to send later.
             fun send() {
                 if (!canSend) return
+                if (editing != null) {
+                    haptics.done()
+                    onEdit(text)
+                    text = before
+                    return
+                }
                 val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
                 if (onSend(text, sub, attachments)) {
                     haptics.done()
@@ -180,11 +211,11 @@ fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier
                     haptics.reject()
                 }
             }
-            Box(Modifier.pointerInput(text, attachments, canSend) {
+            Box(Modifier.pointerInput(text, attachments, canSend, editing) {
                 detectTapGestures(
                     onTap = { send() },
                     onLongPress = {
-                        if (text.isNotBlank() && attachments.isEmpty() && onSchedule != null) {
+                        if (editing == null && text.isNotBlank() && attachments.isEmpty() && onSchedule != null) {
                             haptics.firm()
                             val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
                             onSchedule(text, sub)

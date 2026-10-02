@@ -44,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -164,6 +165,11 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     var composerHeight by remember { mutableStateOf(0.dp) }
     // A message swiped to answer it: shown over the field, sent quoted.
     var quote by remember { mutableStateOf<String?>(null) }
+    // One of the user's own chat messages being changed: its chat id and text.
+    var editing by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    // How long messages last in the encrypted chat, in seconds; 0 for always.
+    var vanish by remember { mutableIntStateOf(0) }
+    LaunchedEffect(linked, chatChanges) { vanish = if (linked != null) chat.timer(to) else 0 }
     // Messages waiting their few seconds before they go, and text taken back.
     val store: SettingsStore = koinInject()
     var waiting by remember { mutableStateOf<List<Pending>>(emptyList()) }
@@ -217,14 +223,18 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                 title = null,
                 leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) },
                 trailing = { if (canCall) FloatingAction(AppIcons.Call, "Call", { NumberActions.dial(context, to) }) },
-                center = { PersonPill(title, to, entry?.contactId, group) }
+                center = {
+                    PersonPill(title, to, entry?.contactId, group, vanish = if (linked != null) vanish else null) { seconds ->
+                        scope.launch { if (chat.setTimer(to, seconds)) vanish = seconds }
+                    }
+                }
             )
             androidx.compose.animation.AnimatedVisibility(visible = linked != null, modifier = Modifier.align(Alignment.CenterHorizontally)) {
                 FloatingPane(shape = CircleShape) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                         Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Encrypted chat", style = MaterialTheme.typography.labelMedium)
+                        Text(if (vanish > 0) "Encrypted chat · vanish after ${vanishLabel(vanish)}" else "Encrypted chat", style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
@@ -242,6 +252,13 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                 restore = restore,
                 onRestored = { restore = null },
                 onSchedule = { text, sub -> scheduling = text to sub },
+                editing = editing?.second,
+                onCancelEdit = { editing = null },
+                onEdit = { typed ->
+                    val e = editing
+                    editing = null
+                    if (e != null && typed.isNotBlank() && typed != e.second) scope.launch { if (!chat.edit(e.first, typed)) haptics.reject() }
+                },
                 onSend = { typed, sub, attachments ->
                     if (people.isEmpty()) return@Composer false
                     val p = Pending(System.nanoTime(), typed, sub, attachments, quote)
@@ -324,7 +341,11 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                             }
                         },
                         onDelete = { messages.deleteMessage(row.message) },
-                        onQuote = { quote = row.message.body.ifBlank { "Photo" } }
+                        onQuote = { quote = row.message.body.ifBlank { "Photo" } },
+                        onEdit = { id -> editing = id to row.message.body },
+                        onDeleteForAll = { id -> scope.launch { if (!chat.deleteForAll(id)) haptics.reject() } },
+                        onPin = { id, on -> scope.launch { chat.pin(id, on) } },
+                        chatId = chat.chatIdOf(row.message.mms, row.message.id).also { refs.size }
                     )
                 }
             }
@@ -355,13 +376,15 @@ private fun rowsOf(list: List<Message>): List<Row> {
 
 /** The name at the top: a tap offers the calls with them, their contact, blocking. */
 @Composable
-private fun PersonPill(title: String, address: String, contactId: Long?, group: Boolean) {
+private fun PersonPill(title: String, address: String, contactId: Long?, group: Boolean, vanish: Int?, onVanish: (Int) -> Unit) {
     val context = LocalContext.current
     val menu = rememberPillMenu()
     var blocked by remember(address) { mutableStateOf(NumberActions.isBlocked(context, address)) }
     var confirmBlock by remember { mutableStateOf(false) }
     var choosingSignature by remember { mutableStateOf(false) }
     if (choosingSignature) SignatureDialog(address) { choosingSignature = false }
+    var choosingVanish by remember { mutableStateOf(false) }
+    if (choosingVanish && vanish != null) VanishDialog(vanish, onPick = onVanish) { choosingVanish = false }
     Box(Modifier.then(menu.tracker)) {
         FloatingPane(shape = CircleShape, onClick = menu::open) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
@@ -375,6 +398,7 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
                 else if (digits) PillItem(AppIcons.PersonAdd, "Add to contacts", PillMotion.BOUNCE) { NumberActions.addContact(context, address) } else null,
                 if (!group) PillItem(AppIcons.Copy, "Copy number", PillMotion.BOUNCE) { NumberActions.copy(context, address) } else null,
                 if (!group) PillItem(AppIcons.Vibration, "Vibration", PillMotion.WIGGLE) { choosingSignature = true } else null,
+                if (vanish != null) PillItem(AppIcons.Timer, "Vanishing messages", PillMotion.BOUNCE) { choosingVanish = true } else null,
                 if (!group && NumberActions.canBlock(context)) PillItem(AppIcons.Block, if (blocked) "Unblock" else "Block", PillMotion.DROP) {
                     if (blocked) {
                         NumberActions.unblock(context, address)
@@ -410,11 +434,40 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Bubble(m: Message, last: Boolean, fresh: Boolean, rich: RichRef?, onReact: (String?) -> Unit, sender: String?, onRetry: () -> Unit, onDelete: () -> Unit, onQuote: () -> Unit) {
+private fun Bubble(
+    m: Message,
+    last: Boolean,
+    fresh: Boolean,
+    rich: RichRef?,
+    onReact: (String?) -> Unit,
+    sender: String?,
+    onRetry: () -> Unit,
+    onDelete: () -> Unit,
+    onQuote: () -> Unit,
+    onEdit: (Int) -> Unit,
+    onDeleteForAll: (Int) -> Unit,
+    onPin: (Int, Boolean) -> Unit,
+    chatId: Int?
+) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     val menu = rememberPillMenu()
     val mine = m.box != MessageBox.RECEIVED
+    var confirmDeleteAll by remember { mutableStateOf(false) }
+    if (confirmDeleteAll && chatId != null) {
+        ZoneAlertDialog(
+            onDismissRequest = { confirmDeleteAll = false },
+            title = { Text("Delete for everyone?") },
+            text = { Text("The message goes from this conversation, here and on the other phone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteAll = false
+                    onDeleteForAll(chatId)
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteAll = false }) { Text("Cancel") } }
+        )
+    }
     val code = remember(m.body) { if (mine) null else Codes.find(m.body) }
     val parcel = remember(m.body) { if (mine || code != null) null else com.sms.app.core.sms.Finds.parcel(m.body) }
     val appointment = remember(m.body) { if (code != null) null else com.sms.app.core.sms.Finds.appointment(m.body) }
@@ -525,15 +578,35 @@ private fun Bubble(m: Message, last: Boolean, fresh: Boolean, rich: RichRef?, on
             PillMenu(
                 menu,
                 listOfNotNull(
-                    PillItem(AppIcons.Copy, "Copy", PillMotion.BOUNCE) { copy(context, "Message", m.body) },
+                    PillItem(AppIcons.Reply, "Reply", PillMotion.BOUNCE) { onQuote() },
+                    // Only the user's own messages of the encrypted chat change for both sides.
+                    if (chatId != null && rich?.mine == true && m.body.isNotBlank()) PillItem(AppIcons.Create, "Edit", PillMotion.WIGGLE) { onEdit(chatId) } else null,
+                    if (m.body.isNotBlank()) PillItem(AppIcons.Copy, "Copy", PillMotion.BOUNCE) { copy(context, "Message", m.body) } else null,
+                    if (m.body.isNotBlank()) PillItem(AppIcons.Forward, "Forward", PillMotion.BOUNCE) { forward(context, m.body) } else null,
+                    if (chatId != null) PillItem(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin", PillMotion.DROP) { onPin(chatId, rich?.pinned != true) } else null,
                     if (m.box == MessageBox.FAILED && !m.mms) PillItem(AppIcons.Send, "Try again", PillMotion.BOUNCE) { onRetry() } else null,
-                    PillItem(AppIcons.Delete, "Delete", PillMotion.DROP) { onDelete() }
+                    if (chatId != null && rich?.mine == true) PillItem(AppIcons.Delete, "Delete for everyone", PillMotion.DROP) { confirmDeleteAll = true } else null,
+                    PillItem(AppIcons.Delete, if (chatId != null && rich?.mine == true) "Delete here" else "Delete", PillMotion.DROP) { onDelete() }
                 )
             )
         }
         if (!rich?.reactions.isNullOrEmpty()) {
             FloatingPane(shape = CircleShape, modifier = Modifier.padding(top = 2.dp)) {
                 Text(rich!!.reactions.joinToString(" "), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+            }
+        }
+        // Pinned for both sides, or changed after it was sent.
+        if (rich?.pinned == true || rich?.edited == true) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp, start = 8.dp, end = 8.dp)) {
+                if (rich.pinned) {
+                    Icon(AppIcons.PushPin, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(
+                    listOfNotNull(if (rich.pinned) "Pinned" else null, if (rich.edited) "edited" else null).joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         if (parcel != null || appointment != null) {
@@ -604,6 +677,59 @@ private fun Bubble(m: Message, last: Boolean, fresh: Boolean, rich: RichRef?, on
             }
         }
     }
+}
+
+/** The text handed to this app's own new message screen, to choose who gets it. */
+private fun forward(context: android.content.Context, text: String) {
+    runCatching {
+        context.startActivity(
+            android.content.Intent(android.content.Intent.ACTION_SEND)
+                .setPackage(context.packageName)
+                .setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_TEXT, text)
+        )
+    }
+}
+
+/** 5 min, 1 hour, 1 day, 1 week. */
+private fun vanishLabel(seconds: Int): String = when {
+    seconds < 3600 -> "${seconds / 60} min"
+    seconds < 86_400 -> if (seconds == 3600) "1 hour" else "${seconds / 3600} hours"
+    seconds < 604_800 -> if (seconds == 86_400) "1 day" else "${seconds / 86_400} days"
+    else -> if (seconds == 604_800) "1 week" else "${seconds / 604_800} weeks"
+}
+
+/** How long messages last in this chat, for both sides. */
+@Composable
+private fun VanishDialog(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+    ZoneAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Vanishing messages") },
+        text = {
+            Column {
+                Text(
+                    "New messages vanish on both phones this long after they are read.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                listOf(0, 300, 3600, 86_400, 604_800).forEach { seconds ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            onPick(seconds)
+                            onDismiss()
+                        }.padding(vertical = 10.dp)
+                    ) {
+                        androidx.compose.material3.RadioButton(selected = current == seconds, onClick = null)
+                        Spacer(Modifier.width(12.dp))
+                        Text(if (seconds == 0) "Off" else vanishLabel(seconds), style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 private fun copy(context: android.content.Context, label: String, text: String, sensitive: Boolean = false) {
