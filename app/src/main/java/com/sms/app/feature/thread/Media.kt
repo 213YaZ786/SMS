@@ -151,9 +151,14 @@ private fun decode(context: Context, uri: Uri, side: Int): ImageBitmap? = runCat
 private fun openOutside(context: Context, part: MmsPart) {
     runCatching {
         val dir = File(context.cacheDir, "shared").apply { mkdirs() }
-        val ext = part.contentType.substringAfter('/').substringBefore(';')
-        val file = File(dir, "media.$ext")
+        val file = File(dir, "media." + com.sms.app.core.mms.MediaPrivacy.extension(part.contentType))
         context.contentResolver.openInputStream(part.uri)?.use { input -> file.outputStream().use { input.copyTo(it) } }
+        // An app hidden in a message is never handed to the installer.
+        if (com.sms.app.core.mms.MediaPrivacy.isApp(part.contentType, file)) {
+            file.delete()
+            android.widget.Toast.makeText(context, "Apps can't be opened from a message.", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         val shared = FileProvider.getUriForFile(context, "${context.packageName}.mms", file)
         context.startActivity(
             Intent(Intent.ACTION_VIEW).setDataAndType(shared, part.contentType)

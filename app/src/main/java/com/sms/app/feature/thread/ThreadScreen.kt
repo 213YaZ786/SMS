@@ -204,11 +204,13 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     }
     fun sendNow(p: Pending) {
         scope.launch(Dispatchers.IO) {
+            // Photos leave without their place, camera and dates.
+            val attachments = p.attachments.map { com.sms.app.core.mms.MediaPrivacy.clean(context, it) }
             // Over the rich chat when the number has it, quote included;
             // else a group or a picture as a picture message, the rest as SMS.
-            if (encrypted && chat.send(people, p.text, p.attachments, p.quoted)) return@launch
+            if (encrypted && chat.send(people, p.text, attachments, p.quoted)) return@launch
             val text = p.quoted?.let { "«${excerpt(it)}»\n${p.text}" } ?: p.text
-            if (group || p.attachments.isNotEmpty()) MmsTransport.send(context, people, text, p.attachments, p.sub)
+            if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, p.sub)
             else SmsSender.send(context, to, text, p.sub)
             // The first message to a number asks, unseen, whether it has SMS too.
             if (!group) chat.hello(to)
