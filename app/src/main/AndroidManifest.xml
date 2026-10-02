@@ -154,6 +154,9 @@
         <receiver
             android:name=".core.mms.MmsResultReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".core.sms.TimedReceiver"
+            android:exported="false" />
 
         <!-- Picture messages handed to Android's MMS service, and media opened
              in another app: shared one file at a time, never exported. -->

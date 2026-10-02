@@ -89,6 +89,30 @@ class MessageNotifier(private val context: Context) {
 
     fun cancel(threadId: Long) = notifications.cancel(threadId.toInt())
 
+    /** A conversation set aside comes back: shown again, unread or not. */
+    fun reminder(threadId: Long) {
+        if (unread(threadId).isNotEmpty()) {
+            show(threadId)
+            return
+        }
+        val address = runCatching {
+            context.contentResolver.query(Telephony.Sms.CONTENT_URI, arrayOf(Telephony.Sms.ADDRESS), "${Telephony.Sms.THREAD_ID} = ?", arrayOf(threadId.toString()), "${Telephony.Sms.DATE} DESC LIMIT 1")
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull() ?: return
+        val name = ContactLookup.nameOf(context, address) ?: Numbers.format(context, address)
+        post(
+            threadId.toInt(),
+            NotificationCompat.Builder(context, CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat_sms)
+                .setContentTitle(name)
+                .setContentText("You wanted to come back to this conversation.")
+                .setContentIntent(open(threadId, address))
+                .setAutoCancel(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .build()
+        )
+    }
+
     /** A message that came over the rich chat, shown in its number's conversation. */
     fun showRich(phone: String, text: String) {
         val thread = runCatching { Telephony.Threads.getOrCreateThreadId(context, phone) }.getOrNull() ?: return

@@ -30,3 +30,14 @@ fun dayLabel(day: LocalDate, today: LocalDate = LocalDate.now()): String = when 
     day.year == today.year -> day.format(DateTimeFormatter.ofPattern("d MMMM", Locale.getDefault()))
     else -> day.format(DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.getDefault()))
 }
+
+/** A time ahead: Today, 8:00 PM; Tomorrow, 8:00 AM; else the date and the hour. */
+fun aheadLabel(context: Context, millis: Long, today: LocalDate = LocalDate.now()): String {
+    val day = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+    val time = DateFormat.getTimeFormat(context).format(Date(millis))
+    return when (day) {
+        today -> "Today, $time"
+        today.plusDays(1) -> "Tomorrow, $time"
+        else -> day.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())) + ", $time"
+    }
+}

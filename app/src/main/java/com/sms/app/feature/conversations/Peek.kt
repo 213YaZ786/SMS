@@ -82,6 +82,7 @@ internal fun Peek(
     onPin: (Boolean) -> Unit,
     onArchive: (Boolean) -> Unit,
     onRead: () -> Unit,
+    onLater: () -> Unit,
     onDelete: () -> Unit
 ) {
     val context = LocalContext.current
@@ -188,6 +189,7 @@ internal fun Peek(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Action(AppIcons.PushPin, if (pinned) "Unpin" else "Pin") { onPin(!pinned); onDismiss() }
                         if (c.unread > 0) Action(AppIcons.DoneAll, "Read") { onRead(); onDismiss() }
+                        Action(AppIcons.Schedule, "Later") { onDismiss(); onLater() }
                         Action(if (archived) AppIcons.Unarchive else AppIcons.Archive, if (archived) "Unarchive" else "Archive") { onArchive(!archived); onDismiss() }
                         if (!c.group && c.address.count(Char::isDigit) >= 3) Action(AppIcons.Call, "Call") { NumberActions.dial(context, c.address); onDismiss() }
                         Action(AppIcons.Delete, "Delete") { confirmDelete = true }

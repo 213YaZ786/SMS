@@ -42,6 +42,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -104,13 +107,14 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         else index.find(T9.clean(c.address))?.name
     val shown = remember(all, filter, settings.pinned, settings.archived, query, index) {
         val q = query.trim().lowercase()
-        Lists.shown(all, filter, settings.pinned, settings.archived).filter { c ->
+        Lists.shown(all, filter, settings.pinned, settings.archived, settings.later).filter { c ->
             q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
         }
     }
     val code = remember(all) { Lists.latestCode(all, System.currentTimeMillis()) }
     var servicesOpen by rememberSaveable { mutableStateOf(false) }
     var peeking by remember { mutableStateOf<Conversation?>(null) }
+    var setAside by remember { mutableStateOf<Conversation?>(null) }
     val waiting = remember(all, settings.archived, filter, query) {
         if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.waiting(all, settings.archived, System.currentTimeMillis())
     }
@@ -122,7 +126,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
             pinned = c.threadId in settings.pinned,
             onOpen = { onOpenThread(c.threadId, c.addresses.joinToString(",")) },
-            onPeek = { peeking = c }
+            onPeek = { peeking = c },
+            onLater = { setAside = c }
         )
     }
 
@@ -186,6 +191,13 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         }
     }
 
+    setAside?.let { c ->
+        TimeChoice("Back in this list", onPick = { at ->
+            com.sms.app.core.sms.Timed.later(context, store, c.threadId, at)
+            setAside = null
+        }, onDismiss = { setAside = null })
+    }
+
     peeking?.let { c ->
         Peek(
             c,
@@ -201,6 +213,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             onPin = { on -> store.update { s -> s.copy(pinned = if (on) s.pinned + c.threadId else s.pinned - c.threadId) } },
             onArchive = { on -> store.update { s -> s.copy(archived = if (on) s.archived + (c.threadId to c.date) else s.archived - c.threadId) } },
             onRead = { messages.markRead(c.threadId) },
+            onLater = { setAside = c },
             onDelete = {
                 messages.delete(c.threadId)
                 store.update { s -> s.copy(pinned = s.pinned - c.threadId, archived = s.archived - c.threadId) }
@@ -295,7 +308,8 @@ private fun ConversationLine(
     photo: String?,
     pinned: Boolean,
     onOpen: () -> Unit,
-    onPeek: () -> Unit
+    onPeek: () -> Unit,
+    onLater: () -> Unit
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -305,9 +319,37 @@ private fun ConversationLine(
     val pressed by press.collectIsPressedAsState()
     val sink by animateFloatAsState(if (pressed) 0.97f else 1f, spring(dampingRatio = 0.6f, stiffness = 500f), label = "sink")
 
+    // Swiped left, it follows the finger and, past a point, is set aside for later.
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val pull = remember { androidx.compose.animation.core.Animatable(0f) }
+    var armed by remember { mutableStateOf(false) }
+    val reach = with(androidx.compose.ui.platform.LocalDensity.current) { 72.dp.toPx() }
     Box(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().graphicsLayer {
         scaleX = sink
         scaleY = sink
+        translationX = pull.value
+    }.pointerInput(c.threadId) {
+        detectHorizontalDragGestures(
+            onDragEnd = {
+                if (armed) onLater()
+                armed = false
+                scope.launch { pull.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 400f)) }
+            },
+            onDragCancel = {
+                armed = false
+                scope.launch { pull.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 400f)) }
+            },
+            onHorizontalDrag = { change, dx ->
+                val next = (pull.value + dx * (if (pull.value < -reach) 0.35f else 1f)).coerceIn(-reach * 1.6f, 0f)
+                scope.launch { pull.snapTo(next) }
+                val now = next <= -reach
+                if (now != armed) {
+                    armed = now
+                    haptics.threshold(now)
+                }
+                change.consume()
+            }
+        )
     }) {
         val shape = RoundedCornerShape(22.dp)
         ZoneSurface(

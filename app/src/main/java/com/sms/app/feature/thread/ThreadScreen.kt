@@ -168,6 +168,9 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val store: SettingsStore = koinInject()
     var waiting by remember { mutableStateOf<List<Pending>>(emptyList()) }
     var restore by remember { mutableStateOf<String?>(null) }
+    // A message held back to go at a chosen time.
+    var scheduling by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    var scheduled by remember { mutableStateOf(com.sms.app.core.sms.Timed.scheduled(context)) }
     // Received messages that arrive while the conversation is open drop in.
     var known by remember { mutableStateOf<Set<Long>?>(null) }
     var fresh by remember { mutableStateOf<Set<Long>>(emptySet()) }
@@ -197,6 +200,16 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         }
     }
 
+    scheduling?.let { (text, sub) ->
+        com.sms.app.feature.conversations.TimeChoice("Send later", onPick = { at ->
+            com.sms.app.core.sms.Timed.schedule(context, com.sms.app.core.sms.Scheduled(System.currentTimeMillis(), people, text, at, sub))
+            scheduled = com.sms.app.core.sms.Timed.scheduled(context)
+            scheduling = null
+        }, onDismiss = {
+            restore = text
+            scheduling = null
+        })
+    }
     FloatingFrame(
         bottom = composerHeight + 8.dp,
         top = {
@@ -228,6 +241,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     .onSizeChanged { composerHeight = with(density) { it.height.toDp() } },
                 restore = restore,
                 onRestored = { restore = null },
+                onSchedule = { text, sub -> scheduling = text to sub },
                 onSend = { typed, sub, attachments ->
                     if (people.isEmpty()) return@Composer false
                     val p = Pending(System.nanoTime(), typed, sub, attachments, quote)
@@ -261,6 +275,24 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            // Messages scheduled for later, at the very bottom; a tap cancels one.
+            items(scheduled.filter { it.to.toSet() == people.toSet() }, key = { "sched/${it.id}" }) { sc ->
+                Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth().animateItem()) {
+                    FloatingPane(shape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp), onClick = {
+                        haptics.tick()
+                        com.sms.app.core.sms.Timed.cancel(context, sc.id)
+                        scheduled = com.sms.app.core.sms.Timed.scheduled(context)
+                        restore = sc.text
+                    }, modifier = Modifier.widthIn(max = 320.dp)) {
+                        Text(sc.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp, end = 6.dp)) {
+                        Icon(AppIcons.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Scheduled · " + com.sms.app.feature.conversations.aheadLabel(context, sc.at) + " · tap to cancel", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
             // Waiting messages sit at the bottom, their ring emptying; a tap takes one back.
             items(waiting.asReversed(), key = { "wait/${it.key}" }) { p ->
                 PendingBubble(p, store.current.undoSeconds, Modifier.animateItem()) {

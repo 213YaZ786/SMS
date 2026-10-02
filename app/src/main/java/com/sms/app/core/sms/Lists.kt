@@ -14,8 +14,8 @@ object Lists {
     fun isArchived(c: Conversation, archived: Map<Long, Long>): Boolean = archived[c.threadId]?.let { c.date <= it } == true
 
     /** The conversations of [filter], pinned ones first, then newest first. */
-    fun shown(all: List<Conversation>, filter: Filter, pinned: List<Long>, archived: Map<Long, Long>): List<Conversation> {
-        val kept = all.filter { c ->
+    fun shown(all: List<Conversation>, filter: Filter, pinned: List<Long>, archived: Map<Long, Long>, later: Map<Long, Long> = emptyMap(), now: Long = System.currentTimeMillis()): List<Conversation> {
+        val kept = all.filter { c -> (later[c.threadId] ?: 0L) <= now }.filter { c ->
             when (filter) {
                 Filter.ALL -> !isArchived(c, archived)
                 Filter.UNREAD -> c.unread > 0 && !isArchived(c, archived)

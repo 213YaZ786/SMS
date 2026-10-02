@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import com.sms.app.core.mms.Attachment
 import android.content.pm.PackageManager
@@ -60,7 +62,7 @@ import com.sms.app.ui.icon.AppIcons
  * two, how many SMS it makes once it is long, and Send on its own pane.
  */
 @Composable
-fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier: Modifier, restore: String? = null, onRestored: () -> Unit = {}, onSend: (String, Int, List<Attachment>) -> Boolean) {
+fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier: Modifier, restore: String? = null, onRestored: () -> Unit = {}, onSchedule: ((String, Int) -> Unit)? = null, onSend: (String, Int, List<Attachment>) -> Boolean) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var text by rememberSaveable { mutableStateOf(initial) }
@@ -166,20 +168,34 @@ fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier
                     )
                 }
             }
+            // A tap sends; held, Send offers to send later.
+            fun send() {
+                if (!canSend) return
+                val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                if (onSend(text, sub, attachments)) {
+                    haptics.done()
+                    text = ""
+                    attachments = emptyList()
+                } else {
+                    haptics.reject()
+                }
+            }
+            Box(Modifier.pointerInput(text, attachments, canSend) {
+                detectTapGestures(
+                    onTap = { send() },
+                    onLongPress = {
+                        if (text.isNotBlank() && attachments.isEmpty() && onSchedule != null) {
+                            haptics.firm()
+                            val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                            onSchedule(text, sub)
+                            text = ""
+                        }
+                    }
+                )
+            }) {
             FloatingPane(
                 shape = CircleShape,
                 accent = canSend,
-                onClick = {
-                    if (!canSend) return@FloatingPane
-                    val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
-                    if (onSend(text, sub, attachments)) {
-                        haptics.done()
-                        text = ""
-                        attachments = emptyList()
-                    } else {
-                        haptics.reject()
-                    }
-                },
                 modifier = Modifier.size(52.dp).graphicsLayer {
                     scaleX = lift
                     scaleY = lift
@@ -194,6 +210,7 @@ fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier
                         )
                     }
                 }
+            }
             }
         }
     }
