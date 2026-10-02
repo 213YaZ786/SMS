@@ -64,7 +64,7 @@ import com.sms.app.ui.theme.TEXT_SCALES
 import com.sms.app.ui.theme.textScaleLabel
 import org.koin.androidx.compose.koinViewModel
 
-private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY }
+private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY, UNDO }
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewModel()) {
@@ -111,6 +111,11 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             }
 
             Section("Messages") {
+                SettingRow(
+                    title = "Undo send",
+                    summary = if (settings.undoSeconds == 0) "Off" else "${settings.undoSeconds} seconds to take a message back",
+                    onClick = { dialog = OpenDialog.UNDO }
+                )
                 SettingRow(
                     title = "Notifications",
                     summary = "Sound, vibration and how they show",
@@ -232,6 +237,13 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             options = RELAYS.map { it to it },
             selected = settings.relay,
             onSelect = viewModel::setRelay,
+            onDismiss = { dialog = OpenDialog.NONE }
+        )
+        OpenDialog.UNDO -> ChoiceDialog(
+            title = "Undo send",
+            options = listOf(0, 2, 4, 6, 10).map { it to if (it == 0) "Off" else "$it seconds" },
+            selected = settings.undoSeconds,
+            onSelect = viewModel::setUndoSeconds,
             onDismiss = { dialog = OpenDialog.NONE }
         )
         OpenDialog.NONE -> Unit

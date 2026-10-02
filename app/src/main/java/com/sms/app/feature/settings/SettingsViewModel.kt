@@ -20,4 +20,5 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     fun setQuietSales(on: Boolean) = store.update { it.copy(quietSales = on) }
     fun setRichChat(on: Boolean) = store.update { it.copy(richChat = on) }
     fun setRelay(relay: String) = store.update { it.copy(relay = relay) }
+    fun setUndoSeconds(seconds: Int) = store.update { it.copy(undoSeconds = seconds) }
 }

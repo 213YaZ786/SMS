@@ -72,6 +72,9 @@ import com.sms.app.core.sms.MessageNotifier
 import com.sms.app.core.sms.SmsSender
 import com.sms.app.core.mms.MmsTransport
 import com.sms.app.core.chat.RichChat
+import com.sms.app.data.settings.SettingsStore
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.drawBehind
 import com.sms.app.core.chat.RichRef
 import com.sms.app.data.contacts.PhoneBook
 import com.sms.app.data.contacts.PhoneIndex
@@ -153,6 +156,38 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     var composerHeight by remember { mutableStateOf(0.dp) }
     // A message swiped to answer it: shown over the field, sent quoted.
     var quote by remember { mutableStateOf<String?>(null) }
+    // Messages waiting their few seconds before they go, and text taken back.
+    val store: SettingsStore = koinInject()
+    var waiting by remember { mutableStateOf<List<Pending>>(emptyList()) }
+    var restore by remember { mutableStateOf<String?>(null) }
+    // Received messages that arrive while the conversation is open drop in.
+    var known by remember { mutableStateOf<Set<Long>?>(null) }
+    var fresh by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    val haptics = rememberHaptics()
+    LaunchedEffect(list) {
+        val received = list.filter { it.box == MessageBox.RECEIVED }.map { it.id }.toSet()
+        val before = known
+        if (before != null) {
+            val new = received - before
+            if (new.isNotEmpty()) {
+                fresh = fresh + new
+                haptics.tick()
+            }
+        }
+        known = received
+    }
+    fun sendNow(p: Pending) {
+        scope.launch(Dispatchers.IO) {
+            // Over the rich chat when the number has it, quote included;
+            // else a group or a picture as a picture message, the rest as SMS.
+            if (linked != null && chat.send(to, p.text, p.attachments, p.quoted)) return@launch
+            val text = p.quoted?.let { "«${excerpt(it)}»\n${p.text}" } ?: p.text
+            if (group || p.attachments.isNotEmpty()) MmsTransport.send(context, people, text, p.attachments, p.sub)
+            else SmsSender.send(context, to, text, p.sub)
+            // The first message to a number asks, unseen, whether it has SMS too.
+            if (!group) chat.hello(to)
+        }
+    }
 
     FloatingFrame(
         bottom = composerHeight + 8.dp,
@@ -183,19 +218,25 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     .padding(horizontal = LocalReadableInset.current)
                     .onSizeChanged { composerHeight = with(density) { it.height.toDp() } },
+                restore = restore,
+                onRestored = { restore = null },
                 onSend = { typed, sub, attachments ->
                     if (people.isEmpty()) return@Composer false
-                    val quoted = quote
+                    val p = Pending(System.nanoTime(), typed, sub, attachments, quote)
                     quote = null
-                    scope.launch(Dispatchers.IO) {
-                        // Over the rich chat when the number has it, quote included;
-                        // else a group or a picture as a picture message, the rest as SMS.
-                        if (linked != null && chat.send(to, typed, attachments, quoted)) return@launch
-                        val text = quoted?.let { "«${excerpt(it)}»\n$typed" } ?: typed
-                        if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, sub)
-                        else SmsSender.send(context, to, text, sub)
-                        // The first message to a number asks, unseen, whether it has SMS too.
-                        if (!group) chat.hello(to)
+                    val delay = store.current.undoSeconds
+                    if (delay <= 0) {
+                        sendNow(p)
+                    } else {
+                        waiting = waiting + p
+                        scope.launch {
+                            kotlinx.coroutines.delay(delay * 1000L)
+                            if (waiting.any { it.key == p.key }) {
+                                waiting = waiting.filterNot { it.key == p.key }
+                                haptics.done()
+                                sendNow(p)
+                            }
+                        }
                     }
                     true
                 }
@@ -212,6 +253,14 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            // Waiting messages sit at the bottom, their ring emptying; a tap takes one back.
+            items(waiting.asReversed(), key = { "wait/${it.key}" }) { p ->
+                PendingBubble(p, store.current.undoSeconds, Modifier.animateItem()) {
+                    haptics.tick()
+                    waiting = waiting.filterNot { it.key == p.key }
+                    restore = p.text
+                }
+            }
             items(rows.asReversed(), key = { it.key }) { row ->
                 when (row) {
                     is Row.Day -> Text(
@@ -224,6 +273,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     is Row.Bubble -> Bubble(
                         row.message,
                         row.last,
+                        fresh = row.message.box == MessageBox.RECEIVED && row.message.id in fresh,
                         rich = chat.refOf(row.message.mms, row.message.id).also { refs.size },
                         onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },
                         sender = if (group && row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null,
@@ -316,7 +366,7 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Bubble(m: Message, last: Boolean, rich: RichRef?, onReact: (String?) -> Unit, sender: String?, onRetry: () -> Unit, onDelete: () -> Unit, onQuote: () -> Unit) {
+private fun Bubble(m: Message, last: Boolean, fresh: Boolean, rich: RichRef?, onReact: (String?) -> Unit, sender: String?, onRetry: () -> Unit, onDelete: () -> Unit, onQuote: () -> Unit) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     val menu = rememberPillMenu()
@@ -324,9 +374,29 @@ private fun Bubble(m: Message, last: Boolean, rich: RichRef?, onReact: (String?)
     val code = remember(m.body) { if (mine) null else Codes.find(m.body) }
     val accent = MaterialTheme.colorScheme.primary
     val text = remember(m.body, accent) { linked(m.body, accent) }
+    // A message that just came in drops into place, a ring of glass spreading from it.
+    val drop = remember { Animatable(if (fresh) 0f else 1f) }
+    LaunchedEffect(fresh) { if (fresh) drop.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 320f)) }
+    val ringColor = MaterialTheme.colorScheme.primary
     Column(
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                val d = drop.value
+                translationY = (1f - d) * -60f
+                val sc = 0.85f + 0.15f * d
+                scaleX = sc
+                scaleY = sc
+                alpha = d.coerceIn(0f, 1f)
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
+            }
+            .drawBehind {
+                if (fresh && drop.value < 0.999f) {
+                    val t = drop.value
+                    drawCircle(ringColor.copy(alpha = 0.5f * (1f - t)), radius = 24.dp.toPx() + t * 90.dp.toPx(), center = androidx.compose.ui.geometry.Offset(24.dp.toPx(), size.height - 20.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                }
+            }
     ) {
         sender?.let {
             Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 12.dp, bottom = 2.dp))
@@ -478,3 +548,46 @@ private fun linked(body: String, accent: androidx.compose.ui.graphics.Color): An
 
 /** The start of a quoted message, short enough for the first line. */
 private fun excerpt(text: String): String = text.replace('\n', ' ').let { if (it.length > 60) it.take(58).trimEnd() + "…" else it }
+
+/** A message waiting its few seconds before it goes. */
+private data class Pending(val key: Long, val text: String, val sub: Int, val attachments: List<com.sms.app.core.mms.Attachment>, val quoted: String?)
+
+/**
+ * The message just written: it flies up from the field into its place as
+ * a drop of glass, and a ring on it empties over the seconds it waits; a
+ * tap takes it back into the field.
+ */
+@Composable
+private fun PendingBubble(p: Pending, seconds: Int, modifier: Modifier, onCancel: () -> Unit) {
+    val flight = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { flight.animateTo(1f, spring(dampingRatio = 0.62f, stiffness = 260f)) }
+    val ring = remember { Animatable(1f) }
+    LaunchedEffect(Unit) { ring.animateTo(0f, androidx.compose.animation.core.tween(seconds * 1000, easing = androidx.compose.animation.core.LinearEasing)) }
+    val accent = MaterialTheme.colorScheme.primary
+    Column(horizontalAlignment = Alignment.End, modifier = modifier.fillMaxWidth()) {
+        Box(
+            Modifier
+                .graphicsLayer {
+                    val f = flight.value
+                    translationY = (1f - f) * 160f
+                    val sc = 0.6f + 0.4f * f
+                    scaleX = sc
+                    scaleY = sc
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)
+                }
+                .clickable(onClick = onCancel)
+        ) {
+            ZoneSurface(shape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp), accent = true, modifier = Modifier.widthIn(max = 320.dp)) {
+                Text(
+                    p.text.ifBlank { if (p.attachments.isNotEmpty()) "Photo" else "" },
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(start = 16.dp, end = 34.dp, top = 10.dp, bottom = 10.dp)
+                )
+            }
+            androidx.compose.foundation.Canvas(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp)) {
+                drawArc(accent, -90f, 360f * ring.value, false, style = androidx.compose.ui.graphics.drawscope.Stroke(2.5.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))
+            }
+        }
+        Text("Tap to take it back", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, end = 6.dp))
+    }
+}

@@ -37,6 +37,8 @@ data class Settings(
     val composeY: Float = -1f,
     /** The little show of the new message button moving was seen. */
     val composeHintSeen: Boolean = false,
+    /** Seconds a message waits before it goes, to take it back with a tap; 0 sends at once. */
+    val undoSeconds: Int = 4,
     /** Encrypted chat with other SMS users, over a chatmail relay. */
     val richChat: Boolean = true,
     /** The chatmail relay the chat profile lives on. */

@@ -60,10 +60,17 @@ import com.sms.app.ui.icon.AppIcons
  * two, how many SMS it makes once it is long, and Send on its own pane.
  */
 @Composable
-fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier: Modifier, onSend: (String, Int, List<Attachment>) -> Boolean) {
+fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier: Modifier, restore: String? = null, onRestored: () -> Unit = {}, onSend: (String, Int, List<Attachment>) -> Boolean) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var text by rememberSaveable { mutableStateOf(initial) }
+    // A message taken back before it went comes back into the field.
+    androidx.compose.runtime.LaunchedEffect(restore) {
+        if (restore != null) {
+            text = restore
+            onRestored()
+        }
+    }
     val sims = remember { activeSims(context) }
     var simIndex by rememberSaveable { mutableIntStateOf(sims.indexOfFirst { it.subscriptionId == SubscriptionManager.getDefaultSmsSubscriptionId() }.coerceAtLeast(0)) }
     var attachments by remember { mutableStateOf<List<Attachment>>(emptyList()) }
