@@ -8,6 +8,8 @@ A messaging app for Android. No account, no tracking, no ads.
 - Long press a conversation to read and answer it without opening it;
   swipe a message to answer it.
 - Photos, videos and group messages (MMS).
+- Encrypted chat with other SMS users: read receipts, reactions, photos
+  in full quality, found by their phone number; SMS for everyone else.
 - Reply from the notification; pin, archive, search; links opened
   without their trackers.
 - Light and dark themes in your wallpaper's colours.
@@ -20,9 +22,14 @@ Android 12 or newer.
 
 ## Privacy
 
-Your messages stay on your phone. The only connection is a check for a
-new version on GitHub, which you can turn off in Settings.
+Your messages stay on your phone. Two connections: a check for a new
+version on GitHub, and the encrypted chat through a chatmail relay, which
+carries only end-to-end encrypted messages. Both can be turned off in
+Settings.
 
 ## Licence
 
-MIT. Icons from Google's Material Icons, Apache License 2.0.
+MIT. Icons from Google's Material Icons, Apache License 2.0. Picture
+messages use code from AOSP Messaging, Apache License 2.0. The encrypted
+chat runs chatmail core (github.com/chatmail/core), Mozilla Public
+License 2.0, downloaded unchanged at build time.

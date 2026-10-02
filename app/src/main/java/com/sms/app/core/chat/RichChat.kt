@@ -72,6 +72,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private var account = 0
     private val random = SecureRandom()
 
+    /** Nonces to send back once a joined chat can carry encrypted messages, by chat. */
+    private val proofs = java.util.concurrent.ConcurrentHashMap<Int, ByteArray>()
+
     private val _links = MutableStateFlow(load())
     val links: StateFlow<Map<String, ChatLink>> = _links.asStateFlow()
 
@@ -88,6 +91,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private val _changes = MutableStateFlow(0)
     val changes: StateFlow<Int> = _changes.asStateFlow()
 
+    /** Where the chat stands, for Settings: off, connecting, connected or failed. */
+    private val _status = MutableStateFlow("Off")
+    val status: StateFlow<String> = _status.asStateFlow()
+
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
@@ -101,17 +108,20 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     suspend fun start(): Boolean = lock.withLock {
         if (!enabled) return false
         if (_ready.value && engine.running) return true
+        _status.value = "Connecting"
         runCatching {
             val ids = engine.call("get_all_account_ids").jsonArray
             account = ids.firstOrNull()?.jsonPrimitive?.int ?: engine.call("add_account").jsonPrimitive.int
             if (!engine.call("is_configured", account).jsonPrimitive.boolean()) {
-                // Chats only: ordinary e-mail never shows.
-                engine.call("set_config", account, "show_emails", "0")
-                engine.call("set_config", account, "mdns_enabled", "1")
                 engine.call("add_transport_from_qr", account, "dcaccount:" + settings.current.relay)
             }
             engine.call("start_io", account)
             _ready.value = true
+            _status.value = "Connected"
+        }.onFailure { error ->
+            _status.value = "Not connected"
+            // Debug builds keep the engine's last error in the app's own files, never in a log.
+            if (com.sms.app.BuildConfig.DEBUG) runCatching { File(context.filesDir, "chat-error.txt").writeText(error.toString()) }
         }.isSuccess
     }
 
@@ -124,14 +134,15 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     fun linkFor(phone: String): ChatLink? = _links.value[key(phone)]?.takeIf { it.proven && it.chatId > 0 }
 
     /**
-     * Asks [phone] whether it has SMS too, once in a while: a data SMS
-     * with our invite and a fresh nonce. Nothing happens on a phone without it.
+     * Asks [phone] whether it has SMS too, at most once a month (unless
+     * [force]d): a data SMS with our invite and a fresh nonce. A phone
+     * without SMS drops it unseen.
      */
-    suspend fun hello(phone: String) {
+    suspend fun hello(phone: String, force: Boolean = false) {
         if (!enabled || T9.clean(phone).count(Char::isDigit) < 7) return
         val known = _links.value[key(phone)]
-        if (known?.proven == true) return
-        if (known != null && System.currentTimeMillis() - known.askedAt < ASK_AGAIN_MS) return
+        if (known?.proven == true && !force) return
+        if (!force && known != null && System.currentTimeMillis() - known.askedAt < ASK_AGAIN_MS) return
         if (!start()) return
         val nonce = ByteArray(Hello.NONCE_BYTES).also(random::nextBytes)
         val link = runCatching { engine.call("get_chat_securejoin_qr_code", account, null).jsonPrimitive.content }.getOrNull() ?: return
@@ -146,17 +157,34 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     suspend fun onHello(from: String, hello: Hello) {
         if (!enabled || !start()) return
         val chat = runCatching { engine.call("secure_join", account, hello.link()).jsonPrimitive.int }.getOrNull() ?: return
-        runCatching { engine.call("misc_send_text_message", account, chat, Hello.proofText(hello.nonce)) }
+        // The proof waits until the keys are exchanged: relays take only encrypted mail.
+        proofs[chat] = hello.nonce
+        val known = _links.value[key(from)]
+        if (known?.proven == true && known.address != hello.address) {
+            // An SMS sender can be faked: a proven number never moves on an
+            // invite alone. Our own nonce goes to the number; whoever really
+            // holds it proves it, and only then does the chat change.
+            hello(from, force = true)
+            return
+        }
         save(from) { (it ?: ChatLink(from)).copy(address = hello.address, chatId = chat) }
         // Our own invite back, so they can prove this side too.
-        val mine = _links.value[key(from)]
-        if (mine == null || mine.myNonce.isEmpty()) hello(from)
+        if (known == null || known.myNonce.isEmpty()) hello(from, force = true)
     }
 
     private suspend fun onEvent(event: ChatEvent) {
         val msgId = event.data["msgId"]?.jsonPrimitive?.intOrNull
         when (event.kind) {
             "IncomingMsg" -> if (msgId != null) onIncoming(msgId)
+            "SecurejoinJoinerProgress" -> {
+                val progress = event.data["progress"]?.jsonPrimitive?.intOrNull ?: 0
+                val contact = event.data["contactId"]?.jsonPrimitive?.intOrNull
+                if (progress >= 400 && contact != null) {
+                    val chat = runCatching { engine.call("get_chat_id_by_contact_id", account, contact).jsonPrimitive.intOrNull }.getOrNull()
+                    val nonce = chat?.let { proofs.remove(it) }
+                    if (nonce != null) runCatching { engine.call("misc_send_text_message", account, chat, Hello.proofText(nonce)) }
+                }
+            }
             "MsgDelivered" -> if (msgId != null) _refs.value[msgId]?.let { mark(it, failed = false) }
             "MsgFailed" -> if (msgId != null) _refs.value[msgId]?.let { mark(it, failed = true) }
             "MsgRead" -> if (msgId != null) _refs.value[msgId]?.let { saveRef(msgId, it.copy(seen = true)) }
@@ -184,7 +212,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             // Whoever proves our nonce holds the number we sent it to.
             val from = (message["sender"] as? JsonObject)?.get("address")?.jsonPrimitive?.contentOrNull.orEmpty()
             val match = _links.value.values.firstOrNull { it.myNonce == hex(proof) } ?: return
-            save(match.phone) { it!!.copy(address = from, chatId = chat, proven = true) }
+            save(match.phone) { it!!.copy(address = from, chatId = chat, proven = true, myNonce = "") }
             runCatching { engine.call("delete_messages", account, listOf(msgId)) }
             return
         }
@@ -300,7 +328,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     companion object {
         /** The port the data SMS carrying an invite go to. */
         const val PORT: Short = 18471
-        private const val ASK_AGAIN_MS = 3L * 24 * 60 * 60 * 1000
+        /** A number without SMS is asked again only a month later. */
+        private const val ASK_AGAIN_MS = 30L * 24 * 60 * 60 * 1000
     }
 }
 

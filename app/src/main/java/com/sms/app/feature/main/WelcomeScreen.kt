@@ -105,9 +105,18 @@ fun WelcomeScreen(onStart: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         WelcomeZone(
+            icon = AppIcons.Lock,
+            title = "Encrypted chat",
+            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay. Turn it off in Settings.",
+            done = true,
+            action = null,
+            onAction = {}
+        )
+        Spacer(Modifier.height(16.dp))
+        WelcomeZone(
             icon = AppIcons.Update,
             title = "Automatic updates",
-            message = "SMS installs its new versions. Its only connection is this check on GitHub.",
+            message = "SMS installs its new versions, checked on GitHub.",
             done = canInstall,
             action = "Allow updates".takeIf { !canInstall },
             onAction = { Updates.allowInstalls(context) }

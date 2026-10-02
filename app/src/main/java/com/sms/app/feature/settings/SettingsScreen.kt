@@ -64,7 +64,7 @@ import com.sms.app.ui.theme.TEXT_SCALES
 import com.sms.app.ui.theme.textScaleLabel
 import org.koin.androidx.compose.koinViewModel
 
-private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES }
+private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY }
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewModel()) {
@@ -86,6 +86,29 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 .padding(horizontal = LocalReadableInset.current)
         ) {
             Spacer(Modifier.height(padding.calculateTopPadding()))
+
+            Section("Encrypted chat") {
+                val chat: com.sms.app.core.chat.RichChat = org.koin.compose.koinInject()
+                val status by chat.status.collectAsState()
+                SwitchRow(
+                    title = "Encrypted chat with SMS users",
+                    summary = if (settings.richChat) "$status · through ${settings.relay}" else "Messages go as SMS and MMS only.",
+                    checked = settings.richChat,
+                    onChange = { on ->
+                        viewModel.setRichChat(on)
+                        if (on) com.sms.app.core.chat.ChatService.startIfWanted(context, viewModel.store)
+                        else {
+                            com.sms.app.core.chat.ChatService.stop(context)
+                            chat.stop()
+                        }
+                    }
+                )
+                if (settings.richChat) SettingRow(
+                    title = "Relay",
+                    summary = settings.relay,
+                    onClick = { dialog = OpenDialog.RELAY }
+                )
+            }
 
             Section("Messages") {
                 SettingRow(
@@ -162,6 +185,11 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     onClick = null
                 )
                 SettingRow(
+                    title = "Encrypted chat engine",
+                    summary = "chatmail core, Mozilla Public License 2.0",
+                    onClick = { uriHandler.openUri("https://github.com/chatmail/core") }
+                )
+                SettingRow(
                     title = "Source code",
                     summary = "github.com/213YaZ786/SMS",
                     onClick = { uriHandler.openUri("https://github.com/213YaZ786/SMS") }
@@ -197,6 +225,13 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 // Installing needs Android's leave, asked when chosen.
                 if (mode == UpdateMode.INSTALL && !Updates.canInstall(context)) Updates.allowInstalls(context)
             },
+            onDismiss = { dialog = OpenDialog.NONE }
+        )
+        OpenDialog.RELAY -> ChoiceDialog(
+            title = "Relay",
+            options = RELAYS.map { it to it },
+            selected = settings.relay,
+            onSelect = viewModel::setRelay,
             onDismiss = { dialog = OpenDialog.NONE }
         )
         OpenDialog.NONE -> Unit
@@ -326,3 +361,6 @@ private fun updatesLabel(mode: UpdateMode): String = when (mode) {
     UpdateMode.NOTIFY -> "Notify me"
     UpdateMode.INSTALL -> "Install automatically"
 }
+
+/** Public chatmail relays to choose from; the profile lives on one, chats work across all. */
+private val RELAYS = listOf("nine.testrun.org", "chat.sus.fr", "d.gaufr.es", "mehl.cloud", "chatmail.email")

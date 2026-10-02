@@ -7,7 +7,7 @@ import com.sms.app.data.settings.SettingsStore
 import com.sms.app.data.settings.ThemeMode
 import kotlinx.coroutines.flow.StateFlow
 
-class SettingsViewModel(private val store: SettingsStore) : ViewModel() {
+class SettingsViewModel(val store: SettingsStore) : ViewModel() {
 
     val settings: StateFlow<Settings> = store.settings
 
@@ -18,4 +18,6 @@ class SettingsViewModel(private val store: SettingsStore) : ViewModel() {
     fun setUpdates(mode: UpdateMode) = store.update { it.copy(updates = mode) }
     fun setHideInRecents(on: Boolean) = store.update { it.copy(hideInRecents = on) }
     fun setQuietSales(on: Boolean) = store.update { it.copy(quietSales = on) }
+    fun setRichChat(on: Boolean) = store.update { it.copy(richChat = on) }
+    fun setRelay(relay: String) = store.update { it.copy(relay = relay) }
 }

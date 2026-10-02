@@ -147,7 +147,6 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val canCall = !group && to.count(Char::isDigit) >= 3
     // With one number: the rich chat when it has SMS too, else SMS.
     val linked = remember(links, to) { if (group || to.isBlank()) null else chat.linkFor(to) }
-    LaunchedEffect(to, group) { if (!group && to.isNotBlank()) chat.hello(to) }
     LaunchedEffect(linked, chatChanges) { if (linked != null) chat.markSeen(to) }
 
     val density = LocalDensity.current
@@ -195,6 +194,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                         val text = quoted?.let { "«${excerpt(it)}»\n$typed" } ?: typed
                         if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, sub)
                         else SmsSender.send(context, to, text, sub)
+                        // The first message to a number asks, unseen, whether it has SMS too.
+                        if (!group) chat.hello(to)
                     }
                     true
                 }
