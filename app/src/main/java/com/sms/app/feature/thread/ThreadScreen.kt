@@ -383,6 +383,8 @@ private fun Bubble(m: Message, last: Boolean, fresh: Boolean, rich: RichRef?, on
     val menu = rememberPillMenu()
     val mine = m.box != MessageBox.RECEIVED
     val code = remember(m.body) { if (mine) null else Codes.find(m.body) }
+    val parcel = remember(m.body) { if (mine || code != null) null else com.sms.app.core.sms.Finds.parcel(m.body) }
+    val appointment = remember(m.body) { if (code != null) null else com.sms.app.core.sms.Finds.appointment(m.body) }
     val accent = MaterialTheme.colorScheme.primary
     val text = remember(m.body, accent) { linked(m.body, accent) }
     // A message that just came in drops into place, a ring of glass spreading from it.
@@ -499,6 +501,34 @@ private fun Bubble(m: Message, last: Boolean, fresh: Boolean, rich: RichRef?, on
         if (!rich?.reactions.isNullOrEmpty()) {
             FloatingPane(shape = CircleShape, modifier = Modifier.padding(top = 2.dp)) {
                 Text(rich!!.reactions.joinToString(" "), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+            }
+        }
+        if (parcel != null || appointment != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
+                parcel?.let { number ->
+                    FloatingPane(shape = CircleShape, accent = true, onClick = {
+                        haptics.done()
+                        copy(context, "Tracking number", number)
+                    }) {
+                        Text("Copy tracking number", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+                    }
+                }
+                appointment?.let { at ->
+                    FloatingPane(shape = CircleShape, accent = true, onClick = {
+                        haptics.tick()
+                        val begin = at.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(android.content.Intent.ACTION_INSERT, android.provider.CalendarContract.Events.CONTENT_URI)
+                                    .putExtra(android.provider.CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin)
+                                    .putExtra(android.provider.CalendarContract.EXTRA_EVENT_END_TIME, begin + 60 * 60 * 1000)
+                                    .putExtra(android.provider.CalendarContract.Events.DESCRIPTION, m.body)
+                            )
+                        }
+                    }) {
+                        Text("Add to calendar", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+                    }
+                }
             }
         }
         if (code != null) {
