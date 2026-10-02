@@ -10,7 +10,7 @@ A messaging app for Android. No account, no tracking, no ads.
 - Photos, videos and group messages (MMS).
 - Encrypted chat with other SMS users, found by their phone number:
   read receipts, reactions, photos and files in full quality, voice
-  messages, groups, edit or delete a message for everyone, pinned and
+  messages, named groups, edit or delete a message for everyone, pinned and
   vanishing messages, and encrypted voice and video calls shown by Dialer; SMS for
   everyone else.
 - Send photos, a photo taken now, any file or a contact card; hold the
