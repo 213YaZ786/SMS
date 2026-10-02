@@ -86,7 +86,12 @@ class VoiceTake(context: Context) {
         /** Shorter than this, a press was not meant as a message. */
         const val MIN_MS = 700L
 
-        fun start(context: Context): VoiceTake? = runCatching { VoiceTake(context) }.getOrNull()
+        fun start(context: Context): VoiceTake? {
+            // Recordings already sent, or let go, do not stay: gone after an hour.
+            File(context.cacheDir, "shared").listFiles { f -> f.name.startsWith("voice-") && System.currentTimeMillis() - f.lastModified() > 3_600_000 }
+                ?.forEach { it.delete() }
+            return runCatching { VoiceTake(context) }.getOrNull()
+        }
     }
 }
 
