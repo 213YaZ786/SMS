@@ -19,6 +19,19 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <!-- Voice messages and calls of the encrypted chat, asked the first time. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Encrypted calls: the camera for video calls (asked the first time), declared to
+         Android as calls of this app so they ring, take headsets and the lock screen,
+         and keep the microphone and camera while the call screen is not in front. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- The call's media need it to reach the microphone (Android's WebView asks it). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <!-- A short buzz when a message arrives, as the phone is set. -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- The rich chat stays connected while the app is closed, so messages
@@ -89,6 +102,33 @@
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Sms" />
+
+        <!-- The encrypted call's screen. Not exported: only this app and its notifications open it. -->
+        <activity
+            android:name=".feature.call.CallActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:theme="@style/Theme.Sms" />
+
+        <!-- Encrypted calls as Android sees them. Only Telecom may bind it. -->
+        <service
+            android:name=".core.call.ChatConnectionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".core.call.CallService"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall|microphone|camera" />
+        <receiver
+            android:name=".core.call.CallActions"
+            android:exported="false" />
 
         <!-- A new SMS. Only the system may deliver it. -->
         <receiver

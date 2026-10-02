@@ -185,6 +185,15 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     init {
         scope.launch { engine.events.collect { onEvent(it) } }
+        // A call coming in rings through Telecom; when it cannot (another call), it is missed and ended.
+        scope.launch {
+            calls.collect { signal ->
+                if (signal is CallSignal.Incoming && !com.sms.app.core.call.CallBook.ring(context, signal.msgId, signal.phone, signal.offer, signal.video)) {
+                    com.sms.app.core.call.CallNotices.missed(context, signal.phone, signal.video)
+                    endCall(signal.msgId)
+                }
+            }
+        }
     }
 
     /** The profile on the relay made and connected; false when off or unreachable. */
@@ -435,7 +444,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                 val id = event.data["msg_id"]?.jsonPrimitive?.intOrNull
                 if (id != null && event.data["from_this_device"]?.jsonPrimitive?.booleanOrNull != true) _calls.tryEmit(CallSignal.TakenElsewhere(id))
             }
-            "CallEnded" -> event.data["msg_id"]?.jsonPrimitive?.intOrNull?.let { _calls.tryEmit(CallSignal.Ended(it)) }
+            "CallEnded" -> {
+                event.data["msg_id"]?.jsonPrimitive?.intOrNull?.let { _calls.tryEmit(CallSignal.Ended(it)) }
+            }
             "ChatEphemeralTimerModified" -> {
                 val chat = event.data["chatId"]?.jsonPrimitive?.intOrNull
                 val timer = event.data["timer"]?.jsonPrimitive?.intOrNull

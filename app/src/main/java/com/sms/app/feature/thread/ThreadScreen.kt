@@ -236,7 +236,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
             FloatingTop(
                 title = null,
                 leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) },
-                trailing = { if (canCall) FloatingAction(AppIcons.Call, "Call", { NumberActions.dial(context, to) }) },
+                trailing = { if (canCall) CallButton(to, linked != null) },
                 center = {
                     PersonPill(title, to, entry?.contactId, group, vanish = if (encrypted) vanish else null) { seconds ->
                         scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds }
@@ -399,6 +399,29 @@ private fun rowsOf(list: List<Message>): List<Row> {
         out += Row.Bubble(m, m.id == lastMine)
     }
     return out
+}
+
+/**
+ * Call at the top: with the encrypted chat, a palette of an encrypted
+ * call, a video call or a phone call; without it, the phone call.
+ */
+@Composable
+private fun CallButton(phone: String, encrypted: Boolean) {
+    val context = LocalContext.current
+    var open by remember { mutableStateOf(false) }
+    var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    Box(Modifier.onGloballyPositioned { bounds = it.boundsInWindow() }) {
+        FloatingAction(AppIcons.Call, "Call", { if (encrypted) open = true else NumberActions.dial(context, phone) })
+    }
+    if (open) PaletteMenu(
+        bounds,
+        listOf(
+            MessageAction(AppIcons.Call, "Encrypted call") { com.sms.app.feature.call.CallActivity.start(context, phone, video = false) },
+            MessageAction(AppIcons.Videocam, "Video call") { com.sms.app.feature.call.CallActivity.start(context, phone, video = true) },
+            MessageAction(AppIcons.Dialpad, "Phone call") { NumberActions.dial(context, phone) }
+        ),
+        onDismiss = { open = false }
+    )
 }
 
 /** The name at the top: a tap offers the calls with them, their contact, blocking. */
