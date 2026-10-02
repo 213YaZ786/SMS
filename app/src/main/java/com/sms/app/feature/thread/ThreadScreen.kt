@@ -137,9 +137,15 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         if (t != null) messages.addressesOf(t).takeIf { it.isNotEmpty() }?.let { people = it }
     }
     var list by remember { mutableStateOf<List<Message>>(emptyList()) }
-    LaunchedEffect(thread, changes, chatChanges) {
+    // Read only while the conversation is really in front: in the
+    // background its new messages stay unread and notified.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val inFront by lifecycle.currentStateFlow.collectAsState()
+    val shown = inFront.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    LaunchedEffect(thread, changes, chatChanges, shown) {
         val t = thread ?: return@LaunchedEffect
         list = messages.thread(t)
+        if (!shown) return@LaunchedEffect
         if (list.any { it.box == MessageBox.RECEIVED && !it.read }) messages.markRead(t)
         MessageNotifier(context).cancel(t)
     }
@@ -152,7 +158,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val canCall = !group && to.count(Char::isDigit) >= 3
     // With one number: the rich chat when it has SMS too, else SMS.
     val linked = remember(links, to) { if (group || to.isBlank()) null else chat.linkFor(to) }
-    LaunchedEffect(linked, chatChanges) { if (linked != null) chat.markSeen(to) }
+    LaunchedEffect(linked, chatChanges, shown) { if (linked != null && shown) chat.markSeen(to) }
 
     val density = LocalDensity.current
     var composerHeight by remember { mutableStateOf(0.dp) }
