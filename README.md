@@ -11,7 +11,8 @@ A messaging app for Android. No account, no tracking, no ads.
 - Encrypted chat with other SMS users, found by their phone number:
   read receipts, reactions, photos and files in full quality, voice
   messages, groups, edit or delete a message for everyone, pinned and
-  vanishing messages; SMS for everyone else.
+  vanishing messages, and encrypted calls shown by Dialer; SMS for
+  everyone else.
 - Send photos, a photo taken now, any file or a contact card; hold the
   microphone for a voice message. Photos leave without their location,
   camera or dates.
@@ -41,4 +42,5 @@ messages. Both can be turned off in Settings.
 MIT. Icons from Google's Material Icons, Apache License 2.0. Picture
 messages use code from AOSP Messaging, Apache License 2.0. The encrypted
 chat runs chatmail core (github.com/chatmail/core), Mozilla Public
-License 2.0, downloaded unchanged at build time.
+License 2.0, downloaded unchanged at build time. Calls use WebRTC's
+Android library by webrtc-sdk, MIT License.
