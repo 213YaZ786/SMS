@@ -113,14 +113,28 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private val _groups = MutableStateFlow(loadGroups())
 
     /** The rich chat's messages in Android's store, by the chat's message id. */
+    private val refStore = RefStore(context)
     private val _refs = MutableStateFlow(loadRefs())
     val refs: StateFlow<Map<Int, RichRef>> = _refs.asStateFlow()
 
+    /** The chat's id of each row of the store it holds, to find one at once. */
+    @Volatile private var byRow: Map<Pair<Boolean, Long>, Int> = index(_refs.value)
+
+    private fun index(refs: Map<Int, RichRef>) = HashMap<Pair<Boolean, Long>, Int>(refs.size * 2).apply {
+        refs.forEach { (msg, r) -> put(r.mms to r.id, msg) }
+    }
+
+    /** The in-memory list and its index after a change. */
+    private fun publish(updated: Map<Int, RichRef>) {
+        byRow = index(updated)
+        _refs.value = updated
+    }
+
     /** The chat side of a message of the store, when it went over the chat. */
-    fun refOf(mms: Boolean, id: Long): RichRef? = _refs.value.values.firstOrNull { it.mms == mms && it.id == id }
+    fun refOf(mms: Boolean, id: Long): RichRef? = byRow[mms to id]?.let { _refs.value[it] }
 
     /** The chat's own id of a message of the store, when it went over the chat. */
-    fun chatIdOf(mms: Boolean, id: Long): Int? = _refs.value.entries.firstOrNull { it.value.mms == mms && it.value.id == id }?.key
+    fun chatIdOf(mms: Boolean, id: Long): Int? = byRow[mms to id]
 
     /** How long messages last in each chat, in seconds, as last heard. */
     private val timers = java.util.concurrent.ConcurrentHashMap<Int, Int>()
@@ -228,9 +242,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             runCatching { context.contentResolver.query(uri, arrayOf("_id"), null, null, null)?.use { it.count == 0 } }.getOrNull() ?: false
         }.keys
         if (gone.isEmpty()) return@withContext
-        val updated = _refs.value - gone
-        _refs.value = updated
-        runCatching { refsFile.writeTextAtomically(json.encodeToString(updated)) }
+        publish(_refs.value - gone)
+        runCatching { refStore.remove(gone) }
     }
 
     /** The relays' meeting points for calls (TURN), as the engine gives them, in WebRTC's JSON. */
@@ -588,9 +601,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         withContext(Dispatchers.IO) {
             runCatching { context.contentResolver.delete(Uri.parse(if (ref.mms) "content://mms/${ref.id}" else "content://sms/${ref.id}"), null, null) }
         }
-        val updated = _refs.value - msgId
-        _refs.value = updated
-        runCatching { refsFile.writeTextAtomically(json.encodeToString(updated)) }
+        publish(_refs.value - msgId)
+        runCatching { refStore.remove(listOf(msgId)) }
         _changes.value++
     }
 
@@ -633,9 +645,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     private fun saveRef(msgId: Int, ref: RichRef) {
         // Android reuses a deleted message's number: the newest message holding it wins.
-        val updated = _refs.value.filterNot { (id, r) -> id != msgId && r.mms == ref.mms && r.id == ref.id } + (msgId to ref)
-        _refs.value = updated
-        runCatching { refsFile.writeTextAtomically(json.encodeToString(updated)) }
+        val stale = byRow[ref.mms to ref.id]?.takeIf { it != msgId }
+        publish((if (stale != null) _refs.value - stale else _refs.value) + (msgId to ref))
+        runCatching { refStore.put(msgId, ref) }
     }
 
     private fun saveGroup(group: ChatGroup) {
@@ -649,8 +661,15 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     private fun groupKey(phones: List<String>) = phones.map(::key).sorted().joinToString(",")
 
-    private fun loadRefs(): Map<Int, RichRef> =
-        runCatching { json.decodeFromString<Map<Int, RichRef>>(refsFile.readText()) }.getOrDefault(emptyMap())
+    /** From the database; the JSON file of older versions is moved into it once. */
+    private fun loadRefs(): Map<Int, RichRef> {
+        if (refsFile.exists()) {
+            runCatching { json.decodeFromString<Map<Int, RichRef>>(refsFile.readText()) }.getOrNull()?.let { old ->
+                runCatching { refStore.putAll(old) }.onSuccess { refsFile.delete() }
+            }
+        }
+        return runCatching { refStore.all() }.getOrDefault(emptyMap())
+    }
 
     private fun load(): Map<String, ChatLink> =
         runCatching { json.decodeFromString<Map<String, ChatLink>>(file.readText()) }.getOrDefault(emptyMap())
