@@ -13,7 +13,8 @@ A messaging app for Android. No account, no tracking, no ads.
   messages, groups, edit or delete a message for everyone, pinned and
   vanishing messages; SMS for everyone else.
 - Send photos, a photo taken now, any file or a contact card; hold the
-  microphone for a voice message.
+  microphone for a voice message. Photos leave without their location,
+  camera or dates.
 - Reply from the notification or from a floating bubble; pin, archive,
   search; links opened without their trackers.
 - A few seconds to take a message back; hold Send to send it later;
@@ -31,9 +32,9 @@ Android 12 or newer.
 ## Privacy
 
 Your messages stay on your phone. Two connections: a check for a new
-version on GitHub, and the encrypted chat through a chatmail relay, which
-carries only end-to-end encrypted messages. Both can be turned off in
-Settings.
+version on GitHub, and the encrypted chat through chatmail relays (the
+fastest one, with backups), which carry only end-to-end encrypted
+messages. Both can be turned off in Settings.
 
 ## Licence
 

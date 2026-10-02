@@ -281,7 +281,7 @@ private fun MovableComposeButton(onClick: () -> Unit, above: Dp) {
                     }
                 }
         ) {
-            Icon(AppIcons.Create, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+            Icon(AppIcons.NewChat, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
         }
     }
 }
