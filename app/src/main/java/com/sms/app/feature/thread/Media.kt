@@ -161,7 +161,7 @@ private fun openOutside(context: Context, part: MmsPart) {
         }
         val shared = FileProvider.getUriForFile(context, "${context.packageName}.mms", file)
         context.startActivity(
-            Intent(Intent.ACTION_VIEW).setDataAndType(shared, part.contentType)
+            Intent(Intent.ACTION_VIEW).setDataAndType(shared, com.sms.app.core.mms.MediaPrivacy.safeType(part.contentType))
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     }

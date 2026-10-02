@@ -52,9 +52,21 @@ object MediaPrivacy {
         }.getOrDefault(a)
     }
 
+    /**
+     * The type a received file is handed to another app as: what could run
+     * code there (a web page, a vector picture, a script) goes as plain
+     * text, to be read, never run.
+     */
+    fun safeType(contentType: String): String {
+        val type = contentType.substringBefore(';').trim().lowercase()
+        val active = listOf("html", "xhtml", "svg", "xml", "javascript", "ecmascript", "x-sh", "x-shellscript", "x-python", "x-perl", "wasm")
+        return if (active.any { it in type }) "text/plain" else type.ifEmpty { "application/octet-stream" }
+    }
+
     /** A file's ending for its type, letters and digits only, never a path. */
     fun extension(contentType: String): String =
-        contentType.substringAfter('/').substringBefore(';').lowercase().filter { it.isLetterOrDigit() }.take(8).ifEmpty { "bin" }
+        safeType(contentType).let { if (it == "text/plain" && it != contentType.substringBefore(';').trim().lowercase()) "txt" else it }
+            .substringAfter('/').filter { it.isLetterOrDigit() }.take(8).ifEmpty { "bin" }
 
     /**
      * An app to install, whatever type the sender gave it: by its type, or

@@ -32,6 +32,24 @@ class HelloTest {
     }
 
     @Test
+    fun nothingCanBeSlippedIntoTheLink() {
+        val fp = "20FDD4AD104E8AEF6762825D0E2746391F251B06"
+        val good = Hello(nonce, fp, "mQHIdcgwipgCwG3bFetZeRMP", "ahK71WbHo9pbqMAsSl0Hae5J", "xpyrviujh@nine.testrun.org")
+        assertTrue(good.wellFormed())
+        listOf(
+            good.copy(invite = "abc&a=evil@x.org"),
+            good.copy(auth = "abc#frag"),
+            good.copy(auth = "a b"),
+            good.copy(address = "evil@x.org&v=9"),
+            good.copy(address = "no-at-sign")
+        ).forEach { bad ->
+            assertTrue(!bad.wellFormed())
+            assertNull(Hello.decode(bad.encode()))
+        }
+        assertTrue(!good.copy(fingerprint = "ZZ" + fp.drop(2)).wellFormed())
+    }
+
+    @Test
     fun theProofCarriesTheNonce() {
         val text = Hello.proofText(nonce)
         assertTrue(Hello.isProof(text))

@@ -837,6 +837,8 @@ private fun linked(body: String, accent: androidx.compose.ui.graphics.Color): An
         val found = matcher.group()
         // Plain words with a dot ("e.g") are not links: a scheme or www. is.
         if (!found.contains("://") && !found.startsWith("www.", ignoreCase = true)) continue
+        // Only web pages open from a message, never another kind of link.
+        if (found.contains("://") && !found.startsWith("https://", ignoreCase = true) && !found.startsWith("http://", ignoreCase = true)) continue
         append(body.substring(at, matcher.start()))
         val url = if (found.contains("://")) found else "https://$found"
         withLink(LinkAnnotation.Url(LinkCleaner.clean(url), style)) { append(found) }

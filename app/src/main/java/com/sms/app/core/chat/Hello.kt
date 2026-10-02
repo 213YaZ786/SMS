@@ -21,6 +21,14 @@ data class Hello(val nonce: ByteArray, val fingerprint: String, val invite: Stri
         return MAGIC + byteArrayOf(VERSION) + nonce + fingerprint.chunked(2).map { it.toInt(16).toByte() }.toByteArray() + text
     }
 
+    /**
+     * Each part only of what it may hold, so nothing sent by SMS can add
+     * or change a parameter of the link the engine joins.
+     */
+    fun wellFormed(): Boolean =
+        fingerprint.length == 40 && fingerprint.all { it in "0123456789ABCDEF" } &&
+            TOKEN.matches(invite) && TOKEN.matches(auth) && ADDRESS.matches(address)
+
     override fun equals(other: Any?) = other is Hello && nonce.contentEquals(other.nonce) && fingerprint == other.fingerprint &&
         invite == other.invite && auth == other.auth && address == other.address
 
@@ -30,6 +38,8 @@ data class Hello(val nonce: ByteArray, val fingerprint: String, val invite: Stri
         private val MAGIC = "S+".toByteArray(Charsets.US_ASCII)
         private const val VERSION: Byte = 1
         const val NONCE_BYTES = 8
+        private val TOKEN = Regex("^[A-Za-z0-9_-]{1,80}$")
+        private val ADDRESS = Regex("^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$")
 
         /** The parts of an invite link from the engine, or null. */
         fun fromLink(link: String, nonce: ByteArray): Hello? = runCatching {
@@ -40,7 +50,7 @@ data class Hello(val nonce: ByteArray, val fingerprint: String, val invite: Stri
                 nonce, fingerprint,
                 params["i"] ?: return null, params["s"] ?: return null,
                 URLDecoder.decode(params["a"] ?: return null, "UTF-8")
-            ).takeIf { it.fingerprint.length == 40 && it.fingerprint.all { c -> c in "0123456789ABCDEF" } }
+            ).takeIf { it.wellFormed() }
         }.getOrNull()
 
         fun decode(bytes: ByteArray): Hello? = runCatching {
@@ -48,8 +58,8 @@ data class Hello(val nonce: ByteArray, val fingerprint: String, val invite: Stri
             val nonce = bytes.copyOfRange(3, 3 + NONCE_BYTES)
             val fp = bytes.copyOfRange(3 + NONCE_BYTES, 3 + NONCE_BYTES + 20).joinToString("") { "%02X".format(it) }
             val parts = String(bytes.copyOfRange(3 + NONCE_BYTES + 20, bytes.size), Charsets.US_ASCII).split('\n')
-            if (parts.size != 3 || parts.any { it.isBlank() || it.length > 80 }) return null
-            Hello(nonce, fp, parts[0], parts[1], parts[2]).takeIf { '@' in it.address }
+            if (parts.size != 3) return null
+            Hello(nonce, fp, parts[0], parts[1], parts[2]).takeIf { it.wellFormed() }
         }.getOrNull()
 
         /** What comes back over the chat, never shown: the nonce, as proof. */

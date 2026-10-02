@@ -19,6 +19,16 @@ class MediaPrivacyTest {
     }
 
     @Test
+    fun whatCouldRunCodeIsOpenedAsText() {
+        assertEquals("text/plain", MediaPrivacy.safeType("text/html; charset=utf-8"))
+        assertEquals("text/plain", MediaPrivacy.safeType("image/svg+xml"))
+        assertEquals("text/plain", MediaPrivacy.safeType("application/javascript"))
+        assertEquals("txt", MediaPrivacy.extension("text/html"))
+        assertEquals("image/jpeg", MediaPrivacy.safeType("image/jpeg"))
+        assertEquals("application/pdf", MediaPrivacy.safeType("application/pdf"))
+    }
+
+    @Test
     fun anAppIsFoundWhateverTypeItClaims() {
         val apk = File.createTempFile("pic", ".jpg").apply {
             ZipOutputStream(outputStream()).use { zip ->
