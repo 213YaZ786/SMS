@@ -44,17 +44,25 @@ class ChatService : Service(), KoinComponent {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Connection", NotificationManager.IMPORTANCE_MIN))
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        // As quiet as Android allows: no sound, no banner, shown again without a
+        // word after a restart or an update, hidden on the lock screen.
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_sms)
-            .setContentTitle("Rich chat connected")
+            .setContentTitle("Encrypted chat")
+            .setContentText("Ready for messages")
             .setContentIntent(open)
             .setOngoing(true)
             .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .build()
     }
 
     companion object {
-        private const val CHANNEL = "connection"
+        const val CHANNEL = "connection"
         private const val ID = 42
 
         /** Starts it when the chat is on and SMS is the messaging app. */

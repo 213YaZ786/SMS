@@ -108,6 +108,19 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     summary = settings.relay,
                     onClick = { dialog = OpenDialog.RELAY }
                 )
+                // Android asks for a notification while the chat stays connected; it can be hidden.
+                if (settings.richChat) SettingRow(
+                    title = "Hide the connection notification",
+                    summary = "The chat keeps receiving; only the notification goes",
+                    onClick = {
+                        open(
+                            context,
+                            Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, com.sms.app.core.chat.ChatService.CHANNEL)
+                        )
+                    }
+                )
             }
 
             Section("Messages") {
