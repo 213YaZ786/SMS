@@ -18,6 +18,9 @@ A messaging app for Android. No account, no tracking, no ads.
   camera or dates.
 - Reply from the notification or from a floating bubble; pin, archive,
   search; links opened without their trackers.
+- Links that are not recognized are pointed out before they open, checked
+  on the phone (and against a public list of dangerous sites, which can
+  be turned off).
 - A few seconds to take a message back; hold Send to send it later;
   swipe a conversation left to have it back later.
 - Parcel numbers and appointments found in messages, copied or added to
