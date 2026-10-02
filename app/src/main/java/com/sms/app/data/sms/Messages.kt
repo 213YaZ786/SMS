@@ -190,7 +190,12 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
     suspend fun addressesOf(threadId: Long): List<String> = withContext(Dispatchers.IO) { recipients()[threadId].orEmpty() }
 
     /** The messages of one conversation, oldest first. */
-    suspend fun thread(threadId: Long): List<Message> = withContext(Dispatchers.IO) {
+    /**
+     * The newest [limit] messages of [threadId], oldest first: a
+     * conversation of years opens as fast as a new one, and more is read
+     * as the user goes back in it.
+     */
+    suspend fun thread(threadId: Long, limit: Int = PAGE): List<Message> = withContext(Dispatchers.IO) {
         runCatching {
             val out = ArrayList<Message>()
             context.contentResolver.query(
@@ -199,7 +204,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     Telephony.Sms._ID, Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE, Telephony.Sms.TYPE,
                     Telephony.Sms.READ, Telephony.Sms.STATUS, Telephony.Sms.SUBSCRIPTION_ID
                 ),
-                "${Telephony.Sms.THREAD_ID} = ?", arrayOf(threadId.toString()), "${Telephony.Sms.DATE} ASC"
+                "${Telephony.Sms.THREAD_ID} = ?", arrayOf(threadId.toString()), "${Telephony.Sms.DATE} DESC LIMIT $limit"
             )?.use { c ->
                 while (c.moveToNext()) {
                     out += Message(
@@ -218,7 +223,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             context.contentResolver.query(
                 Telephony.Mms.CONTENT_URI,
                 arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID),
-                "${Telephony.Mms.THREAD_ID} = ?", arrayOf(threadId.toString()), null
+                "${Telephony.Mms.THREAD_ID} = ?", arrayOf(threadId.toString()), "${Telephony.Mms.DATE} DESC LIMIT $limit"
             )?.use { c ->
                 while (c.moveToNext()) {
                     val id = c.getLong(0)
@@ -244,7 +249,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     )
                 }
             }
-            out.sortedBy { it.date }
+            out.sortedBy { it.date }.takeLast(limit)
         }.getOrDefault(emptyList())
     }
 
@@ -267,6 +272,9 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
     }
 
     companion object {
+        /** How many messages a conversation reads at a time. */
+        const val PAGE = 200
+
         fun boxOf(type: Int): Box = when (type) {
             Telephony.Sms.MESSAGE_TYPE_INBOX -> Box.RECEIVED
             Telephony.Sms.MESSAGE_TYPE_SENT -> Box.SENT

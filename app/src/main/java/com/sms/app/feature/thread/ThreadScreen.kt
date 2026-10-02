@@ -44,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -150,9 +151,11 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val inFront by lifecycle.currentStateFlow.collectAsState()
     val shown = inFront.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-    LaunchedEffect(thread, changes, chatChanges, shown) {
+    // The newest messages first; going back in the conversation reads more.
+    var window by remember { mutableIntStateOf(Messages.PAGE) }
+    LaunchedEffect(thread, changes, chatChanges, shown, window) {
         val t = thread ?: return@LaunchedEffect
-        list = messages.thread(t)
+        list = messages.thread(t, window)
         if (!shown) return@LaunchedEffect
         if (list.any { it.box == MessageBox.RECEIVED && !it.read }) messages.markRead(t)
         MessageNotifier(context).cancel(t)
@@ -297,7 +300,12 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         val rows = remember(list) { rowsOf(list) }
         // The person's light behind the conversation: their photo, blurred, or a glow of the accent.
         HeroGlow(if (group) null else entry?.photo, height = padding.calculateTopPadding() + 320.dp)
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        // Near the oldest message shown, with more behind it: read the next page.
+        val nearTop by remember { derivedStateOf { (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= listState.layoutInfo.totalItemsCount - 15 } }
+        LaunchedEffect(nearTop, list.size) { if (nearTop && list.size >= window) window += Messages.PAGE }
         LazyColumn(
+            state = listState,
             reverseLayout = true,
             modifier = Modifier.fillMaxSize().padding(horizontal = inset),
             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 14.dp),
