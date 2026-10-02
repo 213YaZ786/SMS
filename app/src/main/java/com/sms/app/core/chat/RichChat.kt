@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -52,6 +53,17 @@ data class ChatLink(
     /** When the invite was last sent, not to ask again and again. */
     val askedAt: Long = 0
 )
+
+/** When the relays were last looked at, and how many days each has not answered. */
+@Serializable
+data class RelayHealth(val checkedAt: Long = 0, val fails: Map<String, Int> = emptyMap())
+
+class HealthFile(private val file: File, private val json: Json) {
+    fun load(): RelayHealth = runCatching { json.decodeFromString<RelayHealth>(file.readText()) }.getOrDefault(RelayHealth())
+    fun save(health: RelayHealth) {
+        runCatching { file.writeTextAtomically(json.encodeToString(health)) }
+    }
+}
 
 /** What the engine says of a call: one rings here, ours was taken, one ended. */
 sealed class CallSignal {
@@ -191,7 +203,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             }
             engine.call("start_io", account)
             _ready.value = true
-            scope.launch { backUp() }
+            scope.launch { tend() }
             scope.launch { prune() }
             _status.value = "Connected"
         }.onFailure { error ->
@@ -210,27 +222,53 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     }
 
     /**
-     * A profile made before relays were automatic lives on one relay: in
-     * automatic mode it gets a second one, the known relay that answers
-     * fastest, so messages still come when one is down.
+     * Keeps the relays alive over the years, once a day: the list of
+     * public relays is read again each week; a relay of the profile that
+     * has not answered for three days while another one did is let
+     * go (the engine then sends through another), and in automatic mode
+     * the profile always keeps two, the newcomer being the known relay
+     * that answers fastest.
      */
-    private suspend fun backUp() {
-        if (settings.current.relay.isNotBlank()) return
-        val now = relays()
-        if (now.size != 1) return
-        // The known relays by how fast they answer; the first that takes the profile stays.
-        val ranked = withContext(Dispatchers.IO) {
-            KNOWN_RELAYS.filter { it != now[0] }.map { host ->
-                scope.async { host to Relays.answerTime(host) }
-            }.mapNotNull { it.await().let { (h, t) -> t?.let { h to it } } }.sortedBy { it.second }.map { it.first }
+    suspend fun tend() = withContext(Dispatchers.IO) { tending.withLock { tendNow() } }
+
+    private val tending = Mutex()
+
+    private suspend fun tendNow() {
+        if (!_ready.value) return
+        val state = health.load()
+        if (System.currentTimeMillis() - state.checkedAt < 20 * 60 * 60 * 1000L) return
+        Relays.refresh(context)
+        val transports = runCatching {
+            engine.call("list_transports", account).jsonArray.mapNotNull { (it as? JsonObject)?.get("addr")?.jsonPrimitive?.contentOrNull }
+        }.getOrDefault(emptyList())
+        val answers = transports.associate { addr -> addr.substringAfter('@') to Relays.answerTime(addr.substringAfter('@')) }
+        // A silent day counts against a relay only when the network was
+        // working: another of them, or a known relay, answered that day.
+        val networkWorked = answers.values.any { it != null } ||
+            Relays.known(context).filter { it !in answers.keys }.take(3).any { Relays.answerTime(it) != null }
+        if (!networkWorked) return
+        val fails = answers.mapValues { (host, time) -> if (time == null) (state.fails[host] ?: 0) + 1 else 0 }
+        // Written now: adding a relay below may take minutes.
+        health.save(RelayHealth(System.currentTimeMillis(), fails))
+        val alive = transports.toMutableList()
+        transports.filter { (fails[it.substringAfter('@')] ?: 0) >= 3 }.forEach { addr ->
+            if (alive.size > 1 && runCatching { engine.call("delete_transport", account, addr) }.isSuccess) alive -= addr
         }
-        for (host in ranked.take(3)) {
-            if (runCatching { engine.call("add_transport_from_qr", account, "dcaccount:$host") }.isSuccess) {
-                _changes.value++
-                return
+        if (settings.current.relay.isBlank() && alive.size < 2) {
+            val have = alive.map { it.substringAfter('@') }.toSet()
+            val ranked = coroutineScope {
+                Relays.known(context).filter { it !in have }.map { host -> async { host to Relays.answerTime(host) } }
+                    .mapNotNull { it.await().let { (h, t) -> t?.let { h to it } } }.sortedBy { it.second }.map { it.first }
+            }
+            for (host in ranked.take(3)) {
+                val ok = runCatching { engine.call("add_transport_from_qr", account, "dcaccount:$host") }
+                if (ok.isSuccess) break
             }
         }
+        _changes.value++
     }
+
+    private val health = HealthFile(File(context.filesDir, "relay-health.json"), json)
 
     /**
      * Forgets the chat side of messages no longer in Android's store
@@ -679,9 +717,6 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 
     companion object {
-        /** Public chatmail relays, from chatmail.at/relays, to choose from by hand or as a backup. */
-        val KNOWN_RELAYS = listOf("nine.testrun.org", "chat.sus.fr", "d.gaufr.es", "mehl.cloud", "chatmail.email", "e2ee.im")
-
         /** The port the data SMS carrying an invite go to. */
         const val PORT: Short = 18471
         /** The engine's id for the user themselves among a chat's contacts. */

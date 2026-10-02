@@ -31,12 +31,25 @@ import org.koin.core.component.inject
 class ChatService : Service(), KoinComponent {
 
     private val chat: RichChat by inject()
+    private var watch: kotlinx.coroutines.Job? = null
+
+    override fun onDestroy() {
+        watch?.cancel()
+        super.onDestroy()
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(ID, notice(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        CoroutineScope(Dispatchers.IO).launch { chat.start() }
+        if (watch == null) watch = CoroutineScope(Dispatchers.IO).launch {
+            chat.start()
+            // The relays looked at once a day (tend() keeps to that itself).
+            while (true) {
+                chat.tend()
+                kotlinx.coroutines.delay(6 * 60 * 60 * 1000L)
+            }
+        }
         return START_STICKY
     }
 

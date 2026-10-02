@@ -257,7 +257,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             val scope = androidx.compose.runtime.rememberCoroutineScope()
             ChoiceDialog(
                 title = "Relays",
-                options = listOf("" to "Automatic: the fastest, with backups") + com.sms.app.core.chat.RichChat.KNOWN_RELAYS.map { it to "Add $it" },
+                options = listOf("" to "Automatic: the fastest, with backups") + com.sms.app.core.chat.Relays.known(context).map { it to "Add $it" },
                 selected = settings.relay,
                 onSelect = { host ->
                     viewModel.setRelay(host)
