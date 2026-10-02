@@ -331,6 +331,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                         ContentType.isImageType(a.contentType) -> "Image"
                         ContentType.isVideoType(a.contentType) -> "Video"
                         a.contentType.contains("vcard") -> "Vcard"
+                        // Recorded in the composer: a voice message; any other sound stays audio.
+                        ContentType.isAudioType(a.contentType) -> if (copy.name.startsWith("voice-")) "Voice" else "Audio"
                         else -> "File"
                     }
                     val caption = if (i == 0) text else ""

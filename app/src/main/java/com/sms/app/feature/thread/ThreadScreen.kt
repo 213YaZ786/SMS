@@ -351,7 +351,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                             }
                         },
                         onDelete = { messages.deleteMessage(row.message) },
-                        onQuote = { quote = row.message.body.ifBlank { "Photo" } },
+                        onQuote = { quote = row.message.body.ifBlank { com.sms.app.core.mms.mediaWord(row.message.parts.firstOrNull()?.contentType) } },
                         onEdit = { id -> editing = id to row.message.body },
                         onDeleteForAll = { id -> scope.launch { if (!chat.deleteForAll(id)) haptics.reject() } },
                         onPin = { id, on -> scope.launch { chat.pin(id, on) } },
@@ -826,7 +826,7 @@ private fun PendingBubble(p: Pending, seconds: Int, modifier: Modifier, onCancel
         ) {
             ZoneSurface(shape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp), accent = true, modifier = Modifier.widthIn(max = 320.dp)) {
                 Text(
-                    p.text.ifBlank { if (p.attachments.isNotEmpty()) "Photo" else "" },
+                    p.text.ifBlank { p.attachments.firstOrNull()?.let { com.sms.app.core.mms.mediaWord(it.contentType) } ?: "" },
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.padding(start = 16.dp, end = 34.dp, top = 10.dp, bottom = 10.dp)
                 )

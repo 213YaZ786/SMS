@@ -79,6 +79,8 @@ fun MediaTile(part: MmsPart, mine: Boolean) {
             }
         }
         if (large) PictureViewer(part.uri, onClose = { large = false })
+    } else if (ContentType.isAudioType(part.contentType)) {
+        VoiceTile(part, mine)
     } else {
         ZoneSurface(
             shape = RoundedCornerShape(20.dp),

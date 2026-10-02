@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- Which SIM a message goes out from, when there are two. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Voice messages and calls of the encrypted chat, asked the first time. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- A short buzz when a message arrives, as the phone is set. -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- The rich chat stays connected while the app is closed, so messages

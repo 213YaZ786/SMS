@@ -219,7 +219,7 @@ fun mediaWord(contentType: String?): String = when {
     contentType == null -> "Message"
     ContentType.isImageType(contentType) -> "Photo"
     ContentType.isVideoType(contentType) -> "Video"
-    ContentType.isAudioType(contentType) -> "Audio"
+    ContentType.isAudioType(contentType) -> "Voice message"
     contentType.contains("vcard") -> "Contact card"
     else -> "Attachment"
 }

@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -117,6 +119,12 @@ fun Composer(
         if (card != null) add(listOf(Attachment(card, "text/x-vcard")))
     }
     var arcOpen by remember { mutableStateOf(false) }
+    // A voice message being recorded, and how far the finger has slid to cancel or to lock.
+    var take by remember { mutableStateOf<VoiceTake?>(null) }
+    var slide by remember { mutableStateOf(0f) }
+    var rise by remember { mutableStateOf(0f) }
+    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { take?.finish(keep = false) } }
     val veil by animateFloatAsState(if (arcOpen) 0.35f else 1f, label = "veil")
     val length = remember(text, attachments) { if (text.isBlank() || attachments.isNotEmpty()) null else SmsMessage.calculateLength(text, false) }
     val canSend = text.isNotBlank() || attachments.isNotEmpty()
@@ -187,7 +195,19 @@ fun Composer(
             }
         }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-            AttachArc(open = arcOpen, onOpen = { arcOpen = it }) { drop ->
+            val recording = take
+            if (recording != null && recording.locked) {
+                // Locked: the hand is free; this throws the recording away.
+                FloatingPane(shape = CircleShape, onClick = {
+                    haptics.reject()
+                    recording.finish(keep = false)
+                    take = null
+                }, modifier = Modifier.size(52.dp)) {
+                    Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
+                        Icon(AppIcons.Delete, contentDescription = "Discard the recording", tint = MaterialTheme.colorScheme.error)
+                    }
+                }
+            } else if (recording == null) AttachArc(open = arcOpen, onOpen = { arcOpen = it }) { drop ->
                 runCatching {
                     when (drop) {
                         Drop.PHOTOS -> pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
@@ -203,7 +223,7 @@ fun Composer(
                     }
                 }
             }
-            if (sims.size > 1) {
+            if (sims.size > 1 && recording == null) {
                 FloatingPane(shape = CircleShape, onClick = {
                     haptics.tick()
                     simIndex = (simIndex + 1) % sims.size
@@ -213,7 +233,19 @@ fun Composer(
                     }
                 }
             }
-            FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f).graphicsLayer { alpha = veil }) {
+            if (recording != null) {
+                Column(Modifier.weight(1f)) {
+                    if (!recording.locked) Text(
+                        "‹ Slide to cancel",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, bottom = 6.dp).graphicsLayer { translationX = slide * 0.5f }
+                    )
+                    FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth()) {
+                        VoiceLevels(recording, Modifier.padding(vertical = 12.dp))
+                    }
+                }
+            } else FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f).graphicsLayer { alpha = veil }) {
                 Box(Modifier.padding(horizontal = 18.dp, vertical = 15.dp)) {
                     if (text.isEmpty()) Text("Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     BasicTextField(
@@ -227,8 +259,24 @@ fun Composer(
                     )
                 }
             }
+            fun sendVoice(file: java.io.File) {
+                val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                val uri = runCatching { androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".mms", file) }.getOrNull() ?: return
+                if (onSend("", sub, listOf(Attachment(uri, "audio/mp4")))) haptics.done() else haptics.reject()
+            }
+            // With nothing written, Send is a microphone: held, it records.
+            val micMode = !canSend && editing == null && (take == null || take?.locked == false)
+            val micScale = rememberMicScale(take != null && take?.locked == false)
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            val cancelAt = with(density) { 110.dp.toPx() }
+            val lockAt = with(density) { 90.dp.toPx() }
             // A tap sends; held, Send offers to send later.
             fun send() {
+                take?.let { t ->
+                    take = null
+                    t.finish(keep = true)?.let(::sendVoice)
+                    return
+                }
                 if (!canSend) return
                 if (editing != null) {
                     haptics.done()
@@ -245,7 +293,50 @@ fun Composer(
                     haptics.reject()
                 }
             }
-            Box(Modifier.pointerInput(text, attachments, canSend, editing) {
+            Box(if (micMode) Modifier.pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                        askMic.launch(Manifest.permission.RECORD_AUDIO)
+                        return@awaitEachGesture
+                    }
+                    val t = VoiceTake.start(context) ?: return@awaitEachGesture
+                    take = t
+                    haptics.tick()
+                    var cancelled = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) break
+                        val moved = change.position - down.position
+                        slide = moved.x.coerceAtMost(0f)
+                        rise = moved.y.coerceAtMost(0f)
+                        change.consume()
+                        if (moved.x < -cancelAt) {
+                            cancelled = true
+                            break
+                        }
+                        if (moved.y < -lockAt) {
+                            t.locked = true
+                            haptics.tick()
+                            break
+                        }
+                    }
+                    slide = 0f
+                    rise = 0f
+                    when {
+                        cancelled -> {
+                            t.finish(keep = false)
+                            take = null
+                            haptics.reject()
+                        }
+                        !t.locked -> {
+                            take = null
+                            t.finish(keep = true)?.let(::sendVoice)
+                        }
+                    }
+                }
+            } else Modifier.pointerInput(text, attachments, canSend, editing, take) {
                 detectTapGestures(
                     onTap = { send() },
                     onLongPress = {
@@ -258,20 +349,37 @@ fun Composer(
                     }
                 )
             }) {
+            // While recording, the lock waits above the mic; slid up to, it frees the hand.
+            if (take != null && take?.locked == false) {
+                FloatingPane(shape = RoundedCornerShape(18.dp), modifier = Modifier
+                    .align(Alignment.Center)
+                    .graphicsLayer { translationY = -88.dp.toPx() + rise * 0.6f }
+                    .size(36.dp, 56.dp)) {
+                    Box(Modifier.size(36.dp, 56.dp), contentAlignment = Alignment.TopCenter) {
+                        Icon(AppIcons.Lock, contentDescription = "Slide up to lock", modifier = Modifier.padding(top = 8.dp).size(18.dp))
+                    }
+                }
+            }
             FloatingPane(
                 shape = CircleShape,
-                accent = canSend,
+                accent = canSend || take != null,
                 modifier = Modifier.size(52.dp).graphicsLayer {
-                    scaleX = lift
-                    scaleY = lift
+                    val s = if (micMode) micScale else lift
+                    scaleX = s
+                    scaleY = s
                 }
             ) {
                 Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
-                    AnimatedContent(canSend, transitionSpec = { (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut()) }, label = "send") { ready ->
-                        Icon(
-                            AppIcons.Send,
-                            contentDescription = "Send",
-                            tint = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    val state = when {
+                        take?.locked == true || canSend -> 1
+                        else -> 0
+                    }
+                    AnimatedContent(state, transitionSpec = { (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut()) }, label = "send") { ready ->
+                        if (ready == 1) Icon(AppIcons.Send, contentDescription = "Send", tint = MaterialTheme.colorScheme.primary)
+                        else Icon(
+                            AppIcons.Mic,
+                            contentDescription = "Hold to record a voice message",
+                            tint = if (take != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
