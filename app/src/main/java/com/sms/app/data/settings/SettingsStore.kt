@@ -57,7 +57,9 @@ data class Settings(
     /** Conversations put away, thread id to when: out of the list until a newer message comes. */
     val archived: Map<Long, Long> = emptyMap(),
     /** Names given to group conversations, by thread id. */
-    val groupNames: Map<Long, String> = emptyMap()
+    val groupNames: Map<Long, String> = emptyMap(),
+    /** Links are also looked up in a public list of dangerous sites, fetched once a day. */
+    val checkLinks: Boolean = true
 )
 
 /**

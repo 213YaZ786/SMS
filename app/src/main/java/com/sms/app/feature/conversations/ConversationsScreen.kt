@@ -101,6 +101,11 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     val settings by store.settings.collectAsState()
     val index = remember(contacts) { PhoneIndex(contacts) }
     val context = LocalContext.current
+    // The list of dangerous sites is kept a day fresh while the app is in front (Android
+    // gives an app started in the background for a message no network).
+    androidx.compose.runtime.LaunchedEffect(settings.checkLinks) {
+        if (settings.checkLinks) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.sms.app.core.link.BadHosts.refresh(context) }
+    }
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
 

@@ -376,7 +376,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                         onEdit = { id -> editing = id to row.message.body },
                         onDeleteForAll = { id -> scope.launch { if (!chat.deleteForAll(id)) haptics.reject() } },
                         onPin = { id, on -> scope.launch { chat.pin(id, on) } },
-                        chatId = chat.chatIdOf(row.message.mms, row.message.id).also { refs.size }
+                        chatId = chat.chatIdOf(row.message.mms, row.message.id).also { refs.size },
+                        stranger = row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null
                     ) }
                 }
             }
@@ -531,7 +532,8 @@ private fun Bubble(
     onEdit: (Int) -> Unit,
     onDeleteForAll: (Int) -> Unit,
     onPin: (Int, Boolean) -> Unit,
-    chatId: Int?
+    chatId: Int?,
+    stranger: Boolean = false
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -572,7 +574,22 @@ private fun Bubble(
     val parcel = remember(m.body) { if (mine || code != null) null else com.sms.app.core.sms.Finds.parcel(m.body) }
     val appointment = remember(m.body) { if (code != null) null else com.sms.app.core.sms.Finds.appointment(m.body) }
     val accent = MaterialTheme.colorScheme.primary
-    val text = remember(m.body, accent) { linked(m.body, accent) }
+    // Links in what was received are looked at for what they may hide; one tapped asks first.
+    val danger = MaterialTheme.colorScheme.error
+    val listVersion by com.sms.app.core.link.BadHosts.version.collectAsState()
+    val checks = remember(m.body, stranger, listVersion, mine) {
+        if (mine) emptyMap() else links(m.body).associateWith { url ->
+            com.sms.app.core.link.LinkCheck.check(url, stranger) { host -> com.sms.app.core.link.BadHosts.listed(context, host) }
+        }.filterValues { it != null }.mapValues { it.value!! }
+    }
+    var risky by remember { mutableStateOf<Pair<String, com.sms.app.core.link.LinkCheck.Verdict>?>(null) }
+    risky?.let { (url, verdict) -> RiskyLinkDialog(url, verdict, onDismiss = { risky = null }) }
+    val text = remember(m.body, accent, checks) {
+        linked(m.body, accent, danger, checks) { url, verdict ->
+            haptics.reject()
+            risky = url to verdict
+        }
+    }
     // A message that just came in drops into place, a ring of glass spreading from it.
     val drop = remember { Animatable(if (fresh) 0f else 1f) }
     LaunchedEffect(fresh) { if (fresh) drop.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 320f)) }
@@ -693,6 +710,7 @@ private fun Bubble(
                     onLongClickLabel = "More"
                 )
             ) {
+              Column {
                 // An edit changes the words in a soft blur, not at a stroke.
                 androidx.compose.animation.AnimatedContent(
                     text,
@@ -705,6 +723,9 @@ private fun Bubble(
                     val blur by transition.animateDp(label = "blur") { if (it == androidx.compose.animation.EnterExitState.Visible) 0.dp else 6.dp }
                     Text(words, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.blur(blur).padding(horizontal = 16.dp, vertical = 10.dp))
                 }
+                // What each doubtful link may hide, in a line of red under the words.
+                checks.values.distinctBy { it.words }.forEach { verdict -> LinkWarning(verdict) }
+              }
             }
             if (menuOpen) MessageMenu(
                 bounds = bounds,
@@ -899,23 +920,103 @@ private fun copy(context: android.content.Context, label: String, text: String, 
     context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
 }
 
-/** The text with its web links tappable, each opened cleaned of trackers. */
-private fun linked(body: String, accent: androidx.compose.ui.graphics.Color): AnnotatedString = buildAnnotatedString {
+/** The web links of [body], as they will open: with a scheme, http(s) only. */
+private fun links(body: String): List<String> {
+    val matcher = android.util.Patterns.WEB_URL.matcher(body)
+    val found = mutableListOf<String>()
+    while (matcher.find()) linkOf(matcher.group())?.let { found += it }
+    return found
+}
+
+/** The address a found piece of text opens, or null when it is no web link. */
+private fun linkOf(found: String): String? {
+    // Plain words with a dot ("e.g") are not links: a scheme or www. is.
+    if (!found.contains("://") && !found.startsWith("www.", ignoreCase = true)) return null
+    // Only web pages open from a message, never another kind of link.
+    if (found.contains("://") && !found.startsWith("https://", ignoreCase = true) && !found.startsWith("http://", ignoreCase = true)) return null
+    return if (found.contains("://")) found else "https://$found"
+}
+
+/**
+ * The text with its web links tappable, each opened cleaned of trackers; a
+ * doubtful one ([checks]) is red and asks first ([onRisky]).
+ */
+private fun linked(
+    body: String,
+    accent: androidx.compose.ui.graphics.Color,
+    danger: androidx.compose.ui.graphics.Color = accent,
+    checks: Map<String, com.sms.app.core.link.LinkCheck.Verdict> = emptyMap(),
+    onRisky: (String, com.sms.app.core.link.LinkCheck.Verdict) -> Unit = { _, _ -> }
+): AnnotatedString = buildAnnotatedString {
     val matcher = android.util.Patterns.WEB_URL.matcher(body)
     var at = 0
     val style = TextLinkStyles(SpanStyle(color = accent, textDecoration = TextDecoration.Underline))
+    val doubtful = TextLinkStyles(SpanStyle(color = danger, textDecoration = TextDecoration.LineThrough, background = danger.copy(alpha = 0.12f)))
     while (matcher.find()) {
         val found = matcher.group()
-        // Plain words with a dot ("e.g") are not links: a scheme or www. is.
-        if (!found.contains("://") && !found.startsWith("www.", ignoreCase = true)) continue
-        // Only web pages open from a message, never another kind of link.
-        if (found.contains("://") && !found.startsWith("https://", ignoreCase = true) && !found.startsWith("http://", ignoreCase = true)) continue
+        val url = linkOf(found) ?: continue
         append(body.substring(at, matcher.start()))
-        val url = if (found.contains("://")) found else "https://$found"
-        withLink(LinkAnnotation.Url(LinkCleaner.clean(url), style)) { append(found) }
+        val verdict = checks[url]
+        if (verdict == null) {
+            withLink(LinkAnnotation.Url(LinkCleaner.clean(url), style)) { append(found) }
+        } else {
+            withLink(LinkAnnotation.Clickable(url, doubtful) { onRisky(url, verdict) }) { append(found) }
+        }
         at = matcher.end()
     }
     append(body.substring(at))
+}
+
+/** Under a message's words: what a doubtful link may be, the sign beating once as it shows. */
+@Composable
+private fun LinkWarning(verdict: com.sms.app.core.link.LinkCheck.Verdict) {
+    val red = MaterialTheme.colorScheme.error
+    val beat = remember { Animatable(1f) }
+    LaunchedEffect(Unit) {
+        beat.animateTo(1.25f, androidx.compose.animation.core.tween(120))
+        beat.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 600f))
+    }
+    Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 10.dp)) {
+        Icon(
+            AppIcons.Warning,
+            contentDescription = null,
+            tint = red,
+            modifier = Modifier.padding(top = 1.dp).size(15.dp).graphicsLayer { scaleX = beat.value; scaleY = beat.value }
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(verdict.words, style = MaterialTheme.typography.labelMedium, color = red)
+    }
+}
+
+/**
+ * A doubtful link tapped: why it may be a scam and where it really goes;
+ * Cancel first, opening it is a choice made on purpose.
+ */
+@Composable
+private fun RiskyLinkDialog(url: String, verdict: com.sms.app.core.link.LinkCheck.Verdict, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val host = remember(url) { runCatching { java.net.URI(url).host }.getOrNull() ?: url }
+    ZoneAlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(AppIcons.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+        title = { Text("This link may be a scam") },
+        text = {
+            Column {
+                Text(verdict.words + ".")
+                Spacer(Modifier.height(8.dp))
+                Text("It goes to $host", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            TextButton(onClick = {
+                onDismiss()
+                runCatching {
+                    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(LinkCleaner.clean(url))).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }) { Text("Open anyway", color = MaterialTheme.colorScheme.error) }
+        }
+    )
 }
 
 /** The start of a quoted message, short enough for the first line. */

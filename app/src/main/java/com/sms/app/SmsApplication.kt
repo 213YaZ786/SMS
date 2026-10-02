@@ -6,6 +6,9 @@ import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.startKoin
 import org.koin.core.logger.Level
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 class SmsApplication : Application() {
     override fun onCreate() {
@@ -23,5 +26,12 @@ class SmsApplication : Application() {
                 java.io.File(cacheDir, dir).walkBottomUp().filter { it.lastModified() < dayAgo && it.name != dir }.forEach { it.delete() }
             }
         }.apply { isDaemon = true }.start()
+        // The public list of dangerous sites follows its setting: fetched when on, deleted when off.
+        val settings: com.sms.app.data.settings.SettingsStore = org.koin.java.KoinJavaComponent.get(com.sms.app.data.settings.SettingsStore::class.java)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
+            settings.settings.map { it.checkLinks }.distinctUntilChanged().collect { on ->
+                if (on) com.sms.app.core.link.BadHosts.refresh(this@SmsApplication) else com.sms.app.core.link.BadHosts.forget(this@SmsApplication)
+            }
+        }
     }
 }

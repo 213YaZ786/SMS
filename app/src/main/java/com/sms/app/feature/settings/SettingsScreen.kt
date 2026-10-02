@@ -155,6 +155,12 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                         onChange = viewModel::setQuietSales
                     )
                 }
+                SwitchRow(
+                    title = "Check links",
+                    summary = "Links in messages are also looked up in a public list of dangerous sites, downloaded once a day. No link leaves the phone.",
+                    checked = settings.checkLinks,
+                    onChange = viewModel::setCheckLinks
+                )
                 SettingRow(
                     title = "Blocked numbers",
                     summary = "The list Android keeps for every app",
