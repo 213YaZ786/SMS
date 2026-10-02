@@ -89,9 +89,26 @@ fun MediaTile(part: MmsPart, mine: Boolean) {
             }
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Icon(AppIcons.Play, contentDescription = null)
+                Icon(
+                    when {
+                        part.contentType.contains("vcard") -> AppIcons.ContactPage
+                        ContentType.isVideoType(part.contentType) || ContentType.isAudioType(part.contentType) -> AppIcons.Play
+                        else -> AppIcons.AttachFile
+                    },
+                    contentDescription = null
+                )
                 Spacer(Modifier.width(10.dp))
-                Text(part.name ?: mediaWord(part.contentType), style = MaterialTheme.typography.bodyLarge)
+                // A contact card shows the person's name, read from the card itself.
+                val person by androidx.compose.runtime.produceState<String?>(null, part.uri) {
+                    if (part.contentType.contains("vcard")) value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching {
+                            context.contentResolver.openInputStream(part.uri)?.bufferedReader()?.use { r ->
+                                r.lineSequence().take(200).firstOrNull { it.startsWith("FN:") || it.startsWith("FN;") }?.substringAfter(':')?.trim()?.take(60)
+                            }
+                        }.getOrNull()
+                    }
+                }
+                Text(person ?: part.name ?: mediaWord(part.contentType), style = MaterialTheme.typography.bodyLarge)
             }
         }
     }

@@ -330,6 +330,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                     val viewtype = when {
                         ContentType.isImageType(a.contentType) -> "Image"
                         ContentType.isVideoType(a.contentType) -> "Video"
+                        a.contentType.contains("vcard") -> "Vcard"
                         else -> "File"
                     }
                     val caption = if (i == 0) text else ""
@@ -338,6 +339,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                         mapOf("text" to caption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (i == 0) quote else null)
                     ).jsonPrimitive.int
                     MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy.readBytes())?.let { saveRef(id, RichRef(true, it, mine = true)) }
+                    // The engine keeps its own copy.
+                    copy.parentFile?.deleteRecursively()
                 }
             }
             _changes.value++
@@ -454,9 +457,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         runCatching {
             val name = context.contentResolver.query(a.uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
                 if (c.moveToFirst()) c.getString(0) else null
-            } ?: "file"
-            val dir = File(context.cacheDir, "outgoing").apply { mkdirs() }
-            File(dir, "${System.nanoTime()}-${name.replace('/', '_')}").also { out ->
+            } ?: if (a.contentType.contains("vcard")) "contact.vcf" else "file"
+            // A folder of its own, so the file keeps its name as the other side sees it.
+            val dir = File(File(context.cacheDir, "outgoing"), System.nanoTime().toString()).apply { mkdirs() }
+            File(dir, name.replace('/', '_')).also { out ->
                 context.contentResolver.openInputStream(a.uri)?.use { input -> out.outputStream().use { input.copyTo(it) } }
             }
         }.getOrNull()

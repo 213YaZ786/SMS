@@ -3,4 +3,6 @@
 <paths>
     <cache-path name="mms" path="mms/" />
     <cache-path name="shared" path="shared/" />
+    <!-- A photo just taken with the camera app, before it is sent. -->
+    <cache-path name="camera" path="camera/" />
 </paths>

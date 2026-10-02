@@ -96,9 +96,28 @@ fun Composer(
     val sims = remember { activeSims(context) }
     var simIndex by rememberSaveable { mutableIntStateOf(sims.indexOfFirst { it.subscriptionId == SubscriptionManager.getDefaultSmsSubscriptionId() }.coerceAtLeast(0)) }
     var attachments by remember { mutableStateOf<List<Attachment>>(emptyList()) }
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
-        attachments = (attachments + uris.map { Attachment(it, context.contentResolver.getType(it) ?: "image/jpeg") }).distinctBy { it.uri }.take(5)
+    fun add(more: List<Attachment>) {
+        attachments = (attachments + more).distinctBy { it.uri }.take(5)
     }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
+        add(uris.map { Attachment(it, context.contentResolver.getType(it) ?: "image/jpeg") })
+    }
+    // A photo taken now, by the phone's camera app, into this app's cache.
+    var shot by remember { mutableStateOf<android.net.Uri?>(null) }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        val uri = shot
+        if (taken && uri != null) add(listOf(Attachment(uri, "image/jpeg")))
+    }
+    val file = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) add(listOf(Attachment(uri, context.contentResolver.getType(uri) ?: "application/octet-stream")))
+    }
+    // A contact, sent as its card.
+    val person = rememberLauncherForActivityResult(ActivityResultContracts.PickContact()) { uri ->
+        val card = uri?.let { contactCard(context, it) }
+        if (card != null) add(listOf(Attachment(card, "text/x-vcard")))
+    }
+    var arcOpen by remember { mutableStateOf(false) }
+    val veil by animateFloatAsState(if (arcOpen) 0.35f else 1f, label = "veil")
     val length = remember(text, attachments) { if (text.isBlank() || attachments.isNotEmpty()) null else SmsMessage.calculateLength(text, false) }
     val canSend = text.isNotBlank() || attachments.isNotEmpty()
     val lift by animateFloatAsState(if (canSend) 1f else 0.86f, spring(dampingRatio = 0.5f, stiffness = 600f), label = "send")
@@ -154,19 +173,34 @@ fun Composer(
                     }, modifier = Modifier.size(64.dp)) {
                         Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
                             picture?.let { Image(it, contentDescription = "Remove", contentScale = ContentScale.Crop, modifier = Modifier.size(64.dp)) }
-                                ?: Icon(AppIcons.Play, contentDescription = "Remove")
+                                ?: Icon(
+                                    when {
+                                        a.contentType.contains("vcard") -> AppIcons.ContactPage
+                                        a.contentType.startsWith("video") -> AppIcons.Play
+                                        else -> AppIcons.AttachFile
+                                    },
+                                    contentDescription = "Remove"
+                                )
                         }
                     }
                 }
             }
         }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-            FloatingPane(shape = CircleShape, onClick = {
-                haptics.tick()
-                pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
-            }, modifier = Modifier.size(52.dp)) {
-                Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
-                    Icon(AppIcons.AddPhoto, contentDescription = "Add a photo or a video", tint = MaterialTheme.colorScheme.primary)
+            AttachArc(open = arcOpen, onOpen = { arcOpen = it }) { drop ->
+                runCatching {
+                    when (drop) {
+                        Drop.PHOTOS -> pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                        Drop.CAMERA -> {
+                            val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
+                            val out = java.io.File(dir, "${System.currentTimeMillis()}.jpg")
+                            val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".mms", out)
+                            shot = uri
+                            camera.launch(uri)
+                        }
+                        Drop.FILE -> file.launch(arrayOf("*/*"))
+                        Drop.CONTACT -> person.launch(null)
+                    }
                 }
             }
             if (sims.size > 1) {
@@ -179,7 +213,7 @@ fun Composer(
                     }
                 }
             }
-            FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f)) {
+            FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f).graphicsLayer { alpha = veil }) {
                 Box(Modifier.padding(horizontal = 18.dp, vertical = 15.dp)) {
                     if (text.isEmpty()) Text("Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     BasicTextField(
@@ -252,3 +286,10 @@ private fun activeSims(context: android.content.Context): List<SubscriptionInfo>
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return emptyList()
     return runCatching { context.getSystemService(SubscriptionManager::class.java).activeSubscriptionInfoList.orEmpty() }.getOrDefault(emptyList())
 }
+
+/** The card of a picked contact, read from Android's contacts: its address, or null. */
+private fun contactCard(context: android.content.Context, picked: android.net.Uri): android.net.Uri? = runCatching {
+    context.contentResolver.query(picked, arrayOf(android.provider.ContactsContract.Contacts.LOOKUP_KEY), null, null, null)?.use { c ->
+        if (c.moveToFirst()) android.net.Uri.withAppendedPath(android.provider.ContactsContract.Contacts.CONTENT_VCARD_URI, c.getString(0)) else null
+    }
+}.getOrNull()
