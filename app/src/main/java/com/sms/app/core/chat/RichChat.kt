@@ -53,6 +53,15 @@ data class ChatLink(
     val askedAt: Long = 0
 )
 
+/** What the engine says of a call: one rings here, ours was taken, one ended. */
+sealed class CallSignal {
+    data class Incoming(val msgId: Int, val phone: String, val offer: String, val video: Boolean) : CallSignal()
+    data class Accepted(val msgId: Int, val answer: String) : CallSignal()
+    data class Ended(val msgId: Int) : CallSignal()
+    /** Taken on another of the user's devices: this one stops ringing. */
+    data class TakenElsewhere(val msgId: Int) : CallSignal()
+}
+
 /** An encrypted group of several proven numbers, and its chat. */
 @Serializable
 data class ChatGroup(val chatId: Int, val phones: List<String>)
@@ -130,6 +139,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     /** Messages whose countdown was asked of the engine in this run. */
     private val expiryKnown = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<Int, Boolean>())
+
+    private val _calls = kotlinx.coroutines.flow.MutableSharedFlow<CallSignal>(extraBufferCapacity = 16)
+    /** The calls' signals, for the call machinery. */
+    val calls: kotlinx.coroutines.flow.SharedFlow<CallSignal> = _calls
 
     /** Bumped on every change of the chats, for open screens to read again. */
     private val _changes = MutableStateFlow(0)
@@ -218,6 +231,29 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         val updated = _refs.value - gone
         _refs.value = updated
         runCatching { refsFile.writeTextAtomically(json.encodeToString(updated)) }
+    }
+
+    /** The relays' meeting points for calls (TURN), as the engine gives them, in WebRTC's JSON. */
+    suspend fun iceServers(): String {
+        if (!start()) return "[]"
+        return runCatching { engine.call("ice_servers", account).jsonPrimitive.content }.getOrDefault("[]")
+    }
+
+    /** Calls [phone] with our [offer]; the call's id, or null when it cannot go. */
+    suspend fun placeCall(phone: String, offer: String, video: Boolean): Int? {
+        val link = linkFor(phone) ?: return null
+        if (!start()) return null
+        return runCatching { engine.call("place_outgoing_call", account, link.chatId, offer, video).jsonPrimitive.int }.getOrNull()
+    }
+
+    suspend fun acceptCall(msgId: Int, answer: String): Boolean {
+        if (!start()) return false
+        return runCatching { engine.call("accept_incoming_call", account, msgId, answer) }.isSuccess
+    }
+
+    suspend fun endCall(msgId: Int) {
+        if (!start()) return
+        runCatching { engine.call("end_call", account, msgId) }
     }
 
     /** One more relay for the profile, chosen by hand. */
@@ -325,6 +361,26 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             // Edited or pinned on the other side, or a vanishing message gone.
             "MsgsChanged" -> if (msgId != null) _refs.value[msgId]?.let { refresh(msgId, it) }
             "MsgDeleted" -> if (msgId != null) _refs.value[msgId]?.let { forget(msgId, it) }
+            // Calls: the engine's fields here are in snake case.
+            "IncomingCall" -> {
+                val id = event.data["msg_id"]?.jsonPrimitive?.intOrNull
+                val chat = event.data["chat_id"]?.jsonPrimitive?.intOrNull
+                val offer = event.data["place_call_info"]?.jsonPrimitive?.contentOrNull
+                val video = event.data["has_video"]?.jsonPrimitive?.booleanOrNull == true
+                // Only from a proven number: the call shows who it is.
+                val phone = _links.value.values.firstOrNull { it.proven && it.chatId == chat }?.phone
+                if (id != null && offer != null && phone != null) _calls.tryEmit(CallSignal.Incoming(id, phone, offer, video))
+            }
+            "OutgoingCallAccepted" -> {
+                val id = event.data["msg_id"]?.jsonPrimitive?.intOrNull
+                val answer = event.data["accept_call_info"]?.jsonPrimitive?.contentOrNull
+                if (id != null && answer != null) _calls.tryEmit(CallSignal.Accepted(id, answer))
+            }
+            "IncomingCallAccepted" -> {
+                val id = event.data["msg_id"]?.jsonPrimitive?.intOrNull
+                if (id != null && event.data["from_this_device"]?.jsonPrimitive?.booleanOrNull != true) _calls.tryEmit(CallSignal.TakenElsewhere(id))
+            }
+            "CallEnded" -> event.data["msg_id"]?.jsonPrimitive?.intOrNull?.let { _calls.tryEmit(CallSignal.Ended(it)) }
             "ChatEphemeralTimerModified" -> {
                 val chat = event.data["chatId"]?.jsonPrimitive?.intOrNull
                 val timer = event.data["timer"]?.jsonPrimitive?.intOrNull
