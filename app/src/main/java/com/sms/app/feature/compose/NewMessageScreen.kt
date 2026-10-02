@@ -1,0 +1,133 @@
+package com.sms.app.feature.compose
+
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.sms.app.core.dial.People
+import com.sms.app.data.contacts.PhoneBook
+import com.sms.app.ui.component.ContactAvatar
+import com.sms.app.ui.component.EmptyZone
+import com.sms.app.ui.component.FloatingAction
+import com.sms.app.ui.component.FloatingFrame
+import com.sms.app.ui.component.FloatingTop
+import com.sms.app.ui.component.SearchPill
+import com.sms.app.ui.component.ZoneSurface
+import com.sms.app.ui.component.rememberHaptics
+import com.sms.app.ui.icon.AppIcons
+import org.koin.compose.koinInject
+
+/**
+ * Who to write to: a name found among the contacts, or any number typed.
+ * Every number of a contact is its own line, so the right one is chosen.
+ */
+@Composable
+fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
+    val book: PhoneBook = koinInject()
+    var allowed by remember { mutableStateOf(book.canRead()) }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed = it }
+    LaunchedEffect(allowed) { if (allowed) book.refresh() }
+    val entries by book.entries.collectAsState()
+    val people = remember(entries) { People.of(entries) }
+    var query by rememberSaveable { mutableStateOf("") }
+    val found = remember(people, query) { People.search(people, query) }
+    val typed = query.filter { it.isDigit() || it == '+' }.takeIf { it.count(Char::isDigit) >= 3 && query.none(Char::isLetter) }
+    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp
+
+    FloatingFrame(
+        bottom = bottom,
+        top = {
+            FloatingTop(title = "New message", leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) })
+            Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
+                SearchPill(query, { query = it }, hint = "Name or number", modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(), floating = true)
+            }
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (typed != null) {
+                item(key = "typed") { Line(null, null, "Send to $typed", null) { onPick(typed) } }
+            }
+            if (!allowed) {
+                item(key = "allow") {
+                    EmptyZone(
+                        title = "Find your contacts here",
+                        message = "Or type a number above.",
+                        icon = AppIcons.Person,
+                        actionLabel = "Allow contacts",
+                        onAction = { ask.launch(Manifest.permission.READ_CONTACTS) }
+                    )
+                }
+            }
+            found.forEach { person ->
+                items(person.numbers, key = { "n/${person.id}/${it.number}" }) { n ->
+                    Line(person.name, person.photo, person.name, n.number) { onPick(n.number) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Line(name: String?, photo: String?, title: String, under: String?, onClick: () -> Unit) {
+    val haptics = rememberHaptics()
+    val shape = RoundedCornerShape(22.dp)
+    ZoneSurface(
+        shape = shape,
+        modifier = Modifier.widthIn(max = 640.dp).fillMaxWidth().clip(shape).clickable {
+            haptics.tick()
+            onClick()
+        }
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            if (name != null) {
+                ContactAvatar(name, photo, 44.dp)
+            } else {
+                ZoneSurface(shape = CircleShape, accent = true, modifier = Modifier.size(44.dp)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(AppIcons.Send, contentDescription = null) }
+                }
+            }
+            Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                under?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1) }
+            }
+        }
+    }
+}
