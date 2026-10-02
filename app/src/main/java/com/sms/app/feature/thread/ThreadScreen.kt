@@ -1,6 +1,15 @@
 package com.sms.app.feature.thread
 
 import android.content.ClipData
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import com.sms.app.ui.component.HeroGlow
+import kotlin.math.roundToInt
 import android.content.ClipboardManager
 import android.provider.Telephony
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -133,6 +142,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
 
     val density = LocalDensity.current
     var composerHeight by remember { mutableStateOf(0.dp) }
+    // A message swiped to answer it: shown over the field, sent quoted.
+    var quote by remember { mutableStateOf<String?>(null) }
 
     FloatingFrame(
         bottom = composerHeight + 8.dp,
@@ -147,13 +158,17 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         overlay = {
             Composer(
                 initial = draft,
+                quote = quote,
+                onClearQuote = { quote = null },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     .padding(horizontal = LocalReadableInset.current)
                     .onSizeChanged { composerHeight = with(density) { it.height.toDp() } },
-                onSend = { text, sub, attachments ->
+                onSend = { typed, sub, attachments ->
                     if (people.isEmpty()) return@Composer false
+                    val text = quote?.let { "«${excerpt(it)}»\n$typed" } ?: typed
+                    quote = null
                     scope.launch(Dispatchers.IO) {
                         // A group or a picture goes as a picture message, the rest as SMS.
                         if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, sub)
@@ -166,6 +181,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     ) { padding ->
         val inset = LocalReadableInset.current
         val rows = remember(list) { rowsOf(list) }
+        // The person's light behind the conversation: their photo, blurred, or a glow of the accent.
+        HeroGlow(if (group) null else entry?.photo, height = padding.calculateTopPadding() + 320.dp)
         LazyColumn(
             reverseLayout = true,
             modifier = Modifier.fillMaxSize().padding(horizontal = inset),
@@ -190,7 +207,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                                 scope.launch(Dispatchers.IO) { SmsSender.retry(context, row.message.id, row.message.address, row.message.body, row.message.subId) }
                             }
                         },
-                        onDelete = { messages.deleteMessage(row.message) }
+                        onDelete = { messages.deleteMessage(row.message) },
+                        onQuote = { quote = row.message.body.ifBlank { "Photo" } }
                     )
                 }
             }
@@ -273,7 +291,7 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Bubble(m: Message, last: Boolean, sender: String?, onRetry: () -> Unit, onDelete: () -> Unit) {
+private fun Bubble(m: Message, last: Boolean, sender: String?, onRetry: () -> Unit, onDelete: () -> Unit, onQuote: () -> Unit) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     val menu = rememberPillMenu()
@@ -292,7 +310,57 @@ private fun Bubble(m: Message, last: Boolean, sender: String?, onRetry: () -> Un
             MediaTile(part, mine)
             Spacer(Modifier.height(4.dp))
         }
-        if (m.body.isNotEmpty() || m.parts.isEmpty()) Box(Modifier.fillMaxWidth(0.82f).then(menu.tracker), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
+        val scope = rememberCoroutineScope()
+        val pull = remember { Animatable(0f) }
+        var armed by remember { mutableStateOf(false) }
+        val reach = with(LocalDensity.current) { 56.dp.toPx() }
+        if (m.body.isNotEmpty() || m.parts.isEmpty()) Box(
+            Modifier
+                .fillMaxWidth(0.82f)
+                .then(menu.tracker)
+                // Swiped right, it follows the finger, ticks once past the
+                // point where it will be answered, and springs back.
+                .pointerInput(m.id) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (armed) onQuote()
+                            armed = false
+                            scope.launch { pull.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 420f)) }
+                        },
+                        onDragCancel = {
+                            armed = false
+                            scope.launch { pull.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 420f)) }
+                        },
+                        onHorizontalDrag = { change, dx ->
+                            val give = if (pull.value > reach) 0.35f else 1f
+                            val next = (pull.value + dx * give).coerceIn(0f, reach * 1.7f)
+                            scope.launch { pull.snapTo(next) }
+                            val now = next >= reach
+                            if (now != armed) {
+                                armed = now
+                                haptics.threshold(now)
+                            }
+                            change.consume()
+                        }
+                    )
+                }
+                .offset { IntOffset(pull.value.roundToInt(), 0) },
+            contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart
+        ) {
+            Icon(
+                AppIcons.Reply,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .offset { IntOffset((-pull.value * 0.6f).roundToInt(), 0) }
+                    .graphicsLayer {
+                        alpha = (pull.value / reach).coerceIn(0f, 1f)
+                        val s = 0.6f + 0.4f * (pull.value / reach).coerceIn(0f, 1f)
+                        scaleX = s
+                        scaleY = s
+                    }
+            )
             val shape = RoundedCornerShape(
                 topStart = 22.dp, topEnd = 22.dp,
                 bottomStart = if (mine) 22.dp else 6.dp, bottomEnd = if (mine) 6.dp else 22.dp
@@ -371,3 +439,6 @@ private fun linked(body: String, accent: androidx.compose.ui.graphics.Color): An
     }
     append(body.substring(at))
 }
+
+/** The start of a quoted message, short enough for the first line. */
+private fun excerpt(text: String): String = text.replace('\n', ' ').let { if (it.length > 60) it.take(58).trimEnd() + "…" else it }

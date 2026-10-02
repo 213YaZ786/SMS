@@ -31,4 +31,20 @@ class ListsTest {
         val all = listOf(c(1, 1), c(2, 2, unread = 1), c(3, 3, fromMe = true), c(4, 60), c(5, 1, address = "BANK"))
         assertEquals(listOf(1L), Lists.waiting(all, emptyMap(), now).map { it.threadId })
     }
+
+    @Test
+    fun servicesAreLettersOrShortNumbers() {
+        assertEquals(true, Lists.isService(c(1, 1, address = "AMAZON")))
+        assertEquals(true, Lists.isService(c(2, 1, address = "38015")))
+        assertEquals(false, Lists.isService(c(3, 1, address = "+33612345678")))
+    }
+
+    @Test
+    fun theLastCodeShowsTenMinutes() {
+        val minute = 60_000L
+        val code = Conversation(9, "GOOGLE", "Your code is 482913", now - 2 * minute, 0, false, false)
+        val old = Conversation(8, "BANK", "Code 111222", now - 30 * minute, 0, false, false)
+        assertEquals("482913", Lists.latestCode(listOf(old, code), now)?.second)
+        assertEquals(null, Lists.latestCode(listOf(old), now))
+    }
 }

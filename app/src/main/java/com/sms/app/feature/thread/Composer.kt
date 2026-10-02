@@ -60,7 +60,7 @@ import com.sms.app.ui.icon.AppIcons
  * two, how many SMS it makes once it is long, and Send on its own pane.
  */
 @Composable
-fun Composer(initial: String, modifier: Modifier, onSend: (String, Int, List<Attachment>) -> Boolean) {
+fun Composer(initial: String, quote: String?, onClearQuote: () -> Unit, modifier: Modifier, onSend: (String, Int, List<Attachment>) -> Boolean) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var text by rememberSaveable { mutableStateOf(initial) }
@@ -84,6 +84,28 @@ fun Composer(initial: String, modifier: Modifier, onSend: (String, Int, List<Att
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
+                }
+            }
+        }
+        // The message being answered, until sent or let go.
+        androidx.compose.animation.AnimatedVisibility(visible = quote != null) {
+            var shown by remember { mutableStateOf("") }
+            quote?.let { shown = it }
+            FloatingPane(shape = RoundedCornerShape(18.dp), onClick = {
+                haptics.tick()
+                onClearQuote()
+            }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    Icon(AppIcons.Reply, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    Text(
+                        shown,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp)
+                    )
+                    Icon(AppIcons.Close, contentDescription = "Remove", modifier = Modifier.size(18.dp))
                 }
             }
         }

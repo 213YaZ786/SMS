@@ -34,4 +34,23 @@ object Lists {
         all.filter { !it.fromMe && it.unread == 0 && it.date >= now - hours * HOUR_MS && !isArchived(it, archived) && it.address.any(Char::isDigit) }
             .sortedByDescending { it.date }
             .take(limit)
+
+    /**
+     * A service rather than a person: a sender written in letters (a bank,
+     * a delivery company) or a short number of 3 to 6 digits.
+     */
+    fun isService(c: Conversation): Boolean {
+        if (c.group) return false
+        val address = c.address.trim()
+        if (address.any(Char::isLetter)) return true
+        val digits = address.count(Char::isDigit)
+        return digits in 3..6
+    }
+
+    /** The newest code received in the last [minutes] minutes, with its conversation. */
+    fun latestCode(all: List<Conversation>, now: Long, minutes: Int = 10): Pair<Conversation, String>? =
+        all.asSequence()
+            .filter { !it.fromMe && it.date >= now - minutes * 60_000L }
+            .sortedByDescending { it.date }
+            .firstNotNullOfOrNull { c -> Codes.find(c.snippet)?.let { c to it } }
 }

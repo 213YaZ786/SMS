@@ -73,7 +73,6 @@ import com.sms.app.ui.component.rememberPillMenu
 import com.sms.app.ui.icon.AppIcons
 import org.koin.compose.koinInject
 
-private val LINE_WIDTH = 640.dp
 
 /**
  * The conversations, on the whole screen under floating glass: who waits
@@ -109,8 +108,22 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
         }
     }
+    val code = remember(all) { Lists.latestCode(all, System.currentTimeMillis()) }
+    var servicesOpen by rememberSaveable { mutableStateOf(false) }
+    var peeking by remember { mutableStateOf<Conversation?>(null) }
     val waiting = remember(all, settings.archived, filter, query) {
         if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.waiting(all, settings.archived, System.currentTimeMillis())
+    }
+
+    val line: @Composable (Conversation) -> Unit = { c ->
+        ConversationLine(
+            c,
+            name = nameOf(c),
+            photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
+            pinned = c.threadId in settings.pinned,
+            onOpen = { onOpenThread(c.threadId, c.addresses.joinToString(",")) },
+            onPeek = { peeking = c }
+        )
     }
 
     TabFrame(
@@ -149,35 +162,48 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                if (code != null && filter == Filter.ALL && query.isBlank()) {
+                    item(key = "code") { CodeChip(code.first, code.second, nameOf(code.first)) }
+                }
                 if (waiting.isNotEmpty()) {
                     item(key = "waiting") {
                         Waiting(waiting, index) { c -> onOpenThread(c.threadId, c.addresses.joinToString(",")) }
                     }
                 }
-                items(shown, key = { it.threadId }) { c ->
-                    ConversationLine(
-                        c,
-                        name = nameOf(c),
-                        photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
-                        pinned = c.threadId in settings.pinned,
-                        archived = Lists.isArchived(c, settings.archived),
-                        onOpen = { onOpenThread(c.threadId, c.addresses.joinToString(",")) },
-                        onPin = { on ->
-                            store.update { s -> s.copy(pinned = if (on) s.pinned + c.threadId else s.pinned - c.threadId) }
-                        },
-                        onArchive = { on ->
-                            store.update { s -> s.copy(archived = if (on) s.archived + (c.threadId to c.date) else s.archived - c.threadId) }
-                        },
-                        onRead = { messages.markRead(c.threadId) },
-                        onDelete = {
-                            messages.delete(c.threadId)
-                            store.update { s -> s.copy(pinned = s.pinned - c.threadId, archived = s.archived - c.threadId) }
-                        },
-                        onCall = { NumberActions.dial(context, c.address) }
-                    )
+                // People first; every service (banks, deliveries, codes) in one stack.
+                val (services, people) = shown.partition { Lists.isService(it) && filter == Filter.ALL && query.isBlank() }
+                if (services.isNotEmpty() && people.isNotEmpty()) item(key = "people") { Heading("People") }
+                items(people, key = { it.threadId }) { c -> line(c) }
+                if (services.isNotEmpty()) {
+                    item(key = "services") {
+                        ServicesStack(services, open = servicesOpen) { servicesOpen = !servicesOpen }
+                    }
+                    if (servicesOpen) items(services, key = { "s/${it.threadId}" }) { c -> line(c) }
                 }
             }
         }
+    }
+
+    peeking?.let { c ->
+        Peek(
+            c,
+            title = nameOf(c) ?: Numbers.format(context, c.address),
+            photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
+            pinned = c.threadId in settings.pinned,
+            archived = Lists.isArchived(c, settings.archived),
+            onDismiss = { peeking = null },
+            onOpen = {
+                peeking = null
+                onOpenThread(c.threadId, c.addresses.joinToString(","))
+            },
+            onPin = { on -> store.update { s -> s.copy(pinned = if (on) s.pinned + c.threadId else s.pinned - c.threadId) } },
+            onArchive = { on -> store.update { s -> s.copy(archived = if (on) s.archived + (c.threadId to c.date) else s.archived - c.threadId) } },
+            onRead = { messages.markRead(c.threadId) },
+            onDelete = {
+                messages.delete(c.threadId)
+                store.update { s -> s.copy(pinned = s.pinned - c.threadId, archived = s.archived - c.threadId) }
+            }
+        )
     }
 }
 
@@ -266,34 +292,37 @@ private fun ConversationLine(
     name: String?,
     photo: String?,
     pinned: Boolean,
-    archived: Boolean,
     onOpen: () -> Unit,
-    onPin: (Boolean) -> Unit,
-    onArchive: (Boolean) -> Unit,
-    onRead: () -> Unit,
-    onDelete: () -> Unit,
-    onCall: () -> Unit
+    onPeek: () -> Unit
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
-    val menu = rememberPillMenu()
-    var confirmDelete by remember { mutableStateOf(false) }
     val title = name ?: Numbers.format(context, c.address)
     val unread = c.unread > 0
-    val canCall = !c.group && c.address.count(Char::isDigit) >= 3
+    val press = remember { MutableInteractionSource() }
+    val pressed by press.collectIsPressedAsState()
+    val sink by animateFloatAsState(if (pressed) 0.97f else 1f, spring(dampingRatio = 0.6f, stiffness = 500f), label = "sink")
 
-    Box(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().then(menu.tracker)) {
+    Box(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().graphicsLayer {
+        scaleX = sink
+        scaleY = sink
+    }) {
         val shape = RoundedCornerShape(22.dp)
         ZoneSurface(
             shape = shape,
             modifier = Modifier.fillMaxWidth().clip(shape).combinedClickable(
+                interactionSource = press,
+                indication = null,
                 onClickLabel = "Open",
-                onLongClickLabel = "More",
+                onLongClickLabel = "Glance",
                 onClick = {
                     haptics.tick()
                     onOpen()
                 },
-                onLongClick = menu::open
+                onLongClick = {
+                    haptics.firm()
+                    onPeek()
+                }
             )
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 14.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)) {
@@ -356,30 +385,5 @@ private fun ConversationLine(
                 }
             }
         }
-        PillMenu(
-            menu,
-            listOfNotNull(
-                PillItem(AppIcons.PushPin, if (pinned) "Unpin" else "Pin", PillMotion.BOUNCE) { onPin(!pinned) },
-                if (unread) PillItem(AppIcons.DoneAll, "Mark as read", PillMotion.BOUNCE) { onRead() } else null,
-                PillItem(if (archived) AppIcons.Unarchive else AppIcons.Archive, if (archived) "Unarchive" else "Archive", PillMotion.DROP) { onArchive(!archived) },
-                if (canCall) PillItem(AppIcons.Call, "Call", PillMotion.BOUNCE) { onCall() } else null,
-                PillItem(AppIcons.Delete, "Delete", PillMotion.DROP) { confirmDelete = true }
-            )
-        )
-    }
-    if (confirmDelete) {
-        ZoneAlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete this conversation?") },
-            text = { Text("All messages with $title are deleted from this phone.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    haptics.firm()
-                    onDelete()
-                }) { Text("Delete") }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
-        )
     }
 }
