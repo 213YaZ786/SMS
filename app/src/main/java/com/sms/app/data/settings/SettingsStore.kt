@@ -45,8 +45,11 @@ data class Settings(
     val undoSeconds: Int = 4,
     /** Encrypted chat with other SMS users, over a chatmail relay. */
     val richChat: Boolean = true,
-    /** The chatmail relay the chat profile lives on. */
-    val relay: String = "nine.testrun.org",
+    /**
+     * The chatmail relay chosen by hand; empty for automatic: the one that
+     * answers fastest, and others added behind it in case it fails.
+     */
+    val relay: String = "",
     /** Messages from the ranges kept for sales are kept apart, without a notification. */
     val quietSales: Boolean = false,
     /** Conversations pinned on top, by thread id. */

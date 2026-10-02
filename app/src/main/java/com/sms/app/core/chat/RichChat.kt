@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -152,16 +153,57 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             val ids = engine.call("get_all_account_ids").jsonArray
             account = ids.firstOrNull()?.jsonPrimitive?.int ?: engine.call("add_account").jsonPrimitive.int
             if (!engine.call("is_configured", account).jsonPrimitive.boolean()) {
-                engine.call("add_transport_from_qr", account, "dcaccount:" + settings.current.relay)
+                val chosen = settings.current.relay
+                // Automatic: the relay that answers fastest, then backups added in the background.
+                if (chosen.isBlank()) engine.call("init_transports", account, null)
+                else engine.call("add_transport_from_qr", account, "dcaccount:$chosen")
             }
             engine.call("start_io", account)
             _ready.value = true
+            scope.launch { backUp() }
             _status.value = "Connected"
         }.onFailure { error ->
             _status.value = "Not connected"
             // Debug builds keep the engine's last error in the app's own files, never in a log.
             if (com.sms.app.BuildConfig.DEBUG) runCatching { File(context.filesDir, "chat-error.txt").writeText(error.toString()) }
         }.isSuccess
+    }
+
+    /** The relays the profile receives through, the one it sends through first. */
+    suspend fun relays(): List<String> {
+        if (!_ready.value) return emptyList()
+        return runCatching {
+            engine.call("list_transports", account).jsonArray.mapNotNull { (it as? JsonObject)?.get("addr")?.jsonPrimitive?.contentOrNull?.substringAfter('@') }
+        }.getOrDefault(emptyList())
+    }
+
+    /**
+     * A profile made before relays were automatic lives on one relay: in
+     * automatic mode it gets a second one, the known relay that answers
+     * fastest, so messages still come when one is down.
+     */
+    private suspend fun backUp() {
+        if (settings.current.relay.isNotBlank()) return
+        val now = relays()
+        if (now.size != 1) return
+        // The known relays by how fast they answer; the first that takes the profile stays.
+        val ranked = withContext(Dispatchers.IO) {
+            KNOWN_RELAYS.filter { it != now[0] }.map { host ->
+                scope.async { host to Relays.answerTime(host) }
+            }.mapNotNull { it.await().let { (h, t) -> t?.let { h to it } } }.sortedBy { it.second }.map { it.first }
+        }
+        for (host in ranked.take(3)) {
+            if (runCatching { engine.call("add_transport_from_qr", account, "dcaccount:$host") }.isSuccess) {
+                _changes.value++
+                return
+            }
+        }
+    }
+
+    /** One more relay for the profile, chosen by hand. */
+    suspend fun addRelay(host: String): Boolean {
+        if (!start()) return false
+        return runCatching { engine.call("add_transport_from_qr", account, "dcaccount:$host") }.isSuccess.also { if (it) _changes.value++ }
     }
 
     fun stop() {
@@ -534,6 +576,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 
     companion object {
+        /** Public chatmail relays, from chatmail.at/relays, to choose from by hand or as a backup. */
+        val KNOWN_RELAYS = listOf("nine.testrun.org", "chat.sus.fr", "d.gaufr.es", "mehl.cloud", "chatmail.email", "e2ee.im")
+
         /** The port the data SMS carrying an invite go to. */
         const val PORT: Short = 18471
         /** The engine's id for the user themselves among a chat's contacts. */

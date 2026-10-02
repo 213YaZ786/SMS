@@ -40,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -92,7 +93,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 val status by chat.status.collectAsState()
                 SwitchRow(
                     title = "Encrypted chat with SMS users",
-                    summary = if (settings.richChat) "$status · through ${settings.relay}" else "Messages go as SMS and MMS only.",
+                    summary = if (settings.richChat) status else "Messages go as SMS and MMS only.",
                     checked = settings.richChat,
                     onChange = { on ->
                         viewModel.setRichChat(on)
@@ -103,9 +104,15 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                         }
                     }
                 )
+                val changes by chat.changes.collectAsState()
+                val relays by androidx.compose.runtime.produceState(emptyList<String>(), status, changes) { value = chat.relays() }
                 if (settings.richChat) SettingRow(
-                    title = "Relay",
-                    summary = settings.relay,
+                    title = "Relays",
+                    summary = when {
+                        relays.isEmpty() -> if (settings.relay.isBlank()) "Automatic: the fastest, with backups" else settings.relay
+                        relays.size == 1 -> relays[0]
+                        else -> relays[0] + " · backups: " + relays.drop(1).joinToString(", ")
+                    },
                     onClick = { dialog = OpenDialog.RELAY }
                 )
                 // Android asks for a notification while the chat stays connected; it can be hidden.
@@ -245,13 +252,21 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             },
             onDismiss = { dialog = OpenDialog.NONE }
         )
-        OpenDialog.RELAY -> ChoiceDialog(
-            title = "Relay",
-            options = RELAYS.map { it to it },
-            selected = settings.relay,
-            onSelect = viewModel::setRelay,
-            onDismiss = { dialog = OpenDialog.NONE }
-        )
+        OpenDialog.RELAY -> {
+            val chat: com.sms.app.core.chat.RichChat = org.koin.compose.koinInject()
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            ChoiceDialog(
+                title = "Relays",
+                options = listOf("" to "Automatic: the fastest, with backups") + com.sms.app.core.chat.RichChat.KNOWN_RELAYS.map { it to "Add $it" },
+                selected = settings.relay,
+                onSelect = { host ->
+                    viewModel.setRelay(host)
+                    // A relay picked by hand joins the profile at once.
+                    if (host.isNotBlank()) scope.launch { chat.addRelay(host) }
+                },
+                onDismiss = { dialog = OpenDialog.NONE }
+            )
+        }
         OpenDialog.UNDO -> ChoiceDialog(
             title = "Undo send",
             options = listOf(0, 2, 4, 6, 10).map { it to if (it == 0) "Off" else "$it seconds" },
@@ -388,4 +403,3 @@ private fun updatesLabel(mode: UpdateMode): String = when (mode) {
 }
 
 /** Public chatmail relays to choose from; the profile lives on one, chats work across all. */
-private val RELAYS = listOf("nine.testrun.org", "chat.sus.fr", "d.gaufr.es", "mehl.cloud", "chatmail.email")
