@@ -84,6 +84,45 @@ object MmsStore {
         uri
     }.getOrNull()
 
+    /** A picture or file that came over the rich chat, kept in the inbox: its thread and id. */
+    fun saveReceivedParts(context: Context, phone: String, text: String, mime: String, data: ByteArray): Pair<Long, Long>? = runCatching {
+        val thread = Telephony.Threads.getOrCreateThreadId(context, phone)
+        val uri = context.contentResolver.insert(
+            Telephony.Mms.Inbox.CONTENT_URI,
+            ContentValues().apply {
+                put(Telephony.Mms.THREAD_ID, thread)
+                put(Telephony.Mms.DATE, System.currentTimeMillis() / 1000)
+                put(Telephony.Mms.MESSAGE_BOX, Telephony.Mms.MESSAGE_BOX_INBOX)
+                put(Telephony.Mms.READ, 0)
+                put(Telephony.Mms.SEEN, 0)
+                put(Telephony.Mms.MESSAGE_TYPE, PduHeaders.MESSAGE_TYPE_RETRIEVE_CONF)
+                put(Telephony.Mms.CONTENT_TYPE, ContentType.MMS_MULTIPART_MIXED)
+            }
+        ) ?: return null
+        val id = ContentUris.parseId(uri)
+        writeParts(context, id, bodyOf(text, mime, data))
+        writeAddress(context, id, phone, PduHeaders.FROM)
+        thread to id
+    }.getOrNull()
+
+    /** A picture or file going out over the rich chat, kept in the outbox: its id. */
+    fun saveSendingParts(context: Context, phone: String, text: String, mime: String, data: ByteArray): Long? =
+        saveOutgoing(context, listOf(phone), bodyOf(text, mime, data), -1)?.let { ContentUris.parseId(it) }
+
+    private fun bodyOf(text: String, mime: String, data: ByteArray) = PduBody().apply {
+        if (text.isNotBlank()) addPart(com.sms.app.core.mms.pdu.PduPart().apply {
+            setContentType(ContentType.TEXT_PLAIN.toByteArray())
+            setCharset(CharacterSets.UTF_8)
+            setContentLocation("text0.txt".toByteArray())
+            setData(text.toByteArray(Charsets.UTF_8))
+        })
+        addPart(com.sms.app.core.mms.pdu.PduPart().apply {
+            setContentType(mime.toByteArray())
+            setContentLocation("file0".toByteArray())
+            setData(data)
+        })
+    }
+
     fun setBox(context: Context, uri: Uri, box: Int) {
         runCatching { context.contentResolver.update(uri, ContentValues().apply { put(Telephony.Mms.MESSAGE_BOX, box) }, null, null) }
     }

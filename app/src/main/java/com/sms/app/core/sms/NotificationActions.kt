@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.PersistableBundle
 import androidx.core.app.RemoteInput
+import com.sms.app.core.chat.RichChat
+import org.koin.core.context.GlobalContext
 import com.sms.app.data.sms.Messages
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +28,11 @@ class NotificationActions : BroadcastReceiver() {
                 when (intent.action) {
                     ACTION_REPLY -> {
                         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_REPLY)?.toString().orEmpty()
-                        if (text.isNotBlank() && address.isNotBlank()) SmsSender.send(app, address, text)
+                        if (text.isNotBlank() && address.isNotBlank()) {
+                            // Over the rich chat when the number has it, else SMS.
+                            val chat = GlobalContext.get().get<RichChat>()
+                            if (chat.linkFor(address) == null || !chat.send(address, text, emptyList(), null)) SmsSender.send(app, address, text)
+                        }
                         Messages.markRead(app, thread)
                         MessageNotifier(app).cancel(thread)
                     }

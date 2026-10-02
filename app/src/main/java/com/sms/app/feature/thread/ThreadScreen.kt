@@ -71,6 +71,8 @@ import com.sms.app.core.sms.Codes
 import com.sms.app.core.sms.MessageNotifier
 import com.sms.app.core.sms.SmsSender
 import com.sms.app.core.mms.MmsTransport
+import com.sms.app.core.chat.RichChat
+import com.sms.app.core.chat.RichRef
 import com.sms.app.data.contacts.PhoneBook
 import com.sms.app.data.contacts.PhoneIndex
 import com.sms.app.data.sms.Box as MessageBox
@@ -112,6 +114,10 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     LaunchedEffect(Unit) { if (book.canRead()) book.refresh() }
     val contacts by book.entries.collectAsState()
     val changes by messages.changes.collectAsState()
+    val chat: RichChat = koinInject()
+    val chatChanges by chat.changes.collectAsState()
+    val links by chat.links.collectAsState()
+    val refs by chat.refs.collectAsState()
 
     // The thread is found from the numbers when only they are known, and the
     // numbers from the thread when only it is known (a notification).
@@ -126,7 +132,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         if (t != null) messages.addressesOf(t).takeIf { it.isNotEmpty() }?.let { people = it }
     }
     var list by remember { mutableStateOf<List<Message>>(emptyList()) }
-    LaunchedEffect(thread, changes) {
+    LaunchedEffect(thread, changes, chatChanges) {
         val t = thread ?: return@LaunchedEffect
         list = messages.thread(t)
         if (list.any { it.box == MessageBox.RECEIVED && !it.read }) messages.markRead(t)
@@ -139,6 +145,10 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val title = if (group) people.joinToString(", ") { index.find(T9.clean(it))?.name?.substringBefore(' ') ?: Numbers.format(context, it) }
     else entry?.name ?: Numbers.format(context, to)
     val canCall = !group && to.count(Char::isDigit) >= 3
+    // With one number: the rich chat when it has SMS too, else SMS.
+    val linked = remember(links, to) { if (group || to.isBlank()) null else chat.linkFor(to) }
+    LaunchedEffect(to, group) { if (!group && to.isNotBlank()) chat.hello(to) }
+    LaunchedEffect(linked, chatChanges) { if (linked != null) chat.markSeen(to) }
 
     val density = LocalDensity.current
     var composerHeight by remember { mutableStateOf(0.dp) }
@@ -154,6 +164,15 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                 trailing = { if (canCall) FloatingAction(AppIcons.Call, "Call", { NumberActions.dial(context, to) }) },
                 center = { PersonPill(title, to, entry?.contactId, group) }
             )
+            androidx.compose.animation.AnimatedVisibility(visible = linked != null, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                FloatingPane(shape = CircleShape) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Encrypted chat", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
         },
         overlay = {
             Composer(
@@ -167,10 +186,13 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     .onSizeChanged { composerHeight = with(density) { it.height.toDp() } },
                 onSend = { typed, sub, attachments ->
                     if (people.isEmpty()) return@Composer false
-                    val text = quote?.let { "«${excerpt(it)}»\n$typed" } ?: typed
+                    val quoted = quote
                     quote = null
                     scope.launch(Dispatchers.IO) {
-                        // A group or a picture goes as a picture message, the rest as SMS.
+                        // Over the rich chat when the number has it, quote included;
+                        // else a group or a picture as a picture message, the rest as SMS.
+                        if (linked != null && chat.send(to, typed, attachments, quoted)) return@launch
+                        val text = quoted?.let { "«${excerpt(it)}»\n$typed" } ?: typed
                         if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, sub)
                         else SmsSender.send(context, to, text, sub)
                     }
@@ -201,6 +223,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     is Row.Bubble -> Bubble(
                         row.message,
                         row.last,
+                        rich = chat.refOf(row.message.mms, row.message.id).also { refs.size },
+                        onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },
                         sender = if (group && row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null,
                         onRetry = {
                             if (!row.message.mms) {
@@ -291,7 +315,7 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Bubble(m: Message, last: Boolean, sender: String?, onRetry: () -> Unit, onDelete: () -> Unit, onQuote: () -> Unit) {
+private fun Bubble(m: Message, last: Boolean, rich: RichRef?, onReact: (String?) -> Unit, sender: String?, onRetry: () -> Unit, onDelete: () -> Unit, onQuote: () -> Unit) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     val menu = rememberPillMenu()
@@ -370,6 +394,11 @@ private fun Bubble(m: Message, last: Boolean, sender: String?, onRetry: () -> Un
                 accent = mine,
                 modifier = Modifier.clip(shape).combinedClickable(
                     onClick = { if (m.box == MessageBox.FAILED) onRetry() },
+                    // A double tap gives a heart, over the rich chat.
+                    onDoubleClick = if (rich != null) ({
+                        haptics.done()
+                        onReact(if ("❤️" in rich.reactions) null else "❤️")
+                    }) else null,
                     onLongClick = menu::open,
                     onLongClickLabel = "More"
                 )
@@ -384,6 +413,11 @@ private fun Bubble(m: Message, last: Boolean, sender: String?, onRetry: () -> Un
                     PillItem(AppIcons.Delete, "Delete", PillMotion.DROP) { onDelete() }
                 )
             )
+        }
+        if (!rich?.reactions.isNullOrEmpty()) {
+            FloatingPane(shape = CircleShape, modifier = Modifier.padding(top = 2.dp)) {
+                Text(rich!!.reactions.joinToString(" "), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+            }
         }
         if (code != null) {
             Spacer(Modifier.height(6.dp))
@@ -402,6 +436,7 @@ private fun Bubble(m: Message, last: Boolean, sender: String?, onRetry: () -> Un
         if (mine && (last || m.box == MessageBox.FAILED)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp, end = 6.dp)) {
                 val (icon, word, failed) = when {
+                    rich?.seen == true -> Triple(AppIcons.DoneAll, "Read · " + timeLabel(context, m.date), false)
                     m.box == MessageBox.FAILED -> Triple(AppIcons.Error, if (m.mms) "Not sent" else "Not sent · tap to try again", true)
                     m.box == MessageBox.SENDING -> Triple(AppIcons.Schedule, "Sending", false)
                     m.delivered -> Triple(AppIcons.DoneAll, "Delivered · " + timeLabel(context, m.date), false)

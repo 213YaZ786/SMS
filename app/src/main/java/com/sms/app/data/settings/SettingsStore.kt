@@ -37,6 +37,10 @@ data class Settings(
     val composeY: Float = -1f,
     /** The little show of the new message button moving was seen. */
     val composeHintSeen: Boolean = false,
+    /** Encrypted chat with other SMS users, over a chatmail relay. */
+    val richChat: Boolean = true,
+    /** The chatmail relay the chat profile lives on. */
+    val relay: String = "nine.testrun.org",
     /** Messages from the ranges kept for sales are kept apart, without a notification. */
     val quietSales: Boolean = false,
     /** Conversations pinned on top, by thread id. */

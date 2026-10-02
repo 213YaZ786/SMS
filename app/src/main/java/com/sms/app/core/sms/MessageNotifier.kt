@@ -85,6 +85,34 @@ class MessageNotifier(private val context: Context) {
 
     fun cancel(threadId: Long) = notifications.cancel(threadId.toInt())
 
+    /** A message that came over the rich chat, shown in its number's conversation. */
+    fun showRich(phone: String, text: String) {
+        val thread = runCatching { Telephony.Threads.getOrCreateThreadId(context, phone) }.getOrNull() ?: return
+        val name = ContactLookup.nameOf(context, phone) ?: Numbers.format(context, phone)
+        val sender = Person.Builder().setName(name).setKey(phone).build()
+        val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
+            .addMessage(text, System.currentTimeMillis(), sender)
+        val builder = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_sms)
+            .setStyle(style)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setContentIntent(open(thread, phone))
+            .setAutoCancel(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_stat_sms).setContentTitle("New message").build())
+        Codes.find(text)?.let { code ->
+            builder.addAction(NotificationCompat.Action.Builder(null, "Copy $code", action(NotificationActions.ACTION_COPY, thread, phone, code)).build())
+        }
+        builder.addAction(
+            NotificationCompat.Action.Builder(null, "Reply", reply(thread, phone))
+                .addRemoteInput(RemoteInput.Builder(NotificationActions.KEY_REPLY).setLabel("Reply").build())
+                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+                .setShowsUserInterface(false)
+                .build()
+        )
+        post(thread.toInt(), builder.build())
+    }
+
     /** A message the network refused: a tap opens its conversation, to try again. */
     fun failed(uri: Uri) {
         val (thread, address) = runCatching {

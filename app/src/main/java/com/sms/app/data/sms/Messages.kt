@@ -40,7 +40,12 @@ data class Message(
     val subId: Int,
     /** A picture message: its pictures, videos and sounds; the text is in [body]. */
     val mms: Boolean = false,
-    val parts: List<MmsPart> = emptyList()
+    val parts: List<MmsPart> = emptyList(),
+    /** Went over the rich chat. */
+    val rich: Boolean = false,
+    /** The other side read it (rich chat). */
+    val seen: Boolean = false,
+    val reactions: List<String> = emptyList()
 )
 
 /** One conversation: who with, its last message, how many are unread. */

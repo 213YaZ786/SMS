@@ -1,5 +1,6 @@
 package com.sms.app.di
 
+import com.sms.app.core.chat.RichChat
 import com.sms.app.core.sms.OpenRequests
 import com.sms.app.data.contacts.PhoneBook
 import com.sms.app.data.settings.SettingsStore
@@ -18,5 +19,6 @@ val appModule = module {
     single { PhoneBook(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)) }
     single { Messages(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)) }
     single { OpenRequests() }
+    single { RichChat(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.IO), get()) }
     viewModelOf(::SettingsViewModel)
 }

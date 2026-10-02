@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
+import com.sms.app.core.chat.ChatService
 import com.sms.app.core.sms.OpenRequest
 import com.sms.app.core.sms.OpenRequests
 import com.sms.app.data.settings.SettingsStore
@@ -43,6 +44,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        ChatService.startIfWanted(this, settings)
     }
 
     /** singleTask: a request while the app runs arrives here. */

@@ -1,3 +1,6 @@
+import java.net.URI
+import java.security.MessageDigest
+
 plugins {
     // AGP 9 compiles Kotlin itself (built-in Kotlin), so no kotlin-android here.
     alias(libs.plugins.android.application)
@@ -62,6 +65,8 @@ android {
     }
 
     packaging {
+        // The chat engine is a program, run from where Android unpacks it.
+        jniLibs.useLegacyPackaging = true
         resources.excludes += setOf(
             "/META-INF/{AL2.0,LGPL2.1}",
             "/META-INF/INDEX.LIST",
@@ -92,3 +97,36 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
 }
+
+// The engine of the rich chat: chatmail core's own Android build of
+// deltachat-rpc-server (MPL-2.0, github.com/chatmail/core), fetched at
+// its pinned version and checked against its SHA-256 before it is packed
+// as a native library, so the repository holds no binary.
+val chatmailVersion = "2.62.0"
+val chatmailBinaries = mapOf(
+    "arm64-v8a" to ("deltachat-rpc-server-arm64-v8a-android" to "4b215745f22c25661d8a3787345ef5b5f65d6d6747d7f40763c463e85ab61922"),
+    "armeabi-v7a" to ("deltachat-rpc-server-armeabi-v7a-android" to "6120c9b87af69405632427385c7b8447ac177701c825290e2df53a89147d2e35")
+)
+val chatmailDir = layout.buildDirectory.dir("chatmail/jniLibs")
+val fetchChatmail by tasks.registering {
+    val out = chatmailDir
+    val binaries = chatmailBinaries
+    val version = chatmailVersion
+    inputs.property("version", version)
+    outputs.dir(out)
+    doLast {
+        fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        binaries.forEach { (abi, asset) ->
+            val (name, sha) = asset
+            val target = out.get().dir(abi).file("libchatmail.so").asFile
+            if (target.exists() && sha256(target.readBytes()) == sha) return@forEach
+            target.parentFile.mkdirs()
+            val bytes = URI("https://github.com/chatmail/core/releases/download/v$version/$name").toURL().openStream().use { it.readBytes() }
+            check(sha256(bytes) == sha) { "chatmail $abi: checksum does not match" }
+            target.writeBytes(bytes)
+        }
+    }
+}
+
+android.sourceSets.getByName("main").jniLibs.srcDir(chatmailDir.get().asFile)
+tasks.named("preBuild") { dependsOn(fetchChatmail) }
