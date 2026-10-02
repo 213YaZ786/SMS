@@ -105,7 +105,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     var query by rememberSaveable { mutableStateOf("") }
 
     fun nameOf(c: Conversation): String? =
-        if (c.group) c.addresses.joinToString(", ") { a -> index.find(T9.clean(a))?.name?.substringBefore(' ') ?: Numbers.format(context, a) }
+        if (c.group) settings.groupNames[c.threadId] ?: c.addresses.joinToString(", ") { a -> index.find(T9.clean(a))?.name?.substringBefore(' ') ?: Numbers.format(context, a) }
         else index.find(T9.clean(c.address))?.name
     val shown = remember(all, filter, settings.pinned, settings.archived, query, index) {
         val q = query.trim().lowercase()

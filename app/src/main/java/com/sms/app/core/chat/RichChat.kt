@@ -339,7 +339,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         if (!groupReady(phones)) return null
         _groups.value[groupKey(phones)]?.let { return it.chatId }
         return runCatching {
-            val chat = engine.call("create_group_chat", account, "SMS", false).jsonPrimitive.int
+            val named = runCatching { Telephony.Threads.getOrCreateThreadId(context, phones.toSet()) }.getOrNull()?.let { settings.current.groupNames[it] }
+            val chat = engine.call("create_group_chat", account, named ?: DEFAULT_GROUP_NAME, false).jsonPrimitive.int
             phones.forEach { phone ->
                 val one = linkFor(phone)!!.chatId
                 val contact = engine.call("get_chat_contacts", account, one).jsonArray.map { it.jsonPrimitive.int }.first { it != SELF }
@@ -446,6 +447,15 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             }
             "CallEnded" -> {
                 event.data["msg_id"]?.jsonPrimitive?.intOrNull?.let { _calls.tryEmit(CallSignal.Ended(it)) }
+            }
+            // A group renamed by one of its members: the name here follows.
+            "ChatModified" -> event.data["chatId"]?.jsonPrimitive?.intOrNull?.let { chat ->
+                val group = _groups.value.values.firstOrNull { it.chatId == chat } ?: return@let
+                val name = runCatching { engine.call("get_basic_chat_info", account, chat).jsonObject["name"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+                if (!name.isNullOrBlank() && name != DEFAULT_GROUP_NAME) {
+                    val thread = runCatching { Telephony.Threads.getOrCreateThreadId(context, group.phones.toSet()) }.getOrNull() ?: return@let
+                    if (settings.current.groupNames[thread] != name) settings.update { it.copy(groupNames = it.groupNames + (thread to name)) }
+                }
             }
             "ChatEphemeralTimerModified" -> {
                 val chat = event.data["chatId"]?.jsonPrimitive?.intOrNull
@@ -587,6 +597,13 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         if (!start()) return
         runCatching { engine.call("send_reaction", account, messageId.toInt(), listOfNotNull(emoji)) }
         _changes.value++
+    }
+
+    /** A group's name, for all its members when it goes over the encrypted chat. */
+    suspend fun nameGroup(phones: List<String>, name: String) {
+        if (!groupReady(phones) || !start()) return
+        val chat = chatOf(phones) ?: return
+        runCatching { engine.call("set_chat_name", account, chat, name.take(80)) }
     }
 
     /** Our own message, changed for both sides. */
@@ -736,6 +753,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     companion object {
         /** The port the data SMS carrying an invite go to. */
         const val PORT: Short = 18471
+        /** What a group is called in the chat until someone names it. */
+        private const val DEFAULT_GROUP_NAME = "SMS"
         /** The engine's id for the user themselves among a chat's contacts. */
         private const val SELF = 1
         /** A number without SMS is asked again only a month later. */

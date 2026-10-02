@@ -55,7 +55,9 @@ data class Settings(
     /** Conversations pinned on top, by thread id. */
     val pinned: List<Long> = emptyList(),
     /** Conversations put away, thread id to when: out of the list until a newer message comes. */
-    val archived: Map<Long, Long> = emptyMap()
+    val archived: Map<Long, Long> = emptyMap(),
+    /** Names given to group conversations, by thread id. */
+    val groupNames: Map<Long, String> = emptyMap()
 )
 
 /**

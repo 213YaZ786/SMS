@@ -164,7 +164,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val to = people.firstOrNull().orEmpty()
     val group = people.size > 1
     val entry = remember(index, to) { index.find(T9.clean(to)) }
-    val title = if (group) people.joinToString(", ") { index.find(T9.clean(it))?.name?.substringBefore(' ') ?: Numbers.format(context, it) }
+    val prefs by koinInject<SettingsStore>().settings.collectAsState()
+    val title = if (group) thread?.let { prefs.groupNames[it] } ?: people.joinToString(", ") { index.find(T9.clean(it))?.name?.substringBefore(' ') ?: Numbers.format(context, it) }
     else entry?.name ?: Numbers.format(context, to)
     val canCall = !group && to.count(Char::isDigit) >= 3
     // With one number: the rich chat when it has SMS too, else SMS.
@@ -238,7 +239,11 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                 leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) },
                 trailing = { if (canCall) CallButton(to, linked != null) },
                 center = {
-                    PersonPill(title, to, entry?.contactId, group, vanish = if (encrypted) vanish else null) { seconds ->
+                    PersonPill(title, to, entry?.contactId, group, vanish = if (encrypted) vanish else null, onName = { name ->
+                        val t = thread ?: return@PersonPill
+                        store.update { s -> s.copy(groupNames = if (name.isBlank()) s.groupNames - t else s.groupNames + (t to name.trim())) }
+                        if (encrypted && name.isNotBlank()) scope.launch { chat.nameGroup(people, name.trim()) }
+                    }) { seconds ->
                         scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds }
                     }
                 }
@@ -443,7 +448,7 @@ private fun CallButton(phone: String, encrypted: Boolean) {
 
 /** The name at the top: a tap offers the calls with them, their contact, blocking. */
 @Composable
-private fun PersonPill(title: String, address: String, contactId: Long?, group: Boolean, vanish: Int?, onVanish: (Int) -> Unit) {
+private fun PersonPill(title: String, address: String, contactId: Long?, group: Boolean, vanish: Int?, onName: (String) -> Unit = {}, onVanish: (Int) -> Unit) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var menuOpen by remember { mutableStateOf(false) }
@@ -453,6 +458,11 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
     var choosingSignature by remember { mutableStateOf(false) }
     if (choosingSignature) SignatureDialog(address) { choosingSignature = false }
     var choosingVanish by remember { mutableStateOf(false) }
+    var naming by remember { mutableStateOf(false) }
+    if (naming) GroupNameDialog(if (group && title.contains(',')) "" else title, onDone = { name ->
+        naming = false
+        onName(name)
+    }) { naming = false }
     if (choosingVanish && vanish != null) VanishDialog(vanish, onPick = onVanish) { choosingVanish = false }
     Box(Modifier.onGloballyPositioned { pillBounds = it.boundsInWindow() }) {
         FloatingPane(shape = CircleShape, onClick = {
@@ -470,6 +480,7 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
                 else if (digits) MessageAction(AppIcons.PersonAdd, "Add to contacts") { NumberActions.addContact(context, address) } else null,
                 if (!group) MessageAction(AppIcons.Copy, "Copy number") { NumberActions.copy(context, address) } else null,
                 if (!group) MessageAction(AppIcons.Vibration, "Vibration") { choosingSignature = true } else null,
+                if (group) MessageAction(AppIcons.Create, "Name the group") { naming = true } else null,
                 if (vanish != null) MessageAction(AppIcons.Timer, "Vanishing") { choosingVanish = true } else null,
                 if (!group && NumberActions.canBlock(context)) MessageAction(AppIcons.Block, if (blocked) "Unblock" else "Block", danger = !blocked) {
                     if (blocked) {
@@ -818,6 +829,26 @@ private fun forward(context: android.content.Context, text: String) {
                 .putExtra(android.content.Intent.EXTRA_TEXT, text)
         )
     }
+}
+
+/** A group's name, written by hand; empty gives back the list of its members. */
+@Composable
+private fun GroupNameDialog(current: String, onDone: (String) -> Unit, onDismiss: () -> Unit) {
+    var name by remember { mutableStateOf(current) }
+    ZoneAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Name the group") },
+        text = {
+            androidx.compose.material3.OutlinedTextField(
+                value = name,
+                onValueChange = { name = it.take(80) },
+                singleLine = true,
+                placeholder = { Text("Family, Friday team…") }
+            )
+        },
+        confirmButton = { TextButton(onClick = { onDone(name) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 /** 5 min, 1 hour, 1 day, 1 week. */
