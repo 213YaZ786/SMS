@@ -52,6 +52,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.animateDp
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -330,7 +337,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                         modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
-                    is Row.Bubble -> Bubble(
+                    // A message deleted, here or for everyone, fades away as the others close up.
+                    is Row.Bubble -> Box(Modifier.fillMaxWidth().animateItem(fadeOutSpec = androidx.compose.animation.core.tween(450))) { Bubble(
                         row.message,
                         row.last,
                         fresh = row.message.box == MessageBox.RECEIVED && row.message.id in fresh,
@@ -348,7 +356,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                         onDeleteForAll = { id -> scope.launch { if (!chat.deleteForAll(id)) haptics.reject() } },
                         onPin = { id, on -> scope.launch { chat.pin(id, on) } },
                         chatId = chat.chatIdOf(row.message.mms, row.message.id).also { refs.size }
-                    )
+                    ) }
                 }
             }
         }
@@ -453,7 +461,9 @@ private fun Bubble(
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
-    val menu = rememberPillMenu()
+    // Held: the message lifts, the reactions and the actions come around it.
+    var menuOpen by remember { mutableStateOf(false) }
+    var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val mine = m.box != MessageBox.RECEIVED
     var confirmDeleteAll by remember { mutableStateOf(false) }
     if (confirmDeleteAll && chatId != null) {
@@ -513,7 +523,6 @@ private fun Bubble(
         if (m.body.isNotEmpty() || m.parts.isEmpty()) Box(
             Modifier
                 .fillMaxWidth(0.82f)
-                .then(menu.tracker)
                 // Swiped right, it follows the finger, ticks once past the
                 // point where it will be answered, and springs back.
                 .pointerInput(m.id) {
@@ -564,33 +573,59 @@ private fun Bubble(
             ZoneSurface(
                 shape = shape,
                 accent = mine,
-                modifier = Modifier.clip(shape).combinedClickable(
+                modifier = Modifier
+                    .onGloballyPositioned { bounds = it.boundsInWindow() }
+                    .graphicsLayer { alpha = if (menuOpen) 0f else 1f }
+                    .clip(shape).combinedClickable(
                     onClick = { if (m.box == MessageBox.FAILED) onRetry() },
                     // A double tap gives a heart, over the rich chat.
                     onDoubleClick = if (rich != null) ({
                         haptics.done()
                         onReact(if ("❤️" in rich.reactions) null else "❤️")
                     }) else null,
-                    onLongClick = menu::open,
+                    onLongClick = {
+                        haptics.firm()
+                        menuOpen = true
+                    },
                     onLongClickLabel = "More"
                 )
             ) {
-                Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                // An edit changes the words in a soft blur, not at a stroke.
+                androidx.compose.animation.AnimatedContent(
+                    text,
+                    transitionSpec = {
+                        androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(420, delayMillis = 120)) togetherWith
+                            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(260))
+                    },
+                    label = "words"
+                ) { words ->
+                    val blur by transition.animateDp(label = "blur") { if (it == androidx.compose.animation.EnterExitState.Visible) 0.dp else 6.dp }
+                    Text(words, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.blur(blur).padding(horizontal = 16.dp, vertical = 10.dp))
+                }
             }
-            PillMenu(
-                menu,
-                listOfNotNull(
-                    PillItem(AppIcons.Reply, "Reply", PillMotion.BOUNCE) { onQuote() },
+            if (menuOpen) MessageMenu(
+                bounds = bounds,
+                mine = mine,
+                reactions = if (rich != null) Reactions else null,
+                chosen = rich?.reactions.orEmpty(),
+                actions = listOfNotNull(
+                    MessageAction(AppIcons.Reply, "Reply") { onQuote() },
                     // Only the user's own messages of the encrypted chat change for both sides.
-                    if (chatId != null && rich?.mine == true && m.body.isNotBlank()) PillItem(AppIcons.Create, "Edit", PillMotion.WIGGLE) { onEdit(chatId) } else null,
-                    if (m.body.isNotBlank()) PillItem(AppIcons.Copy, "Copy", PillMotion.BOUNCE) { copy(context, "Message", m.body) } else null,
-                    if (m.body.isNotBlank()) PillItem(AppIcons.Forward, "Forward", PillMotion.BOUNCE) { forward(context, m.body) } else null,
-                    if (chatId != null) PillItem(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin", PillMotion.DROP) { onPin(chatId, rich?.pinned != true) } else null,
-                    if (m.box == MessageBox.FAILED && !m.mms) PillItem(AppIcons.Send, "Try again", PillMotion.BOUNCE) { onRetry() } else null,
-                    if (chatId != null && rich?.mine == true) PillItem(AppIcons.Delete, "Delete for everyone", PillMotion.DROP) { confirmDeleteAll = true } else null,
-                    PillItem(AppIcons.Delete, if (chatId != null && rich?.mine == true) "Delete here" else "Delete", PillMotion.DROP) { onDelete() }
-                )
-            )
+                    if (chatId != null && rich?.mine == true && m.body.isNotBlank()) MessageAction(AppIcons.Create, "Edit") { onEdit(chatId) } else null,
+                    if (m.body.isNotBlank()) MessageAction(AppIcons.Copy, "Copy") { copy(context, "Message", m.body) } else null,
+                    if (m.body.isNotBlank()) MessageAction(AppIcons.Forward, "Forward") { forward(context, m.body) } else null,
+                    if (chatId != null) MessageAction(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin") { onPin(chatId, rich?.pinned != true) } else null,
+                    if (m.box == MessageBox.FAILED && !m.mms) MessageAction(AppIcons.Send, "Try again") { onRetry() } else null,
+                    if (chatId != null && rich?.mine == true) MessageAction(AppIcons.Delete, "Delete for everyone", danger = true) { confirmDeleteAll = true } else null,
+                    MessageAction(AppIcons.Delete, if (chatId != null && rich?.mine == true) "Delete for me" else "Delete", danger = true) { onDelete() }
+                ),
+                onReact = { emoji -> onReact(if (emoji in rich?.reactions.orEmpty()) null else emoji) },
+                onDismiss = { menuOpen = false }
+            ) {
+                ZoneSurface(shape = shape, accent = mine, shadowElevation = 8.dp) {
+                    Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                }
+            }
         }
         if (!rich?.reactions.isNullOrEmpty()) {
             FloatingPane(shape = CircleShape, modifier = Modifier.padding(top = 2.dp)) {
