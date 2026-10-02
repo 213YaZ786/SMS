@@ -117,6 +117,21 @@
         <receiver
             android:name=".core.sms.NotificationActions"
             android:exported="false" />
+        <receiver
+            android:name=".core.mms.MmsResultReceiver"
+            android:exported="false" />
+
+        <!-- Picture messages handed to Android's MMS service, and media opened
+             in another app: shared one file at a time, never exported. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.mms"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/mms_paths" />
+        </provider>
 
         <!-- After an update the app installed itself: a notification to open it again. -->
         <receiver

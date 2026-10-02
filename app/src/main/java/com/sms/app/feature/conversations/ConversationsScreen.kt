@@ -100,11 +100,13 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
 
-    fun nameOf(c: Conversation): String? = index.find(T9.clean(c.address))?.name
+    fun nameOf(c: Conversation): String? =
+        if (c.group) c.addresses.joinToString(", ") { a -> index.find(T9.clean(a))?.name?.substringBefore(' ') ?: Numbers.format(context, a) }
+        else index.find(T9.clean(c.address))?.name
     val shown = remember(all, filter, settings.pinned, settings.archived, query, index) {
         val q = query.trim().lowercase()
         Lists.shown(all, filter, settings.pinned, settings.archived).filter { c ->
-            q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.address.contains(q) || c.snippet.lowercase().contains(q)
+            q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
         }
     }
     val waiting = remember(all, settings.archived, filter, query) {
@@ -149,17 +151,17 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             ) {
                 if (waiting.isNotEmpty()) {
                     item(key = "waiting") {
-                        Waiting(waiting, index) { c -> onOpenThread(c.threadId, c.address) }
+                        Waiting(waiting, index) { c -> onOpenThread(c.threadId, c.addresses.joinToString(",")) }
                     }
                 }
                 items(shown, key = { it.threadId }) { c ->
                     ConversationLine(
                         c,
                         name = nameOf(c),
-                        photo = index.find(T9.clean(c.address))?.photo,
+                        photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
                         pinned = c.threadId in settings.pinned,
                         archived = Lists.isArchived(c, settings.archived),
-                        onOpen = { onOpenThread(c.threadId, c.address) },
+                        onOpen = { onOpenThread(c.threadId, c.addresses.joinToString(",")) },
                         onPin = { on ->
                             store.update { s -> s.copy(pinned = if (on) s.pinned + c.threadId else s.pinned - c.threadId) }
                         },
@@ -278,7 +280,7 @@ private fun ConversationLine(
     var confirmDelete by remember { mutableStateOf(false) }
     val title = name ?: Numbers.format(context, c.address)
     val unread = c.unread > 0
-    val canCall = c.address.count(Char::isDigit) >= 3
+    val canCall = !c.group && c.address.count(Char::isDigit) >= 3
 
     Box(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().then(menu.tracker)) {
         val shape = RoundedCornerShape(22.dp)

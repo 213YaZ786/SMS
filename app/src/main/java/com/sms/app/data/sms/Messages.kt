@@ -10,6 +10,9 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Telephony
 import androidx.core.content.ContextCompat
+import com.sms.app.core.mms.MmsPart
+import com.sms.app.core.mms.MmsStore
+import com.sms.app.core.mms.mediaWord
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,20 +37,27 @@ data class Message(
     val read: Boolean,
     /** The network said it reached the phone it was sent to. */
     val delivered: Boolean,
-    val subId: Int
+    val subId: Int,
+    /** A picture message: its pictures, videos and sounds; the text is in [body]. */
+    val mms: Boolean = false,
+    val parts: List<MmsPart> = emptyList()
 )
 
 /** One conversation: who with, its last message, how many are unread. */
 data class Conversation(
     val threadId: Long,
+    /** The first person of the conversation; a group has [addresses]. */
     val address: String,
     val snippet: String,
     val date: Long,
     val unread: Int,
     /** The last message is one the user sent (or tried to). */
     val fromMe: Boolean,
-    val failed: Boolean
-)
+    val failed: Boolean,
+    val addresses: List<String> = listOf(address)
+) {
+    val group: Boolean get() = addresses.size > 1
+}
 
 /**
  * The messages on the phone, read from Android's own store, which this app
@@ -97,6 +107,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
     }
 
     private fun readConversations(): List<Conversation> = runCatching {
+        val people = recipients()
         val byThread = LinkedHashMap<Long, Conversation>()
         val unread = HashMap<Long, Int>()
         context.contentResolver.query(
@@ -109,19 +120,69 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                 val type = c.getInt(4)
                 if (type == Telephony.Sms.MESSAGE_TYPE_INBOX && c.getInt(5) == 0) unread[thread] = (unread[thread] ?: 0) + 1
                 if (thread in byThread) continue
+                val address = c.getString(1).orEmpty()
                 byThread[thread] = Conversation(
                     threadId = thread,
-                    address = c.getString(1).orEmpty(),
+                    address = people[thread]?.firstOrNull() ?: address,
                     snippet = c.getString(2).orEmpty(),
                     date = c.getLong(3),
                     unread = 0,
                     fromMe = type != Telephony.Sms.MESSAGE_TYPE_INBOX,
-                    failed = type == Telephony.Sms.MESSAGE_TYPE_FAILED
+                    failed = type == Telephony.Sms.MESSAGE_TYPE_FAILED,
+                    addresses = people[thread] ?: listOf(address)
                 )
             }
         }
-        byThread.values.map { it.copy(unread = unread[it.threadId] ?: 0) }
+        // Picture messages: the newest of a thread wins over its SMS when later.
+        val seenMms = HashSet<Long>()
+        context.contentResolver.query(
+            Telephony.Mms.CONTENT_URI,
+            arrayOf(Telephony.Mms._ID, Telephony.Mms.THREAD_ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ),
+            null, null, "${Telephony.Mms.DATE} DESC"
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val thread = c.getLong(1)
+                val box = c.getInt(3)
+                if (box == Telephony.Mms.MESSAGE_BOX_INBOX && c.getInt(4) == 0) unread[thread] = (unread[thread] ?: 0) + 1
+                if (!seenMms.add(thread)) continue
+                val date = c.getLong(2) * 1000
+                val known = byThread[thread]
+                if (known != null && known.date >= date) continue
+                val (text, media) = MmsStore.parts(context, c.getLong(0))
+                val addresses = people[thread] ?: known?.addresses ?: emptyList()
+                byThread[thread] = Conversation(
+                    threadId = thread,
+                    address = addresses.firstOrNull().orEmpty(),
+                    snippet = text.ifBlank { mediaWord(media.firstOrNull()?.contentType) },
+                    date = date,
+                    unread = 0,
+                    fromMe = box != Telephony.Mms.MESSAGE_BOX_INBOX,
+                    failed = box == Telephony.Mms.MESSAGE_BOX_FAILED,
+                    addresses = addresses.ifEmpty { listOf("") }
+                )
+            }
+        }
+        byThread.values.map { it.copy(unread = unread[it.threadId] ?: 0) }.sortedByDescending { it.date }
     }.getOrDefault(emptyList())
+
+    /** Who is in each conversation, from Android's threads: one number, or a group's. */
+    private fun recipients(): Map<Long, List<String>> = runCatching {
+        val canonical = HashMap<String, String>()
+        context.contentResolver.query(Uri.parse("content://mms-sms/canonical-addresses"), arrayOf("_id", "address"), null, null, null)?.use { c ->
+            while (c.moveToNext()) canonical[c.getString(0)] = c.getString(1).orEmpty()
+        }
+        val out = HashMap<Long, List<String>>()
+        context.contentResolver.query(Uri.parse("content://mms-sms/conversations?simple=true"), arrayOf("_id", "recipient_ids"), null, null, null)?.use { c ->
+            while (c.moveToNext()) {
+                val ids = c.getString(1).orEmpty().split(' ').filter { it.isNotBlank() }
+                out[c.getLong(0)] = ids.mapNotNull { canonical[it] }.filter { it.isNotBlank() }
+            }
+        }
+        out
+    }.getOrDefault(emptyMap())
+
+    /** The people of one conversation. */
+    suspend fun addressesOf(threadId: Long): List<String> = withContext(Dispatchers.IO) { recipients()[threadId].orEmpty() }
 
     /** The messages of one conversation, oldest first. */
     suspend fun thread(threadId: Long): List<Message> = withContext(Dispatchers.IO) {
@@ -149,7 +210,36 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     )
                 }
             }
-            out
+            context.contentResolver.query(
+                Telephony.Mms.CONTENT_URI,
+                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID),
+                "${Telephony.Mms.THREAD_ID} = ?", arrayOf(threadId.toString()), null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getLong(0)
+                    val box = c.getInt(2)
+                    val (text, media) = MmsStore.parts(context, id)
+                    out += Message(
+                        id = id,
+                        threadId = threadId,
+                        address = if (box == Telephony.Mms.MESSAGE_BOX_INBOX) MmsStore.sender(context, id).orEmpty() else "",
+                        body = text,
+                        date = c.getLong(1) * 1000,
+                        box = when (box) {
+                            Telephony.Mms.MESSAGE_BOX_INBOX -> Box.RECEIVED
+                            Telephony.Mms.MESSAGE_BOX_SENT -> Box.SENT
+                            Telephony.Mms.MESSAGE_BOX_FAILED -> Box.FAILED
+                            else -> Box.SENDING
+                        },
+                        read = c.getInt(3) != 0,
+                        delivered = false,
+                        subId = c.getInt(4),
+                        mms = true,
+                        parts = media
+                    )
+                }
+            }
+            out.sortedBy { it.date }
         }.getOrDefault(emptyList())
     }
 
@@ -164,9 +254,10 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
         }
     }
 
-    fun deleteMessage(id: Long) {
+    fun deleteMessage(message: Message) {
+        val base = if (message.mms) Telephony.Mms.CONTENT_URI else Telephony.Sms.CONTENT_URI
         scope.launch(Dispatchers.IO) {
-            runCatching { context.contentResolver.delete(Uri.withAppendedPath(Telephony.Sms.CONTENT_URI, id.toString()), null, null) }
+            runCatching { context.contentResolver.delete(Uri.withAppendedPath(base, message.id.toString()), null, null) }
         }
     }
 
@@ -179,6 +270,17 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
         }
 
         fun markRead(context: Context, threadId: Long) {
+            runCatching {
+                context.contentResolver.update(
+                    Telephony.Mms.CONTENT_URI,
+                    ContentValues().apply {
+                        put(Telephony.Mms.READ, 1)
+                        put(Telephony.Mms.SEEN, 1)
+                    },
+                    "${Telephony.Mms.THREAD_ID} = ? AND (${Telephony.Mms.READ} = 0 OR ${Telephony.Mms.SEEN} = 0)",
+                    arrayOf(threadId.toString())
+                )
+            }
             runCatching {
                 context.contentResolver.update(
                     Telephony.Sms.CONTENT_URI,

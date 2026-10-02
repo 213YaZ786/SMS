@@ -43,6 +43,7 @@ import com.sms.app.ui.component.ContactAvatar
 import com.sms.app.ui.component.EmptyZone
 import com.sms.app.ui.component.FloatingAction
 import com.sms.app.ui.component.FloatingFrame
+import com.sms.app.ui.component.FloatingPane
 import com.sms.app.ui.component.FloatingTop
 import com.sms.app.ui.component.SearchPill
 import com.sms.app.ui.component.ZoneSurface
@@ -63,6 +64,17 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
     val entries by book.entries.collectAsState()
     val people = remember(entries) { People.of(entries) }
     var query by rememberSaveable { mutableStateOf("") }
+    // Several people: a group, sent as picture messages to all.
+    var group by rememberSaveable { mutableStateOf(false) }
+    var chosen by rememberSaveable { mutableStateOf(listOf<String>()) }
+    fun pick(number: String) {
+        if (!group) {
+            onPick(number)
+            return
+        }
+        chosen = if (number in chosen) chosen - number else chosen + number
+        query = ""
+    }
     val found = remember(people, query) { People.search(people, query) }
     val typed = query.filter { it.isDigit() || it == '+' }.takeIf { it.count(Char::isDigit) >= 3 && query.none(Char::isLetter) }
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp
@@ -70,7 +82,30 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
     FloatingFrame(
         bottom = bottom,
         top = {
-            FloatingTop(title = "New message", leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) })
+            FloatingTop(
+                title = if (group) "New group" else "New message",
+                leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) },
+                trailing = {
+                    if (group && chosen.isNotEmpty()) FloatingAction(AppIcons.Send, "Write to them", { onPick(chosen.joinToString(",")) })
+                    else FloatingAction(AppIcons.Group, if (group) "One person" else "A group", {
+                        group = !group
+                        chosen = emptyList()
+                    })
+                }
+            )
+            if (group && chosen.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    chosen.forEach { n ->
+                        val name = people.firstOrNull { p -> p.numbers.any { it.number == n } }?.name ?: n
+                        FloatingPane(shape = CircleShape, accent = true, onClick = { chosen = chosen - n }) {
+                            Text(name.substringBefore(' '), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+                        }
+                    }
+                }
+            }
             Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
                 SearchPill(query, { query = it }, hint = "Name or number", modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(), floating = true)
             }
@@ -83,7 +118,7 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (typed != null) {
-                item(key = "typed") { Line(null, null, "Send to $typed", null) { onPick(typed) } }
+                item(key = "typed") { Line(null, null, if (group) "Add $typed" else "Send to $typed", null, false) { pick(typed) } }
             }
             if (!allowed) {
                 item(key = "allow") {
@@ -98,7 +133,7 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
             }
             found.forEach { person ->
                 items(person.numbers, key = { "n/${person.id}/${it.number}" }) { n ->
-                    Line(person.name, person.photo, person.name, n.number) { onPick(n.number) }
+                    Line(person.name, person.photo, person.name, n.number, n.number in chosen) { pick(n.number) }
                 }
             }
         }
@@ -106,11 +141,12 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
 }
 
 @Composable
-private fun Line(name: String?, photo: String?, title: String, under: String?, onClick: () -> Unit) {
+private fun Line(name: String?, photo: String?, title: String, under: String?, chosen: Boolean, onClick: () -> Unit) {
     val haptics = rememberHaptics()
     val shape = RoundedCornerShape(22.dp)
     ZoneSurface(
         shape = shape,
+        accent = chosen,
         modifier = Modifier.widthIn(max = 640.dp).fillMaxWidth().clip(shape).clickable {
             haptics.tick()
             onClick()

@@ -16,6 +16,8 @@ import com.sms.app.MainActivity
 import com.sms.app.R
 import com.sms.app.core.dial.ContactLookup
 import com.sms.app.core.dial.Numbers
+import com.sms.app.core.mms.MmsStore
+import com.sms.app.core.mms.mediaWord
 
 /**
  * The notifications of new messages, one per conversation, as Android
@@ -104,32 +106,51 @@ class MessageNotifier(private val context: Context) {
         )
     }
 
-    /** A picture message: not opened by this version. */
-    fun pictureMessage() {
+    /** A picture message that could not be downloaded. */
+    fun pictureFailed(from: String?) {
+        val name = from?.takeIf { it.isNotBlank() }?.let { ContactLookup.nameOf(context, it) ?: Numbers.format(context, it) }
         post(
             PICTURE_ID,
-            NotificationCompat.Builder(context, CHANNEL)
+            NotificationCompat.Builder(context, FAILED)
                 .setSmallIcon(R.drawable.ic_stat_sms)
-                .setContentTitle("Picture message received")
-                .setContentText("This version cannot open picture messages yet.")
+                .setContentTitle("Picture message not downloaded")
+                .setContentText(if (name != null) "From $name. Check mobile data." else "Check mobile data.")
                 .setAutoCancel(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .build()
         )
     }
 
-    /** The unread received messages of a thread, oldest first: address, text, time. */
-    private fun unread(threadId: Long): List<Triple<String, String, Long>> = runCatching {
+    /** The unread received messages of a thread, SMS and MMS, oldest first: address, text, time. */
+    private fun unread(threadId: Long): List<Triple<String, String, Long>> {
         val out = ArrayList<Triple<String, String, Long>>()
-        context.contentResolver.query(
-            Telephony.Sms.Inbox.CONTENT_URI,
-            arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE),
-            "${Telephony.Sms.THREAD_ID} = ? AND ${Telephony.Sms.READ} = 0", arrayOf(threadId.toString()),
-            "${Telephony.Sms.DATE} DESC LIMIT 8"
-        )?.use { c ->
-            while (c.moveToNext()) out += Triple(c.getString(0).orEmpty(), c.getString(1).orEmpty(), c.getLong(2))
+        runCatching {
+            context.contentResolver.query(
+                Telephony.Sms.Inbox.CONTENT_URI,
+                arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE),
+                "${Telephony.Sms.THREAD_ID} = ? AND ${Telephony.Sms.READ} = 0", arrayOf(threadId.toString()),
+                "${Telephony.Sms.DATE} DESC LIMIT 8"
+            )?.use { c ->
+                while (c.moveToNext()) out += Triple(c.getString(0).orEmpty(), c.getString(1).orEmpty(), c.getLong(2))
+            }
         }
-        out.reversed()
-    }.getOrDefault(emptyList())
+        runCatching {
+            context.contentResolver.query(
+                Telephony.Mms.Inbox.CONTENT_URI,
+                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE),
+                "${Telephony.Mms.THREAD_ID} = ? AND ${Telephony.Mms.READ} = 0", arrayOf(threadId.toString()),
+                "${Telephony.Mms.DATE} DESC LIMIT 8"
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getLong(0)
+                    val (text, media) = MmsStore.parts(context, id)
+                    val shown = text.ifBlank { mediaWord(media.firstOrNull()?.contentType) }
+                    out += Triple(MmsStore.sender(context, id).orEmpty(), shown, c.getLong(1) * 1000)
+                }
+            }
+        }
+        return out.sortedBy { it.third }.takeLast(8)
+    }
 
     private fun open(threadId: Long, address: String): PendingIntent = PendingIntent.getActivity(
         context, threadId.toInt(),

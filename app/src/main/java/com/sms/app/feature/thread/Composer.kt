@@ -1,6 +1,12 @@
 package com.sms.app.feature.thread
 
 import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
+import com.sms.app.core.mms.Attachment
 import android.content.pm.PackageManager
 import android.telephony.SmsMessage
 import android.telephony.SubscriptionInfo
@@ -54,14 +60,18 @@ import com.sms.app.ui.icon.AppIcons
  * two, how many SMS it makes once it is long, and Send on its own pane.
  */
 @Composable
-fun Composer(initial: String, modifier: Modifier, onSend: (String, Int) -> Boolean) {
+fun Composer(initial: String, modifier: Modifier, onSend: (String, Int, List<Attachment>) -> Boolean) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var text by rememberSaveable { mutableStateOf(initial) }
     val sims = remember { activeSims(context) }
     var simIndex by rememberSaveable { mutableIntStateOf(sims.indexOfFirst { it.subscriptionId == SubscriptionManager.getDefaultSmsSubscriptionId() }.coerceAtLeast(0)) }
-    val length = remember(text) { if (text.isBlank()) null else SmsMessage.calculateLength(text, false) }
-    val canSend = text.isNotBlank()
+    var attachments by remember { mutableStateOf<List<Attachment>>(emptyList()) }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
+        attachments = (attachments + uris.map { Attachment(it, context.contentResolver.getType(it) ?: "image/jpeg") }).distinctBy { it.uri }.take(5)
+    }
+    val length = remember(text, attachments) { if (text.isBlank() || attachments.isNotEmpty()) null else SmsMessage.calculateLength(text, false) }
+    val canSend = text.isNotBlank() || attachments.isNotEmpty()
     val lift by animateFloatAsState(if (canSend) 1f else 0.86f, spring(dampingRatio = 0.5f, stiffness = 600f), label = "send")
 
     Column(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = Alignment.End) {
@@ -77,7 +87,32 @@ fun Composer(initial: String, modifier: Modifier, onSend: (String, Int) -> Boole
                 }
             }
         }
+        // What goes with the text, each removable with a tap.
+        if (attachments.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                attachments.forEach { a ->
+                    val picture by rememberPicture(a.uri, 240)
+                    FloatingPane(shape = RoundedCornerShape(16.dp), onClick = {
+                        haptics.tick()
+                        attachments = attachments - a
+                    }, modifier = Modifier.size(64.dp)) {
+                        Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
+                            picture?.let { Image(it, contentDescription = "Remove", contentScale = ContentScale.Crop, modifier = Modifier.size(64.dp)) }
+                                ?: Icon(AppIcons.Play, contentDescription = "Remove")
+                        }
+                    }
+                }
+            }
+        }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+            FloatingPane(shape = CircleShape, onClick = {
+                haptics.tick()
+                pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+            }, modifier = Modifier.size(52.dp)) {
+                Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
+                    Icon(AppIcons.AddPhoto, contentDescription = "Add a photo or a video", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
             if (sims.size > 1) {
                 FloatingPane(shape = CircleShape, onClick = {
                     haptics.tick()
@@ -108,9 +143,10 @@ fun Composer(initial: String, modifier: Modifier, onSend: (String, Int) -> Boole
                 onClick = {
                     if (!canSend) return@FloatingPane
                     val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
-                    if (onSend(text, sub)) {
+                    if (onSend(text, sub, attachments)) {
                         haptics.done()
                         text = ""
+                        attachments = emptyList()
                     } else {
                         haptics.reject()
                     }

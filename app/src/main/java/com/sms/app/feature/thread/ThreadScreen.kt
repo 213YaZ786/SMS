@@ -61,6 +61,7 @@ import com.sms.app.core.link.LinkCleaner
 import com.sms.app.core.sms.Codes
 import com.sms.app.core.sms.MessageNotifier
 import com.sms.app.core.sms.SmsSender
+import com.sms.app.core.mms.MmsTransport
 import com.sms.app.data.contacts.PhoneBook
 import com.sms.app.data.contacts.PhoneIndex
 import com.sms.app.data.sms.Box as MessageBox
@@ -103,12 +104,17 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val contacts by book.entries.collectAsState()
     val changes by messages.changes.collectAsState()
 
-    // The thread is found from the number when only the number is known.
+    // The thread is found from the numbers when only they are known, and the
+    // numbers from the thread when only it is known (a notification).
+    val given = remember(address) { address.split(',').map { it.trim() }.filter { it.isNotEmpty() } }
+    var people by remember { mutableStateOf(given) }
     var thread by remember { mutableStateOf(threadId) }
     LaunchedEffect(address) {
-        if (thread == null && address.isNotBlank()) {
-            thread = withContext(Dispatchers.IO) { runCatching { Telephony.Threads.getOrCreateThreadId(context, address) }.getOrNull() }
+        if (thread == null && given.isNotEmpty()) {
+            thread = withContext(Dispatchers.IO) { runCatching { Telephony.Threads.getOrCreateThreadId(context, given.toSet()) }.getOrNull() }
         }
+        val t = thread
+        if (t != null) messages.addressesOf(t).takeIf { it.isNotEmpty() }?.let { people = it }
     }
     var list by remember { mutableStateOf<List<Message>>(emptyList()) }
     LaunchedEffect(thread, changes) {
@@ -117,10 +123,13 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         if (list.any { it.box == MessageBox.RECEIVED && !it.read }) messages.markRead(t)
         MessageNotifier(context).cancel(t)
     }
-    val to = address.ifBlank { list.firstOrNull()?.address.orEmpty() }
-    val entry = remember(contacts, to) { PhoneIndex(contacts).find(T9.clean(to)) }
-    val title = entry?.name ?: Numbers.format(context, to)
-    val canCall = to.count(Char::isDigit) >= 3
+    val index = remember(contacts) { PhoneIndex(contacts) }
+    val to = people.firstOrNull().orEmpty()
+    val group = people.size > 1
+    val entry = remember(index, to) { index.find(T9.clean(to)) }
+    val title = if (group) people.joinToString(", ") { index.find(T9.clean(it))?.name?.substringBefore(' ') ?: Numbers.format(context, it) }
+    else entry?.name ?: Numbers.format(context, to)
+    val canCall = !group && to.count(Char::isDigit) >= 3
 
     val density = LocalDensity.current
     var composerHeight by remember { mutableStateOf(0.dp) }
@@ -132,7 +141,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                 title = null,
                 leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) },
                 trailing = { if (canCall) FloatingAction(AppIcons.Call, "Call", { NumberActions.dial(context, to) }) },
-                center = { PersonPill(title, to, entry?.contactId) }
+                center = { PersonPill(title, to, entry?.contactId, group) }
             )
         },
         overlay = {
@@ -143,9 +152,13 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     .padding(horizontal = LocalReadableInset.current)
                     .onSizeChanged { composerHeight = with(density) { it.height.toDp() } },
-                onSend = { text, sub ->
-                    if (to.isBlank()) return@Composer false
-                    scope.launch(Dispatchers.IO) { SmsSender.send(context, to, text, sub) }
+                onSend = { text, sub, attachments ->
+                    if (people.isEmpty()) return@Composer false
+                    scope.launch(Dispatchers.IO) {
+                        // A group or a picture goes as a picture message, the rest as SMS.
+                        if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, sub)
+                        else SmsSender.send(context, to, text, sub)
+                    }
                     true
                 }
             )
@@ -168,9 +181,17 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                         modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
-                    is Row.Bubble -> Bubble(row.message, row.last, onRetry = {
-                        scope.launch(Dispatchers.IO) { SmsSender.retry(context, row.message.id, row.message.address, row.message.body, row.message.subId) }
-                    }, onDelete = { messages.deleteMessage(row.message.id) })
+                    is Row.Bubble -> Bubble(
+                        row.message,
+                        row.last,
+                        sender = if (group && row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null,
+                        onRetry = {
+                            if (!row.message.mms) {
+                                scope.launch(Dispatchers.IO) { SmsSender.retry(context, row.message.id, row.message.address, row.message.body, row.message.subId) }
+                            }
+                        },
+                        onDelete = { messages.deleteMessage(row.message) }
+                    )
                 }
             }
         }
@@ -200,7 +221,7 @@ private fun rowsOf(list: List<Message>): List<Row> {
 
 /** The name at the top: a tap offers the calls with them, their contact, blocking. */
 @Composable
-private fun PersonPill(title: String, address: String, contactId: Long?) {
+private fun PersonPill(title: String, address: String, contactId: Long?, group: Boolean) {
     val context = LocalContext.current
     val menu = rememberPillMenu()
     var blocked by remember(address) { mutableStateOf(NumberActions.isBlocked(context, address)) }
@@ -209,15 +230,15 @@ private fun PersonPill(title: String, address: String, contactId: Long?) {
         FloatingPane(shape = CircleShape, onClick = menu::open) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
         }
-        val digits = address.count(Char::isDigit) >= 3
+        val digits = !group && address.count(Char::isDigit) >= 3
         PillMenu(
             menu,
             listOfNotNull(
                 if (digits && NumberActions.canShowCalls(context)) PillItem(AppIcons.Recents, "Calls", PillMotion.BOUNCE) { NumberActions.showCalls(context, address) } else null,
                 if (contactId != null) PillItem(AppIcons.Person, "Contact", PillMotion.BOUNCE) { NumberActions.openContact(context, contactId) }
                 else if (digits) PillItem(AppIcons.PersonAdd, "Add to contacts", PillMotion.BOUNCE) { NumberActions.addContact(context, address) } else null,
-                PillItem(AppIcons.Copy, "Copy number", PillMotion.BOUNCE) { NumberActions.copy(context, address) },
-                if (NumberActions.canBlock(context)) PillItem(AppIcons.Block, if (blocked) "Unblock" else "Block", PillMotion.DROP) {
+                if (!group) PillItem(AppIcons.Copy, "Copy number", PillMotion.BOUNCE) { NumberActions.copy(context, address) } else null,
+                if (!group && NumberActions.canBlock(context)) PillItem(AppIcons.Block, if (blocked) "Unblock" else "Block", PillMotion.DROP) {
                     if (blocked) {
                         NumberActions.unblock(context, address)
                         blocked = NumberActions.isBlocked(context, address)
@@ -252,7 +273,7 @@ private fun PersonPill(title: String, address: String, contactId: Long?) {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Bubble(m: Message, last: Boolean, onRetry: () -> Unit, onDelete: () -> Unit) {
+private fun Bubble(m: Message, last: Boolean, sender: String?, onRetry: () -> Unit, onDelete: () -> Unit) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     val menu = rememberPillMenu()
@@ -264,7 +285,14 @@ private fun Bubble(m: Message, last: Boolean, onRetry: () -> Unit, onDelete: () 
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Box(Modifier.fillMaxWidth(0.82f).then(menu.tracker), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
+        sender?.let {
+            Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 12.dp, bottom = 2.dp))
+        }
+        m.parts.forEach { part ->
+            MediaTile(part, mine)
+            Spacer(Modifier.height(4.dp))
+        }
+        if (m.body.isNotEmpty() || m.parts.isEmpty()) Box(Modifier.fillMaxWidth(0.82f).then(menu.tracker), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
             val shape = RoundedCornerShape(
                 topStart = 22.dp, topEnd = 22.dp,
                 bottomStart = if (mine) 22.dp else 6.dp, bottomEnd = if (mine) 6.dp else 22.dp
@@ -284,7 +312,7 @@ private fun Bubble(m: Message, last: Boolean, onRetry: () -> Unit, onDelete: () 
                 menu,
                 listOfNotNull(
                     PillItem(AppIcons.Copy, "Copy", PillMotion.BOUNCE) { copy(context, "Message", m.body) },
-                    if (m.box == MessageBox.FAILED) PillItem(AppIcons.Send, "Try again", PillMotion.BOUNCE) { onRetry() } else null,
+                    if (m.box == MessageBox.FAILED && !m.mms) PillItem(AppIcons.Send, "Try again", PillMotion.BOUNCE) { onRetry() } else null,
                     PillItem(AppIcons.Delete, "Delete", PillMotion.DROP) { onDelete() }
                 )
             )
@@ -306,7 +334,7 @@ private fun Bubble(m: Message, last: Boolean, onRetry: () -> Unit, onDelete: () 
         if (mine && (last || m.box == MessageBox.FAILED)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp, end = 6.dp)) {
                 val (icon, word, failed) = when {
-                    m.box == MessageBox.FAILED -> Triple(AppIcons.Error, "Not sent · tap to try again", true)
+                    m.box == MessageBox.FAILED -> Triple(AppIcons.Error, if (m.mms) "Not sent" else "Not sent · tap to try again", true)
                     m.box == MessageBox.SENDING -> Triple(AppIcons.Schedule, "Sending", false)
                     m.delivered -> Triple(AppIcons.DoneAll, "Delivered · " + timeLabel(context, m.date), false)
                     else -> Triple(AppIcons.Done, "Sent · " + timeLabel(context, m.date), false)

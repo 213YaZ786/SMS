@@ -4,15 +4,16 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
+import android.telephony.SubscriptionManager
+import com.sms.app.core.mms.MmsTransport
 
-/**
- * A picture message announced by the network. Downloading and showing
- * them comes in a later version; until then the user is told one arrived.
- */
+/** A picture message announced by the network: it is downloaded at once. */
 class MmsReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.WAP_PUSH_DELIVER_ACTION) return
-        MessageNotifier(context.applicationContext).pictureMessage()
+        val pdu = intent.getByteArrayExtra("data") ?: return
+        val sub = intent.getIntExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, SubscriptionManager.INVALID_SUBSCRIPTION_ID)
+        MmsTransport.download(context, pdu, sub)
     }
 }

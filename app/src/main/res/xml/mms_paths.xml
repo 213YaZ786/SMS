@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picture messages on their way between this app and Android's MMS service, and media opened in another app. -->
+<paths>
+    <cache-path name="mms" path="mms/" />
+    <cache-path name="shared" path="shared/" />
+</paths>
