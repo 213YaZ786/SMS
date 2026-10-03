@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
@@ -48,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -80,6 +82,9 @@ fun Composer(
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var text by rememberSaveable { mutableStateOf(initial) }
+    // Where the cursor is, or what is selected: a style wraps it.
+    var sel by remember { mutableStateOf(androidx.compose.ui.text.TextRange(initial.length)) }
+    var formatting by remember { mutableStateOf(false) }
     // A message taken back before it went comes back into the field.
     androidx.compose.runtime.LaunchedEffect(restore) {
         if (restore != null) {
@@ -194,6 +199,28 @@ fun Composer(
                 }
             }
         }
+        // The styles, over the field: a tap wraps the selection (or the word) in one.
+        androidx.compose.animation.AnimatedVisibility(visible = formatting && text.isNotEmpty() && take == null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                listOf(
+                    com.sms.app.core.sms.Markup.Style.BOLD to AppIcons.FormatBold,
+                    com.sms.app.core.sms.Markup.Style.ITALIC to AppIcons.FormatItalic,
+                    com.sms.app.core.sms.Markup.Style.UNDERLINE to AppIcons.FormatUnderlined,
+                    com.sms.app.core.sms.Markup.Style.STRIKE to AppIcons.FormatStrikethrough
+                ).forEach { (style, icon) ->
+                    FloatingPane(shape = CircleShape, onClick = {
+                        haptics.tick()
+                        val (t, r) = com.sms.app.core.sms.Markup.wrap(text, sel.min, sel.max, style)
+                        text = t
+                        sel = androidx.compose.ui.text.TextRange(r.first, r.last)
+                    }, modifier = Modifier.size(44.dp)) {
+                        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                            Icon(icon, contentDescription = style.name.lowercase(), tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+        }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
             val recording = take
             if (recording != null && recording.locked) {
@@ -246,11 +273,18 @@ fun Composer(
                     }
                 }
             } else FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f).graphicsLayer { alpha = veil }) {
-                Box(Modifier.padding(horizontal = 18.dp, vertical = 15.dp)) {
+              Box {
+                Box(Modifier.padding(start = 18.dp, end = if (text.isNotEmpty()) 44.dp else 18.dp, top = 15.dp, bottom = 15.dp)) {
                     if (text.isEmpty()) Text("Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val faded = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     BasicTextField(
-                        value = text,
-                        onValueChange = { text = it },
+                        value = androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(sel.start.coerceIn(0, text.length), sel.end.coerceIn(0, text.length))),
+                        onValueChange = {
+                            text = it.text
+                            sel = it.selection
+                        },
+                        // The styles show as they are written, their marks faint.
+                        visualTransformation = { raw -> androidx.compose.ui.text.input.TransformedText(markupHint(raw.text, faded), androidx.compose.ui.text.input.OffsetMapping.Identity) },
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         maxLines = 6,
@@ -258,6 +292,17 @@ fun Composer(
                         modifier = Modifier.fillMaxWidth().widthIn(min = 40.dp)
                     )
                 }
+                // Aa: the styles, shown or put away.
+                if (text.isNotEmpty()) Box(
+                    Modifier.align(Alignment.BottomEnd).padding(end = 6.dp, bottom = 6.dp).size(40.dp).clip(CircleShape).clickable(onClickLabel = "Text styles") {
+                        haptics.tick()
+                        formatting = !formatting
+                    },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(AppIcons.TextFormat, contentDescription = "Text styles", tint = if (formatting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+              }
             }
             fun sendVoice(file: java.io.File) {
                 val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
@@ -401,3 +446,23 @@ private fun contactCard(context: android.content.Context, picked: android.net.Ur
         if (c.moveToFirst()) android.net.Uri.withAppendedPath(android.provider.ContactsContract.Contacts.CONTENT_VCARD_URI, c.getString(0)) else null
     }
 }.getOrNull()
+
+/** The text being written with its styles shown and their marks faint, the marks kept in place. */
+private fun markupHint(text: String, faint: androidx.compose.ui.graphics.Color): androidx.compose.ui.text.AnnotatedString =
+    androidx.compose.ui.text.buildAnnotatedString {
+        append(text)
+        val marks = Regex("(?<![\\p{L}\\p{N}])(__|[*_~])(?=\\S)(.+?)(?<=\\S)\\1(?![\\p{L}\\p{N}])")
+        marks.findAll(text).forEach { m ->
+            val mark = m.groupValues[1]
+            val style = when (mark) {
+                "*" -> androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                "_" -> androidx.compose.ui.text.SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+                "__" -> androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)
+                else -> androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough)
+            }
+            val inner = m.groups[2]!!.range
+            addStyle(style, inner.first, inner.last + 1)
+            addStyle(androidx.compose.ui.text.SpanStyle(color = faint), m.range.first, m.range.first + mark.length)
+            addStyle(androidx.compose.ui.text.SpanStyle(color = faint), m.range.last + 1 - mark.length, m.range.last + 1)
+        }
+    }

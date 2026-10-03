@@ -45,7 +45,7 @@ class MessageNotifier(private val context: Context) {
         val name = ContactLookup.nameOf(context, address) ?: Numbers.format(context, address)
         val sender = Person.Builder().setName(name).setKey(address).build()
         val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
-        unread.forEach { (_, body, date) -> style.addMessage(body, date, sender) }
+        unread.forEach { (_, body, date) -> style.addMessage(Markup.plain(body), date, sender) }
         val code = Codes.find(unread.last().second)
         // Someone with a vibration of their own rings on its channel.
         val signature = runCatching {
@@ -154,7 +154,7 @@ class MessageNotifier(private val context: Context) {
         val name = ContactLookup.nameOf(context, phone) ?: Numbers.format(context, phone)
         val sender = Person.Builder().setName(name).setKey(phone).build()
         val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
-            .addMessage(text, System.currentTimeMillis(), sender)
+            .addMessage(Markup.plain(text), System.currentTimeMillis(), sender)
         val builder = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_sms)
             .setStyle(style)

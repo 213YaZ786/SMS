@@ -1092,8 +1092,10 @@ private fun linkOf(found: String): String? {
 }
 
 /**
- * The text with its web links tappable, each opened cleaned of trackers; a
- * doubtful one ([checks]) is red and asks first ([onRisky]).
+ * The text with its styles (*bold*, _italic_, __underline__, ~struck~, the
+ * marks taken away) and its web links tappable, each opened cleaned of
+ * trackers; a doubtful one ([checks]) is in the caution tone and asks
+ * first ([onRisky]).
  */
 private fun linked(
     body: String,
@@ -1102,23 +1104,26 @@ private fun linked(
     checks: Map<String, com.sms.app.core.link.LinkCheck.Verdict> = emptyMap(),
     onRisky: (String, com.sms.app.core.link.LinkCheck.Verdict) -> Unit = { _, _ -> }
 ): AnnotatedString = buildAnnotatedString {
-    val matcher = android.util.Patterns.WEB_URL.matcher(body)
-    var at = 0
-    val style = TextLinkStyles(SpanStyle(color = accent, textDecoration = TextDecoration.Underline))
+    val read = com.sms.app.core.sms.Markup.read(body)
+    append(read.text)
+    read.spans.forEach { span ->
+        val style = when (span.style) {
+            com.sms.app.core.sms.Markup.Style.BOLD -> SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+            com.sms.app.core.sms.Markup.Style.ITALIC -> SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+            com.sms.app.core.sms.Markup.Style.UNDERLINE -> SpanStyle(textDecoration = TextDecoration.Underline)
+            com.sms.app.core.sms.Markup.Style.STRIKE -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+        }
+        addStyle(style, span.start, span.end)
+    }
+    val matcher = android.util.Patterns.WEB_URL.matcher(read.text)
+    val sound = TextLinkStyles(SpanStyle(color = accent, textDecoration = TextDecoration.Underline))
     val doubtful = TextLinkStyles(SpanStyle(color = danger, textDecoration = TextDecoration.Underline))
     while (matcher.find()) {
-        val found = matcher.group()
-        val url = linkOf(found) ?: continue
-        append(body.substring(at, matcher.start()))
+        val url = linkOf(matcher.group()) ?: continue
         val verdict = checks[url]
-        if (verdict == null) {
-            withLink(LinkAnnotation.Url(LinkCleaner.clean(url), style)) { append(found) }
-        } else {
-            withLink(LinkAnnotation.Clickable(url, doubtful) { onRisky(url, verdict) }) { append(found) }
-        }
-        at = matcher.end()
+        if (verdict == null) addLink(LinkAnnotation.Url(LinkCleaner.clean(url), sound), matcher.start(), matcher.end())
+        else addLink(LinkAnnotation.Clickable(url, doubtful) { onRisky(url, verdict) }, matcher.start(), matcher.end())
     }
-    append(body.substring(at))
 }
 
 /**
