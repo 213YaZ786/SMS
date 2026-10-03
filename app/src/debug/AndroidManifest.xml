@@ -2,8 +2,8 @@
 <!-- Debug builds only: a way for tests to hand the app an invite. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
-        <receiver android:name="com.sms.app.DebugHelloReceiver" android:exported="true" />
-        <receiver android:name="com.sms.app.DebugBulkReceiver" android:exported="true" />
-        <receiver android:name="com.sms.app.DebugSpeakReceiver" android:exported="true" />
+        <receiver android:name="com.yaz.sms.DebugHelloReceiver" android:exported="true" />
+        <receiver android:name="com.yaz.sms.DebugBulkReceiver" android:exported="true" />
+        <receiver android:name="com.yaz.sms.DebugSpeakReceiver" android:exported="true" />
     </application>
 </manifest>

@@ -15,19 +15,19 @@ val whisperRoot = layout.buildDirectory.dir("whisper").get().asFile
 val whisperSrc = File(whisperRoot, "whisper.cpp-$whisperVersion")
 
 android {
-    namespace = "com.sms.app"
+    namespace = "com.yaz.sms"
     // 37 because Compose compiles against it, and the phone app follows the
     // newest platform rules for calls, notifications and permissions.
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.sms.app"
+        applicationId = "com.yaz.sms"
         minSdk = 31
         targetSdk = 37
-        versionCode = 19
-        versionName = "0.10.4"
-        // The package SMS moves to, handed its files over (core/handover).
-        manifestPlaceholders["successor"] = "com.yaz.sms"
+        versionCode = 18
+        versionName = "0.10.3"
+        // The package SMS came from: its files are taken over at the first start (core/handover).
+        manifestPlaceholders["predecessor"] = "com.sms.app"
         // Voice messages written out on the phone: whisper.cpp, for 64-bit ARM phones.
         externalNativeBuild {
             cmake {
@@ -58,7 +58,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            manifestPlaceholders["successor"] = "com.yaz.sms.debug"
+            manifestPlaceholders["predecessor"] = "com.sms.app.debug"
             versionNameSuffix = "-debug"
         }
         release {

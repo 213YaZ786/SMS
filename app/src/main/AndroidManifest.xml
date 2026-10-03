@@ -3,8 +3,8 @@
 
     <!-- One request to GitHub when the app opens, for the newest release. Nothing else goes out. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Only an app signed with SMS's own key may take its files over: its successor. -->
-    <permission android:name="${applicationId}.permission.HANDOVER" android:protectionLevel="signature" />
+    <!-- The old SMS (com.sms.app) hands its files over to this one, signed with the same key, once. -->
+    <uses-permission android:name="${predecessor}.permission.HANDOVER" />
     <!-- Only used when the user chooses to install updates from the app; Android asks them then. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- New messages, and the note after an update. -->
@@ -46,6 +46,9 @@
 
     <!-- Dialer, when installed, shows the calls with a number. -->
     <queries>
+        <!-- The old SMS, to take its files over and offer to remove it. -->
+        <package android:name="${predecessor}" />
+        <provider android:authorities="${predecessor}.handover" />
         <intent>
             <action android:name="com.dialer.app.action.SHOW_NUMBER" />
             <data android:scheme="tel" />
@@ -65,13 +68,8 @@
         android:enableOnBackInvokedCallback="false"
         android:usesCleartextTraffic="false"
         android:networkSecurityConfig="@xml/network_security_config">
-        <!-- SMS moves to a new package: the one it hands its files over to. -->
-        <meta-data android:name="handover.successor" android:value="${successor}" />
-        <provider
-            android:name=".core.handover.HandoverProvider"
-            android:authorities="${applicationId}.handover"
-            android:exported="true"
-            android:permission="${applicationId}.permission.HANDOVER" />
+        <!-- The package SMS came from (core/handover). -->
+        <meta-data android:name="handover.predecessor" android:value="${predecessor}" />
 
         <activity
             android:name=".MainActivity"

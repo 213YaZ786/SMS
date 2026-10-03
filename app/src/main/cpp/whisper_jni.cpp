@@ -8,7 +8,7 @@
 extern "C" {
 
 JNIEXPORT jlong JNICALL
-Java_com_sms_app_core_voice_Whisper_open(JNIEnv *env, jclass, jstring lib_dir, jstring model) {
+Java_com_yaz_sms_core_voice_Whisper_open(JNIEnv *env, jclass, jstring lib_dir, jstring model) {
     const char *dir = env->GetStringUTFChars(lib_dir, nullptr);
     // The CPU variants live with the app's own libraries; the best one for this phone is taken.
     static bool loaded = false;
@@ -26,7 +26,7 @@ Java_com_sms_app_core_voice_Whisper_open(JNIEnv *env, jclass, jstring lib_dir, j
 }
 
 JNIEXPORT jbyteArray JNICALL
-Java_com_sms_app_core_voice_Whisper_transcribe(JNIEnv *env, jclass, jlong handle, jfloatArray pcm, jint threads) {
+Java_com_yaz_sms_core_voice_Whisper_transcribe(JNIEnv *env, jclass, jlong handle, jfloatArray pcm, jint threads) {
     auto *ctx = reinterpret_cast<whisper_context *>(handle);
     if (ctx == nullptr) return nullptr;
     whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
@@ -55,7 +55,7 @@ Java_com_sms_app_core_voice_Whisper_transcribe(JNIEnv *env, jclass, jlong handle
 }
 
 JNIEXPORT void JNICALL
-Java_com_sms_app_core_voice_Whisper_close(JNIEnv *, jclass, jlong handle) {
+Java_com_yaz_sms_core_voice_Whisper_close(JNIEnv *, jclass, jlong handle) {
     auto *ctx = reinterpret_cast<whisper_context *>(handle);
     if (ctx != nullptr) whisper_free(ctx);
 }

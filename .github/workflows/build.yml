@@ -154,7 +154,7 @@ jobs:
             android.permission.RECEIVE_BOOT_COMPLETED \
             android.permission.FOREGROUND_SERVICE \
             android.permission.FOREGROUND_SERVICE_DATA_SYNC \
-            com.sms.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION > allowed.txt
+            com.yaz.sms.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION > allowed.txt
           # One line per element first: a uses-permission may span lines.
           tr '\n' ' ' < app/src/main/AndroidManifest.xml \
             | grep -oP '<uses-permission[^>]*?android:name="\K[^"]+' >> allowed.txt || true

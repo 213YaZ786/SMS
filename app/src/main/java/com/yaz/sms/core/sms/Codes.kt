@@ -1,0 +1,38 @@
+package com.yaz.sms.core.sms
+
+/**
+ * The one-time code in a message, when it carries one: 4 to 8 digits (a
+ * space or a dash may split them in two) in a message that says it is a
+ * code. Dates, amounts and phone numbers are left alone.
+ */
+object Codes {
+
+    // Words that say a message carries a code, in the languages most texts come in.
+    private val Words = Regex(
+        "\\b(code|codes|otp|pin|passcode|password|verification|verify|login|sign[- ]?in|2fa|one[- ]time|" +
+            "mot de passe|vérification|connexion|" +
+            "código|clave|contraseña|verificación|" +
+            "codice|verifica|accesso|" +
+            "senha|verificação|" +
+            "bestätigungscode|sicherheitscode|einmalcode|passwort|kennwort|tan|" +
+            "verificatiecode|wachtwoord|inlogcode|" +
+            "kod|hasło|weryfikacyjny|doğrulama|şifre|kode|engangskode|lösenord|vahvistuskoodi)\\b|" +
+            "код|пароль|验证码|驗證碼|認証コード|確認コード|인증번호|رمز|कोड|ओटीपी",
+        RegexOption.IGNORE_CASE
+    )
+
+    // Not inside a longer number, an amount, a date or an hour: a dot or a
+    // colon only counts when a digit stands on its other side.
+    private const val START = "(?<![\\d+€$£¥₹₽₺₩])(?<!\\d[.,/:-])"
+    private const val END = "(?![\\d€$£¥₹₽₺₩%])(?![.,/:]\\d)"
+    private val Candidate = Regex("$START(\\d{3,4})[ -]?(\\d{3,4})$END|$START(\\d{4,8})$END")
+
+    fun find(text: String): String? {
+        if (!Words.containsMatchIn(text)) return null
+        for (m in Candidate.findAll(text)) {
+            val code = if (m.groups[3] != null) m.groupValues[3] else m.groupValues[1] + m.groupValues[2]
+            if (code.length in 4..8) return code
+        }
+        return null
+    }
+}

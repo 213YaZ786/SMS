@@ -1,0 +1,98 @@
+package com.yaz.sms.data.settings
+
+import android.content.Context
+import com.yaz.sms.core.common.writeTextAtomically
+import com.yaz.sms.core.update.UpdateMode
+import java.io.File
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+@Serializable
+enum class ThemeMode { SYSTEM, LIGHT, DARK }
+
+@Serializable
+data class Settings(
+    /**
+     * What happens when a newer version is out, checked once when the app
+     * opens. Installing by default: the first launch page says so, and that
+     * this one request is the app's only use of the internet.
+     */
+    val updates: UpdateMode = UpdateMode.INSTALL,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    /** True black instead of dark grey in dark mode. */
+    val pureBlack: Boolean = false,
+    /** Zones and floating controls in liquid glass, over a soft light in the wallpaper's colours. */
+    val glass: Boolean = true,
+    /** Multiplier on every text style, one of the steps in ui.theme.TEXT_SCALES. */
+    val textScale: Float = 1f,
+    /** The first launch page was closed. */
+    val welcomeSeen: Boolean = false,
+    /** The app's picture in the recent apps screen stays blank: no messages to be seen there. */
+    val hideInRecents: Boolean = true,
+    /** Where the user left the new message button, fractions of its room; below 0, its usual place. */
+    val composeX: Float = -1f,
+    val composeY: Float = -1f,
+    /** The little show of the new message button moving was seen. */
+    val composeHintSeen: Boolean = false,
+    /** Conversations set aside until a time: thread id to when they come back. */
+    val later: Map<Long, Long> = emptyMap(),
+    /** A vibration of their own for some people, by the last nine digits of their number. */
+    val signatures: Map<String, String> = emptyMap(),
+    /** Seconds a message waits before it goes, to take it back with a tap; 0 sends at once. */
+    val undoSeconds: Int = 4,
+    /** Encrypted chat with other SMS users, over a chatmail relay. */
+    val richChat: Boolean = true,
+    /**
+     * The chatmail relay chosen by hand; empty for automatic: the one that
+     * answers fastest, and others added behind it in case it fails.
+     */
+    val relay: String = "",
+    /** Messages from the ranges kept for sales are kept apart, without a notification. */
+    val quietSales: Boolean = false,
+    /** Conversations pinned on top, by thread id. */
+    val pinned: List<Long> = emptyList(),
+    /** Conversations put away, thread id to when: out of the list until a newer message comes. */
+    val archived: Map<Long, Long> = emptyMap(),
+    /** Names given to group conversations, by thread id. */
+    val groupNames: Map<Long, String> = emptyMap(),
+    /** Links are also looked up in a public list of dangerous sites, fetched once a day. */
+    val checkLinks: Boolean = true,
+    /** Conversations without notifications, by thread id, until when (Long.MAX_VALUE: until turned back on). */
+    val silenced: Map<Long, Long> = emptyMap(),
+    /** A conversation's background, by thread id: a scene's code or a photo's colours. */
+    val backgrounds: Map<Long, String> = emptyMap(),
+    /** Voice messages written out under them, on the phone only. */
+    val transcribeVoice: Boolean = true,
+    /** The speech model chosen; empty: the one recommended for this phone. */
+    val speechModel: String = ""
+)
+
+/**
+ * Small preference file, plain JSON written atomically, like the other apps.
+ * Nothing here is a secret, and none of it leaves the device.
+ */
+class SettingsStore(context: Context) {
+
+    private val file = File(context.filesDir, "settings.json")
+    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+
+    private val _settings = MutableStateFlow(load())
+    val settings: StateFlow<Settings> = _settings.asStateFlow()
+
+    val current: Settings get() = _settings.value
+
+    private fun load(): Settings {
+        if (!file.exists()) return Settings()
+        return runCatching { json.decodeFromString<Settings>(file.readText()) }
+            .getOrDefault(Settings())
+    }
+
+    fun update(transform: (Settings) -> Settings) {
+        val updated = transform(_settings.value)
+        _settings.value = updated
+        runCatching { file.writeTextAtomically(json.encodeToString(updated)) }
+    }
+}
