@@ -8,6 +8,12 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// whisper.cpp, the engine that writes voice messages out: see fetchWhisper below.
+val whisperVersion = "1.9.4"
+val whisperSha = "57e280cee375ab02425b806ad5146b99f6eb9357e3c2b31357c8a6af2e2e44ae"
+val whisperRoot = layout.buildDirectory.dir("whisper").get().asFile
+val whisperSrc = File(whisperRoot, "whisper.cpp-$whisperVersion")
+
 android {
     namespace = "com.sms.app"
     // 37 because Compose compiles against it, and the phone app follows the
@@ -18,8 +24,21 @@ android {
         applicationId = "com.sms.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 14
-        versionName = "0.9.0"
+        versionCode = 15
+        versionName = "0.10.0"
+        // Voice messages written out on the phone: whisper.cpp, for 64-bit ARM phones.
+        externalNativeBuild {
+            cmake {
+                abiFilters("arm64-v8a")
+                arguments("-DWHISPER_SRC=${whisperSrc.absolutePath}", "-DANDROID_STL=c++_shared")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     signingConfigs {
@@ -105,6 +124,34 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
+}
+
+// whisperVersion and its source's checksum are pinned at the top.
+// The engine that writes voice messages out: whisper.cpp (MIT,
+// github.com/ggml-org/whisper.cpp), its source fetched at the pinned
+// release and checked against its SHA-256, then compiled here; the speech
+// model itself is fetched by the app, only when the user asks for it.
+val fetchWhisper by tasks.registering {
+    val root = whisperRoot
+    val src = whisperSrc
+    val version = whisperVersion
+    val sha = whisperSha
+    inputs.property("version", version)
+    outputs.dir(src)
+    doLast {
+        if (File(src, "CMakeLists.txt").exists()) return@doLast
+        val bytes = URI("https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v$version.tar.gz").toURL().openStream().use { it.readBytes() }
+        val got = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        check(got == sha) { "whisper.cpp: checksum does not match" }
+        root.mkdirs()
+        val archive = File(root, "whisper.tar.gz").apply { writeBytes(bytes) }
+        val tar = ProcessBuilder("tar", "xzf", archive.path, "-C", root.path).inheritIO().start()
+        check(tar.waitFor() == 0) { "whisper.cpp: could not unpack" }
+        archive.delete()
+    }
+}
+tasks.configureEach {
+    if (name.startsWith("configureCMake") || name.startsWith("buildCMake") || name.startsWith("generateJsonModel")) dependsOn(fetchWhisper)
 }
 
 // The engine of the rich chat: chatmail core's own Android build of
