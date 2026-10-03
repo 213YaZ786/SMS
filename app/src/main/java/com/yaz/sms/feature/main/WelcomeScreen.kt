@@ -118,17 +118,19 @@ fun WelcomeScreen(onStart: () -> Unit) {
             onAction = {}
         )
         Spacer(Modifier.height(16.dp))
+        val chatFolded = remember(checks) {
+            context.getSystemService(android.app.NotificationManager::class.java)
+                .getNotificationChannel(com.yaz.sms.core.chat.ChatService.CHANNEL)?.let { it.importance <= android.app.NotificationManager.IMPORTANCE_MIN } == true
+        }
         WelcomeZone(
             icon = AppIcons.Lock,
             title = "Encrypted chat",
-            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay. A silent notification keeps it connected: Android shows it for any app that stays connected, and only you can hide it or fold it to one line.",
+            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay. A silent notification keeps it connected; minimized, it folds to one line and its icon leaves the top of the screen.",
             // Read again on coming back from Android's page.
-            done = !settings.richChat || remember(checks) {
-                context.getSystemService(android.app.NotificationManager::class.java)
-                    .getNotificationChannel(com.yaz.sms.core.chat.ChatService.CHANNEL)?.let { it.importance <= android.app.NotificationManager.IMPORTANCE_MIN } == true
-            },
-            action = "Hide or fold it",
+            done = !settings.richChat || chatFolded,
+            action = "Minimize it",
             onAction = { com.yaz.sms.core.chat.ChatService.hideNotice(context) },
+            extra = if (settings.richChat && !chatFolded) ({ MinimizeDemo(Modifier.padding(top = 4.dp)) }) else null,
             toggle = settings.richChat,
             onToggle = { on -> store.update { it.copy(richChat = on) } }
         )
