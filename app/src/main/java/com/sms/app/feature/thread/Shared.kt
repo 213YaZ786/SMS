@@ -67,7 +67,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
 /** What two people sent each other, as the Shared page lists it. */
-private sealed class Item(val date: Long) {
+internal sealed class Item(val date: Long) {
     class Picture(val part: MmsPart, date: Long) : Item(date)
     class File(val part: MmsPart, date: Long) : Item(date)
     class Link(val url: String, val doubtful: LinkCheck.Verdict?, date: Long) : Item(date)
@@ -76,7 +76,7 @@ private sealed class Item(val date: Long) {
     class Meeting(val at: LocalDateTime, val text: String, date: Long) : Item(date)
 }
 
-private enum class Kind(val label: String, val icon: ImageVector) {
+internal enum class Kind(val label: String, val icon: ImageVector) {
     PICTURES("Photos", AppIcons.Image),
     FILES("Files", AppIcons.AttachFile),
     LINKS("Links", AppIcons.Forward),
@@ -85,7 +85,7 @@ private enum class Kind(val label: String, val icon: ImageVector) {
     CODES("Codes", AppIcons.Lock)
 }
 
-private fun kindOf(item: Item) = when (item) {
+internal fun kindOf(item: Item) = when (item) {
     is Item.Picture -> Kind.PICTURES
     is Item.File -> Kind.FILES
     is Item.Link -> Kind.LINKS
@@ -95,7 +95,7 @@ private fun kindOf(item: Item) = when (item) {
 }
 
 /** Everything worth finding again in [messages], newest first. */
-private fun gather(messages: List<Message>, stranger: (Message) -> Boolean): List<Item> = messages.sortedByDescending { it.date }.flatMap { m ->
+internal fun gather(messages: List<Message>, stranger: (Message) -> Boolean): List<Item> = messages.sortedByDescending { it.date }.flatMap { m ->
     buildList {
         m.parts.forEach { part ->
             when {
@@ -117,10 +117,10 @@ private fun gather(messages: List<Message>, stranger: (Message) -> Boolean): Lis
  * each acts as it does in the conversation (open, copy, add to calendar).
  */
 @Composable
-fun SharedPage(name: String, messages: List<Message>, stranger: (Message) -> Boolean, onClose: () -> Unit) {
+internal fun SharedPage(name: String, messages: List<Message>, stranger: (Message) -> Boolean, start: Kind? = null, onClose: () -> Unit) {
     val items = remember(messages) { gather(messages, stranger) }
     val kinds = remember(items) { Kind.entries.filter { k -> items.any { kindOf(it) == k } } }
-    var only by remember { mutableStateOf<Kind?>(null) }
+    var only by remember { mutableStateOf(start) }
     val shown = items.filter { only == null || kindOf(it) == only }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
@@ -177,7 +177,7 @@ private fun Chip(label: String, chosen: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PictureCell(part: MmsPart, modifier: Modifier) {
+internal fun PictureCell(part: MmsPart, modifier: Modifier) {
     var large by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val image by rememberPicture(part.uri, 360)
@@ -196,7 +196,7 @@ private fun PictureCell(part: MmsPart, modifier: Modifier) {
 
 /** One thing shared, on a line of glass: what it is, when, and what a tap does. */
 @Composable
-private fun Line(item: Item) {
+internal fun Line(item: Item) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var risky by remember { mutableStateOf<Pair<String, LinkCheck.Verdict>?>(null) }

@@ -242,9 +242,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val calls = rememberCallChoices(to, linked != null, canCall)
     val rows = remember(list) { rowsOf(list) }
-    // The conversation's tools: search, what was shared, silence, a reminder to reply.
-    var toolsOpen by remember { mutableStateOf(false) }
-    var toolsBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    // The person's page, opened from their face: the calls, the tools, what was shared.
+    var personOpen by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var at by remember { mutableStateOf(0) }
@@ -266,18 +265,6 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
         runCatching { listState.animateScrollToItem(before + rows.size - 1 - row) }
     }
-    if (toolsOpen) PaletteMenu(
-        toolsBounds,
-        listOfNotNull(
-            calls.encrypted?.let { MessageAction(AppIcons.Lock, "Encrypted call") { it() } },
-            calls.video?.let { MessageAction(AppIcons.Videocam, "Video call") { it() } },
-            MessageAction(AppIcons.Search, "Search") { searching = true },
-            MessageAction(AppIcons.Collections, "Shared") { sharedOpen = true },
-            if (thread != null) MessageAction(if (silencedUntil != null) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silencedUntil != null) "Silenced" else "Silence") { silenceOpen = true } else null,
-            if (thread != null) MessageAction(AppIcons.Schedule, "Remind me") { remindOpen = true } else null
-        ),
-        onDismiss = { toolsOpen = false }
-    )
     if (silenceOpen && thread != null) SilenceDialog(silencedUntil, onPick = { until ->
         val t = thread ?: return@SilenceDialog
         store.update { s -> s.copy(silenced = if (until == null) s.silenced - t else s.silenced.filterValues { it > System.currentTimeMillis() } + (t to until)) }
@@ -293,6 +280,33 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         onDismiss = { remindOpen = false }
     )
     if (encryptionOpen) EncryptionDialog(to) { encryptionOpen = false }
+    if (personOpen) PersonPage(
+        name = if (group) title else entry?.name ?: Numbers.format(context, to),
+        number = if (group) null else Numbers.format(context, to),
+        address = to,
+        photo = entry?.photo,
+        contactId = entry?.contactId,
+        group = group,
+        encrypted = encrypted,
+        vanish = if (encrypted) vanish else null,
+        messages = list,
+        stranger = { m -> index.find(T9.clean(m.address)) == null },
+        calls = calls,
+        silencedUntil = silencedUntil,
+        onSearch = { searching = true },
+        onSilence = { silenceOpen = true },
+        onRemind = if (thread != null) ({ remindOpen = true }) else null,
+        onEncryption = { encryptionOpen = true },
+        onName = { name ->
+            thread?.let { t ->
+                store.update { s -> s.copy(groupNames = if (name.isBlank()) s.groupNames - t else s.groupNames + (t to name.trim())) }
+                if (encrypted && name.isNotBlank()) scope.launch { chat.nameGroup(people, name.trim()) }
+            }
+        },
+        onVanish = { seconds -> scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds } },
+        onClose = { personOpen = false }
+    )
+    LaunchedEffect(personOpen) { if (personOpen && window < 5000) window = 5000 }
     if (sharedOpen) {
         // Everything the conversation holds, not only what the screen shows.
         LaunchedEffect(Unit) { if (window < 5000) window = 5000 }
@@ -303,27 +317,20 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         top = {
             // Back, the person's face and name, and the calls one tap away on the right.
           Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                FloatingAction(AppIcons.ArrowBack, "Back", onBack)
-                Spacer(Modifier.width(8.dp))
-                Box(Modifier.onGloballyPositioned { toolsBounds = it.boundsInWindow() }) { ToolsButton { toolsOpen = true } }
-                Box(Modifier.weight(1f).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-                    PersonPill(
-                        title, to, entry?.contactId, group, vanish = if (encrypted) vanish else null,
-                        under = if (encrypted) (if (vanish > 0) "Encrypted · vanish after ${vanishLabel(vanish)}" else "Encrypted chat") else null,
-                        face = if (group) null else (entry?.name ?: title) to entry?.photo,
-                        onUnder = if (encrypted && !group) ({ encryptionOpen = true }) else null,
-                        onName = { name ->
-                            val t = thread ?: return@PersonPill
-                            store.update { s -> s.copy(groupNames = if (name.isBlank()) s.groupNames - t else s.groupNames + (t to name.trim())) }
-                            if (encrypted && name.isNotBlank()) scope.launch { chat.nameGroup(people, name.trim()) }
-                        }
-                    ) { seconds ->
-                        scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds }
-                    }
+            // Back, the person's face and name at the centre (their page a tap away), the green call.
+            Box(Modifier.fillMaxWidth().padding(start = 16.dp, end = 20.dp, top = 8.dp, bottom = 4.dp)) {
+                Box(Modifier.align(Alignment.TopStart)) { FloatingAction(AppIcons.ArrowBack, "Back", onBack) }
+                Box(Modifier.align(Alignment.TopCenter).padding(horizontal = 60.dp)) {
+                    NameBlock(
+                        name = title,
+                        photo = if (group) null else entry?.photo,
+                        encrypted = encrypted,
+                        onOpen = { personOpen = true }
+                    )
                 }
-                CallButtons(calls)
+                Box(Modifier.align(Alignment.TopEnd).padding(top = 2.dp)) { CallButtons(calls) }
             }
+
             androidx.compose.animation.AnimatedVisibility(visible = searching) {
                 SearchBar(query, { query = it }, matches.size, at, onOlder = { if (matches.isNotEmpty()) at = (at + 1) % matches.size }, onNewer = { if (matches.isNotEmpty()) at = (at - 1 + matches.size) % matches.size }, onClose = {
                     searching = false
@@ -957,7 +964,7 @@ private fun forward(context: android.content.Context, text: String) {
 
 /** A group's name, written by hand; empty gives back the list of its members. */
 @Composable
-private fun GroupNameDialog(current: String, onDone: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun GroupNameDialog(current: String, onDone: (String) -> Unit, onDismiss: () -> Unit) {
     var name by remember { mutableStateOf(current) }
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
@@ -976,7 +983,7 @@ private fun GroupNameDialog(current: String, onDone: (String) -> Unit, onDismiss
 }
 
 /** 5 min, 1 hour, 1 day, 1 week. */
-private fun vanishLabel(seconds: Int): String = when {
+internal fun vanishLabel(seconds: Int): String = when {
     seconds < 3600 -> "${seconds / 60} min"
     seconds < 86_400 -> if (seconds == 3600) "1 hour" else "${seconds / 3600} hours"
     seconds < 604_800 -> if (seconds == 86_400) "1 day" else "${seconds / 86_400} days"
@@ -985,7 +992,7 @@ private fun vanishLabel(seconds: Int): String = when {
 
 /** How long messages last in this chat, for both sides. */
 @Composable
-private fun VanishDialog(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+internal fun VanishDialog(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Vanishing messages") },
@@ -1239,7 +1246,7 @@ private fun PendingBubble(p: Pending, seconds: Int, modifier: Modifier, onCancel
 
 /** A vibration of their own for this person: felt while choosing. */
 @Composable
-private fun SignatureDialog(address: String, onDismiss: () -> Unit) {
+internal fun SignatureDialog(address: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val store: SettingsStore = koinInject()
     val settings by store.settings.collectAsState()

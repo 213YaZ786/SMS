@@ -56,33 +56,6 @@ import kotlin.math.sin
 import org.koin.compose.koinInject
 
 /**
- * The conversation's tools behind one round button: four dots that
- * breathe one after the other, so it reads as something that opens.
- */
-@Composable
-fun ToolsButton(onClick: () -> Unit) {
-    val haptics = rememberHaptics()
-    val t by rememberInfiniteTransition(label = "tools").animateFloat(0f, 1f, infiniteRepeatable(tween(2800, easing = LinearEasing)), label = "t")
-    val accent = MaterialTheme.colorScheme.primary
-    FloatingPane(shape = CircleShape, onClick = {
-        haptics.tick()
-        onClick()
-    }) {
-        Canvas(Modifier.size(48.dp)) {
-            val gap = 7.dp.toPx()
-            val base = 2.6.dp.toPx()
-            val c = Offset(size.width / 2, size.height / 2)
-            listOf(Offset(-1f, -1f), Offset(1f, -1f), Offset(1f, 1f), Offset(-1f, 1f)).forEachIndexed { i, d ->
-                // Each dot swells in turn, then all rest a while.
-                val phase = ((t * 1.6f - i * 0.12f) % 1f + 1f) % 1f
-                val beat = if (phase < 0.25f) sin(phase / 0.25f * PI).toFloat() else 0f
-                drawCircle(accent, radius = base * (1f + 0.45f * beat), center = c + Offset(d.x * gap, d.y * gap))
-            }
-        }
-    }
-}
-
-/**
  * How the chat with [phone] is protected: what is encrypted and how, both
  * keys' fingerprints to compare on the two phones, and the relays.
  */

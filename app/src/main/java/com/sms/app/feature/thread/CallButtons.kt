@@ -40,7 +40,7 @@ class CallChoices(val phone: (() -> Unit)?, val encrypted: (() -> Unit)?, val vi
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun GlassCallButton(icon: ImageVector, label: String, color: Color, onTap: () -> Unit, iconTint: Color = Color.White, holdLabel: String? = null, onHold: (() -> Unit)? = null) {
+fun GlassCallButton(icon: ImageVector, label: String, color: Color, onTap: () -> Unit, iconTint: Color = Color.White, holdLabel: String? = null, onHold: (() -> Unit)? = null, diameter: androidx.compose.ui.unit.Dp = 48.dp) {
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
     val swell = remember { Animatable(1f) }
@@ -56,7 +56,7 @@ fun GlassCallButton(icon: ImageVector, label: String, color: Color, onTap: () ->
     }
     Box(
         Modifier
-            .size(48.dp)
+            .size(diameter)
             // The ring of its colour, leaving it as it acts.
             .drawBehind {
                 val t = ring.value
@@ -91,5 +91,5 @@ fun GlassCallButton(icon: ImageVector, label: String, color: Color, onTap: () ->
  */
 @Composable
 fun CallButtons(choices: CallChoices) {
-    choices.phone?.let { phone -> GlassCallButton(AppIcons.Call, "Call", CallGreen, phone) }
+    choices.phone?.let { phone -> GlassCallButton(AppIcons.Call, "Call", CallGreen, phone, diameter = 44.dp) }
 }
