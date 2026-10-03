@@ -28,7 +28,7 @@ object ContactLook {
     data class Look(val color: Int?, val vibration: String?)
 
     /** The Contacts app, release first. */
-    private val packages = listOf("com.contacts.app", "com.contacts.app.debug")
+    private val packages = listOf("com.contact.app", "com.contact.app.debug")
 
     fun of(context: Context, contactId: Long): Look? {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return null

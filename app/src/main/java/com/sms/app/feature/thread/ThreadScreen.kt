@@ -1,6 +1,7 @@
 package com.sms.app.feature.thread
 
 import kotlinx.coroutines.delay
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
@@ -146,7 +147,15 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val look = rememberSceneLook(chosen ?: personColor?.let { colorCode(it) }, base)
     androidx.compose.runtime.CompositionLocalProvider(com.sms.app.ui.glass.LocalGlass provides look) {
         Box(Modifier.fillMaxSize()) {
-            ThreadContent(threadId, address, draft, onBack, base, onThread = { shownThread = it })
+            // A photo chosen for this conversation, under everything.
+            val picture by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, chosen, shownThread) {
+                value = shownThread?.takeIf { chosen?.startsWith(PHOTO) == true }?.let { t ->
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching { android.graphics.BitmapFactory.decodeFile(pictureFile(context, t).path)?.asImageBitmap() }.getOrNull()
+                    }
+                }
+            }
+            ThreadContent(threadId, address, draft, onBack, base, picture, onThread = { shownThread = it })
             SceneWash(look)
         }
     }
@@ -159,6 +168,7 @@ private fun ThreadContent(
     draft: String,
     onBack: () -> Unit,
     appLook: com.sms.app.ui.glass.GlassLook?,
+    picture: androidx.compose.ui.graphics.ImageBitmap?,
     onThread: (Long?) -> Unit
 ) {
     val context = LocalContext.current
@@ -352,7 +362,10 @@ private fun ThreadContent(
         base = appLook,
         theirPhoto = if (group) null else entry?.photo,
         theirColor = if (group) null else theirColor,
+        picture = pictureFile(context, thread!!),
         onPick = { code ->
+            // A photo no longer used goes from the phone.
+            if (code?.startsWith(PHOTO) != true) thread?.let { pictureFile(context, it).delete() }
             backgroundOpen = false
             val t = thread ?: return@BackgroundSheet
             store.update { s -> s.copy(backgrounds = if (code == null) s.backgrounds - t else s.backgrounds + (t to code)) }
@@ -510,8 +523,9 @@ private fun ThreadContent(
         }
     ) { padding ->
         val inset = LocalReadableInset.current
-        // The person's light behind the conversation: their photo, blurred, or a glow of the accent.
-        HeroGlow(if (group) null else entry?.photo, height = padding.calculateTopPadding() + 320.dp)
+        // The conversation's own photo when one was chosen; else the person's light: their photo, blurred, or a glow.
+        if (picture != null) PictureGround(picture, com.sms.app.ui.glass.LocalGlass.current?.ground ?: MaterialTheme.colorScheme.background)
+        else HeroGlow(if (group) null else entry?.photo, height = padding.calculateTopPadding() + 320.dp)
         // Near the oldest message shown, with more behind it: read the next page.
         val nearTop by remember { derivedStateOf { (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= listState.layoutInfo.totalItemsCount - 15 } }
         LaunchedEffect(nearTop, list.size) { if (nearTop && list.size >= window) window += Messages.PAGE }

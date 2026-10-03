@@ -34,7 +34,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -174,8 +176,23 @@ internal fun rememberSceneLook(code: String?, base: GlassLook?): GlassLook? {
     return remember(code, base, hour) { sceneLook(code, base, hour) }
 }
 
-/** The main colours of a picture, read small (40 pixels across) and let go at once. */
-private fun photoLight(context: Context, uri: Uri): String? = runCatching {
+/** Where a conversation's own photo is kept: the app's private files, never shared. */
+internal fun pictureFile(context: Context, thread: Long) = java.io.File(context.filesDir, "backgrounds/$thread.jpg")
+
+/**
+ * A photo as a conversation's background: kept small (1440 pixels at most)
+ * in [save], and its main colours for the glass, read 40 pixels across.
+ */
+private fun photoLight(context: Context, uri: Uri, save: java.io.File): String? = runCatching {
+    val picture = ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
+        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        val scale = (1440f / max(info.size.width, info.size.height)).coerceAtMost(1f)
+        decoder.setTargetSize(max(1, (info.size.width * scale).toInt()), max(1, (info.size.height * scale).toInt()))
+    }
+    save.parentFile?.mkdirs()
+    // Only the pixels: no place, camera or date comes along.
+    save.outputStream().use { picture.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) }
+    picture.recycle()
     val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
         decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
         val scale = 40f / max(info.size.width, info.size.height)
@@ -188,12 +205,29 @@ private fun photoLight(context: Context, uri: Uri): String? = runCatching {
     if (lights.isEmpty()) null else PHOTO + PhotoLight.encode(lights)
 }.getOrNull()
 
+/** The conversation's photo, drawn under everything: softened and veiled in its light so words stay easy to read. */
+@Composable
+internal fun PictureGround(picture: androidx.compose.ui.graphics.ImageBitmap, veil: Color) {
+    val show = remember { Animatable(0f) }
+    LaunchedEffect(picture) { show.animateTo(1f, tween(500)) }
+    androidx.compose.foundation.Image(
+        picture,
+        contentDescription = null,
+        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+        modifier = Modifier.fillMaxSize().graphicsLayer { alpha = show.value }.blur(6.dp)
+            .drawWithContent {
+                drawContent()
+                drawRect(veil.copy(alpha = 0.38f))
+            }
+    )
+}
+
 /**
  * The backgrounds to choose from, each a small picture of a conversation
- * in its light; a photo gives its colours, never itself.
+ * in its light; a photo is kept for this conversation, its colours for the glass.
  */
 @Composable
-internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: String?, theirColor: Int?, onPick: (String?) -> Unit, onDismiss: () -> Unit) {
+internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: String?, theirColor: Int?, picture: java.io.File, onPick: (String?) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
@@ -201,7 +235,7 @@ internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: Stri
     fun fromPhoto(uri: Uri) {
         reading = true
         scope.launch {
-            val code = withContext(Dispatchers.IO) { photoLight(context, uri) }
+            val code = withContext(Dispatchers.IO) { photoLight(context, uri, picture) }
             reading = false
             if (code != null) {
                 haptics.done()

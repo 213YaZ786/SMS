@@ -55,14 +55,16 @@ class ChatService : Service(), KoinComponent {
 
     private fun notice(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Connection", NotificationManager.IMPORTANCE_MIN))
+        // No dot on the app's icon and no bubble: nothing here looks like a message.
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Encrypted chat connection", NotificationManager.IMPORTANCE_MIN).apply { setShowBadge(false) })
+        runCatching { manager.deleteNotificationChannel("connection") }
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         // As quiet as Android allows: no sound, no banner, shown again without a
         // word after a restart or an update, hidden on the lock screen.
         return NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_sms)
-            .setContentTitle("Encrypted chat")
-            .setContentText("Ready for messages")
+            .setSmallIcon(R.drawable.ic_stat_chat_link)
+            .setContentTitle("Encrypted chat connected")
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
             .setContentIntent(open)
             .setOngoing(true)
             .setSilent(true)
@@ -75,7 +77,7 @@ class ChatService : Service(), KoinComponent {
     }
 
     companion object {
-        const val CHANNEL = "connection"
+        const val CHANNEL = "chat_link"
         private const val ID = 42
 
         /** Starts it when the chat is on and SMS is the messaging app. */

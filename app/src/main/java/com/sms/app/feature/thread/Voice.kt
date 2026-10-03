@@ -276,6 +276,45 @@ private fun Transcript(part: MmsPart) {
     }
 }
 
+/**
+ * The speech model where it is set (Settings): the choices, then one
+ * action for where it stands: get it (its size said), its progress with
+ * Stop, or on the phone with Remove.
+ */
+@Composable
+internal fun SpeechModelPanel(model: com.sms.app.core.voice.SpeechModel, modifier: Modifier = Modifier) {
+    val haptics = rememberHaptics()
+    val state by model.state.collectAsState()
+    val metered = remember { model.metered() }
+    Column(modifier, verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+        ModelChoices(model)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            when (val s = state) {
+                is com.sms.app.core.voice.SpeechModel.State.Fetching -> {
+                    Column(Modifier.weight(1f)) {
+                        Text("Getting it · ${(s.done * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                        androidx.compose.material3.LinearProgressIndicator(progress = { s.done }, modifier = Modifier.padding(top = 6.dp).fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)))
+                    }
+                    androidx.compose.material3.TextButton(onClick = { haptics.tick(); model.cancel() }) { Text("Stop") }
+                }
+                com.sms.app.core.voice.SpeechModel.State.Ready -> {
+                    Text(if (model.usesSystem) "Ready, nothing to fetch" else "${model.pin.label} on the phone", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    if (!model.usesSystem) androidx.compose.material3.TextButton(onClick = { haptics.reject(); model.remove() }) { Text("Remove") }
+                }
+                else -> {
+                    Text(
+                        if (state == com.sms.app.core.voice.SpeechModel.State.Failed) "Could not get it" else if (metered) "On mobile data" else "Not on the phone",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (state == com.sms.app.core.voice.SpeechModel.State.Failed || metered) MaterialTheme.colorScheme.error else androidx.compose.material3.LocalContentColor.current,
+                        modifier = Modifier.weight(1f)
+                    )
+                    com.sms.app.ui.component.BoldButton(onClick = { haptics.done(); model.fetch() }) { Text("Get it · ${model.pin.bytes / 1_000_000} MB") }
+                }
+            }
+        }
+    }
+}
+
 /** The speech model offered: the two sizes to choose from, fetched once. */
 @Composable
 internal fun SpeechModelDialog(model: com.sms.app.core.voice.SpeechModel, onDismiss: () -> Unit) {

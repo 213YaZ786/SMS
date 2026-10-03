@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -170,17 +171,9 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                         checked = settings.transcribeVoice,
                         onChange = viewModel::setTranscribeVoice
                     )
-                    val model by transcriber.model.state.collectAsState()
-                    var offering by remember { mutableStateOf(false) }
-                    if (offering) com.sms.app.feature.thread.SpeechModelDialog(transcriber.model) { offering = false }
-                    SettingRow(
-                        title = "Speech model",
-                        summary = when (val m = model) {
-                            com.sms.app.core.voice.SpeechModel.State.Ready -> "${transcriber.model.pin.label} · ${transcriber.model.pin.bytes / 1_000_000} MB"
-                            is com.sms.app.core.voice.SpeechModel.State.Fetching -> "Getting it · ${(m.done * 100).toInt()}%"
-                            else -> "Not on the phone"
-                        },
-                        onClick = { offering = true }
+                    if (settings.transcribeVoice) com.sms.app.feature.thread.SpeechModelPanel(
+                        transcriber.model,
+                        Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                     )
                 }
                 SettingRow(
@@ -295,7 +288,13 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             val scope = androidx.compose.runtime.rememberCoroutineScope()
             ChoiceDialog(
                 title = "Relays",
-                options = listOf("" to "Automatic: the fastest, with backups") + com.sms.app.core.chat.Relays.known(context).map { it to it },
+                // The ones the chat uses now are marked.
+                options = run {
+                    val used by androidx.compose.runtime.produceState(emptyList<String>()) { value = chat.relays() }
+                    listOf("" to "Automatic: the fastest, with backups") + com.sms.app.core.chat.Relays.known(context).map { host ->
+                        host to if (used.any { it.endsWith(host) || it == host }) "$host · in use" else host
+                    }
+                },
                 selected = settings.relay,
                 onSelect = { host ->
                     viewModel.setRelay(host)
@@ -392,7 +391,9 @@ private fun <T> ChoiceDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column {
+            // A long list scrolls inside the dialog, never past the screen.
+            val tall = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.55f).dp
+            Column(Modifier.heightIn(max = tall).verticalScroll(rememberScrollState())) {
                 options.forEach { (value, label) ->
                     Row(
                         modifier = Modifier
