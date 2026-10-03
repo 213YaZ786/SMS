@@ -27,9 +27,14 @@ class ListsTest {
     }
 
     @Test
-    fun waitingAreReadMessagesNotAnswered() {
-        val all = listOf(c(1, 1), c(2, 2, unread = 1), c(3, 3, fromMe = true), c(4, 60), c(5, 1, address = "BANK"))
-        assertEquals(listOf(1L), Lists.waiting(all, emptyMap(), now).map { it.threadId })
+    fun toAnswerIsUnreadOnceEachMessage() {
+        val all = listOf(c(1, 1), c(2, 2, unread = 1), c(3, 3, fromMe = true), c(4, 4, unread = 2), c(5, 1, address = "BANK", unread = 1))
+        assertEquals(listOf(2L, 4L), Lists.toAnswer(all, emptyMap(), emptySet()).map { it.threadId }.sortedBy { it })
+        // Shown once: gone, until a newer message of the same conversation.
+        val seen = setOf(Lists.key(all[1]))
+        assertEquals(listOf(4L), Lists.toAnswer(all, emptyMap(), seen).map { it.threadId })
+        val newer = all[1].copy(date = all[1].date + 1)
+        assertEquals(true, Lists.toAnswer(listOf(newer), emptyMap(), seen).isNotEmpty())
     }
 
     @Test

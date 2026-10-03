@@ -28,14 +28,17 @@ object Lists {
     }
 
     /**
-     * Who is waiting for an answer: their message is the last one, it came
-     * in the last [hours] hours and was read, so the dot is gone but the
-     * reply is still owed. Newest first.
+     * The cards of To answer: conversations with a message not read yet,
+     * newest first, each card once: one already shown (its [key] in
+     * [seen]) stays away until a newer message makes a new card.
      */
-    fun waiting(all: List<Conversation>, archived: Map<Long, Long>, now: Long, hours: Int = 48, limit: Int = 10): List<Conversation> =
-        all.filter { !it.fromMe && it.unread == 0 && it.date >= now - hours * HOUR_MS && !isArchived(it, archived) && it.address.any(Char::isDigit) }
+    fun toAnswer(all: List<Conversation>, archived: Map<Long, Long>, seen: Set<String>, limit: Int = 8): List<Conversation> =
+        all.filter { it.unread > 0 && !it.fromMe && !isArchived(it, archived) && !isService(it) && key(it) !in seen }
             .sortedByDescending { it.date }
             .take(limit)
+
+    /** A card's key: the conversation and its newest message, so a new message is a new card. */
+    fun key(c: Conversation): String = "${c.threadId}:${c.date}"
 
     /**
      * A service rather than a person: a sender written in letters (a bank,

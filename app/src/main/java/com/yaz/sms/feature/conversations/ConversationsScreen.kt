@@ -110,7 +110,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     }
     // Everything together, SMS and chat; the archive behind its button.
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
-    androidx.activity.compose.BackHandler(enabled = filter == Filter.ARCHIVED) { filter = Filter.ALL }
+    androidx.activity.compose.BackHandler(enabled = filter != Filter.ALL) { filter = Filter.ALL }
     var query by rememberSaveable { mutableStateOf("") }
 
     fun nameOf(c: Conversation): String? =
@@ -129,8 +129,28 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     val code = remember(all) { Lists.latestCode(all, System.currentTimeMillis()) }
     var servicesOpen by rememberSaveable { mutableStateOf(false) }
     var peeking by remember { mutableStateOf<Conversation?>(null) }
-    val waiting = remember(all, settings.archived, filter, query) {
-        if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.waiting(all, settings.archived, System.currentTimeMillis())
+    // To answer: each card once. The cards already shown are read when the
+    // screen comes back, and the ones shown now are kept as seen when it goes.
+    var seenAtOpen by remember { mutableStateOf(store.current.answerSeen) }
+    val waiting = remember(all, settings.archived, filter, query, seenAtOpen) {
+        if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.toAnswer(all, settings.archived, seenAtOpen)
+    }
+    val shownCards by androidx.compose.runtime.rememberUpdatedState(waiting)
+    // A new card to answer comes in on top: in sight when the list was at its top.
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    androidx.compose.runtime.LaunchedEffect(waiting.firstOrNull()?.let(Lists::key)) {
+        if (waiting.isNotEmpty() && listState.firstVisibleItemIndex <= 1) listState.animateScrollToItem(0)
+    }
+    LifecycleResumeEffect(Unit) {
+        seenAtOpen = store.current.answerSeen
+        onPauseOrDispose {
+            val keys = shownCards.map(Lists::key)
+            if (keys.isNotEmpty()) store.update { s ->
+                // Only cards of messages still unread are worth keeping.
+                val alive = all.filter { it.unread > 0 }.map(Lists::key).toSet()
+                s.copy(answerSeen = (s.answerSeen + keys).filter { it in alive || it in keys }.toSet())
+            }
+        }
     }
 
     val line: @Composable (Conversation) -> Unit = { c ->
@@ -174,7 +194,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             )
         },
         controls = {
-            if (messages.canRead() && all.isNotEmpty()) Filters(query, { query = it })
+            if (messages.canRead() && all.isNotEmpty()) Filters(query, { query = it }, if (archive) null else filter, { filter = it })
         },
         overlay = {
             // A conversation deleted by a swipe can be taken back for a few seconds.
@@ -224,6 +244,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
             else -> LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding() + 96.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -296,14 +317,28 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     }
 }
 
-/** The search, under the name, in glass; the sections are in the pill at the bottom. */
+/** The search and, as in Dialer's calls, All and Unread on the same line, in glass. */
 @Composable
-private fun Filters(query: String, onQuery: (String) -> Unit) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
+private fun Filters(query: String, onQuery: (String) -> Unit, filter: Filter?, onFilter: (Filter) -> Unit) {
+    val haptics = rememberHaptics()
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
-        SearchPill(query, onQuery, hint = "Search messages", modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(), floating = true)
+        SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).weight(1f, fill = false).fillMaxWidth(), floating = true)
+        if (filter != null) listOf(Filter.ALL to "All", Filter.UNREAD to "Unread").forEach { (value, label) ->
+            FloatingPane(
+                shape = CircleShape,
+                accent = filter == value,
+                onClick = {
+                    haptics.tick()
+                    onFilter(value)
+                }
+            ) {
+                Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp))
+            }
+        }
     }
 }
 
