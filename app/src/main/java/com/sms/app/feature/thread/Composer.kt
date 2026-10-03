@@ -16,6 +16,7 @@ import android.telephony.SmsMessage
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
@@ -41,6 +42,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -340,6 +342,43 @@ fun Composer(
                     haptics.reject()
                 }
             }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // Effects for the message, in sight above Send as soon as there are words.
+            val effectsReady = onEffects != null && editing == null && take == null && text.isNotBlank() && attachments.isEmpty()
+            androidx.compose.animation.AnimatedVisibility(
+                visible = effectsReady,
+                enter = scaleIn(spring(dampingRatio = 0.45f, stiffness = 500f)) + fadeIn(),
+                exit = scaleOut() + fadeOut()
+            ) {
+                // The sparkles twinkle once as the button comes.
+                val twinkle = remember { Animatable(0f) }
+                LaunchedEffect(Unit) { twinkle.animateTo(1f, androidx.compose.animation.core.tween(700)) }
+                FloatingPane(
+                    shape = CircleShape,
+                    onClick = {
+                        haptics.firm()
+                        val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                        onEffects?.invoke(text, sub)
+                        text = ""
+                    },
+                    modifier = Modifier.padding(bottom = 8.dp).size(40.dp)
+                ) {
+                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                        Icon(
+                            AppIcons.AutoAwesome,
+                            contentDescription = "Effects",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp).graphicsLayer {
+                                val k = twinkle.value
+                                val pulse = 1f + 0.35f * kotlin.math.sin(k * kotlin.math.PI.toFloat())
+                                scaleX = pulse
+                                scaleY = pulse
+                                rotationZ = 25f * kotlin.math.sin(k * 2 * kotlin.math.PI.toFloat())
+                            }
+                        )
+                    }
+                }
+            }
             Box(if (micMode) Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
@@ -430,6 +469,7 @@ fun Composer(
                         )
                     }
                 }
+            }
             }
             }
         }
