@@ -208,6 +208,37 @@ fun Composer(
                 }
             }
         }
+        // The first times words are written: what holding Send offers, said once each time.
+        val hintStore: com.yaz.sms.data.settings.SettingsStore = org.koin.compose.koinInject()
+        var hintNow by remember { mutableStateOf(false) }
+        val writing = text.isNotBlank() && editing == null && attachments.isEmpty() && onEffects != null
+        LaunchedEffect(writing) {
+            if (writing && hintStore.current.sendHintShown < 3) {
+                hintNow = true
+                hintStore.update { it.copy(sendHintShown = it.sendHintShown + 1) }
+                kotlinx.coroutines.delay(4_000)
+                hintNow = false
+            } else if (!writing) hintNow = false
+        }
+        androidx.compose.animation.AnimatedVisibility(
+            visible = hintNow,
+            enter = fadeIn() + androidx.compose.animation.expandVertically(),
+            exit = fadeOut() + androidx.compose.animation.shrinkVertically(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.CenterEnd) {
+                FloatingPane(shape = CircleShape) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Icon(AppIcons.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        Text(
+                            "Hold Send: balloons, confetti, send later",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                    }
+                }
+            }
+        }
         // The styles, over the field: a tap wraps the selection (or the word) in one.
         androidx.compose.animation.AnimatedVisibility(visible = formatting && text.isNotEmpty() && take == null) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {

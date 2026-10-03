@@ -37,6 +37,8 @@ data class Settings(
     val composeY: Float = -1f,
     /** The little show of the new message button moving was seen. */
     val composeHintSeen: Boolean = false,
+    /** Times the hint "hold Send for effects and send later" was shown; shown three times. */
+    val sendHintShown: Int = 0,
     /** What a conversation swiped to the left, and to the right, does (SwipeAction names). */
     val swipeLeft: String = "ARCHIVE",
     val swipeRight: String = "DELETE",
