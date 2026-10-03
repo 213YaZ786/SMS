@@ -155,7 +155,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     }
                 }
             }
-            ThreadContent(threadId, address, draft, onBack, base, picture, doodles = chosen == DOODLE || chosen == DOODLE_DENSE, doodlesDense = chosen == DOODLE_DENSE, onThread = { shownThread = it })
+            ThreadContent(threadId, address, draft, onBack, base, picture, doodles = chosen == DOODLE, onThread = { shownThread = it })
             SceneWash(look)
         }
     }
@@ -170,7 +170,6 @@ private fun ThreadContent(
     appLook: com.yaz.sms.ui.glass.GlassLook?,
     picture: androidx.compose.ui.graphics.ImageBitmap?,
     doodles: Boolean,
-    doodlesDense: Boolean,
     onThread: (Long?) -> Unit
 ) {
     val context = LocalContext.current
@@ -529,10 +528,7 @@ private fun ThreadContent(
         val inset = LocalReadableInset.current
         // The conversation's own photo when one was chosen; else the person's light: their photo, blurred, or a glow.
         if (picture != null) PictureGround(picture, com.yaz.sms.ui.glass.LocalGlass.current?.ground ?: MaterialTheme.colorScheme.background)
-        else if (doodles) {
-            val dark = com.yaz.sms.ui.glass.LocalGlass.current?.dark ?: (MaterialTheme.colorScheme.background.luminance() < 0.5f)
-            DoodleGround(if (doodlesDense) denseInk(MaterialTheme.colorScheme.primary, dark) else doodleInk(dark), dense = doodlesDense)
-        }
+        else if (doodles) DoodleGround(doodleInk(com.yaz.sms.ui.glass.LocalGlass.current?.dark ?: (MaterialTheme.colorScheme.background.luminance() < 0.5f)))
         else HeroGlow(if (group) null else entry?.photo, height = padding.calculateTopPadding() + 320.dp)
         // Near the oldest message shown, with more behind it: read the next page.
         // Only once the rows of the messages read are on screen: before, the

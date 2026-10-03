@@ -69,7 +69,6 @@ import kotlin.math.max
 internal enum class Scene(val code: String, val label: String) {
     YOURS("yours", "Your colours"),
     DOODLES("doodle", "Doodles"),
-    DOODLES_DENSE("doodle-dense", "Doodles dense"),
     SKY("sky", "Sky now"),
     DAWN("dawn", "Dawn"),
     LAGOON("lagoon", "Lagoon"),
@@ -266,7 +265,7 @@ internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: Stri
                     }
                     Scene.entries.forEach { scene ->
                         val chosen = (current ?: if (theirColor == null) Scene.YOURS.code else null) == scene.code
-                        SceneTile(sceneLook(scene.code, base, hour), scene.label, chosen, order++, doodles = scene == Scene.DOODLES || scene == Scene.DOODLES_DENSE, dense = scene == Scene.DOODLES_DENSE) {
+                        SceneTile(sceneLook(scene.code, base, hour), scene.label, chosen, order++, doodles = scene == Scene.DOODLES) {
                             haptics.tick()
                             onPick(if (scene == Scene.YOURS && theirColor == null) null else scene.code)
                         }
@@ -290,7 +289,7 @@ internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: Stri
 
 /** One background as a small conversation in its light; [look] null shows a photo's place. */
 @Composable
-private fun SceneTile(look: GlassLook?, label: String, chosen: Boolean, order: Int, icon: Boolean = true, doodles: Boolean = false, dense: Boolean = false, onClick: () -> Unit) {
+private fun SceneTile(look: GlassLook?, label: String, chosen: Boolean, order: Int, icon: Boolean = true, doodles: Boolean = false, onClick: () -> Unit) {
     val pop = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         delay(order * 30L)
@@ -323,7 +322,7 @@ private fun SceneTile(look: GlassLook?, label: String, chosen: Boolean, order: I
                 },
             contentAlignment = Alignment.Center
         ) {
-            if (doodles) DoodleGround(if (dense) denseInk(accent, look?.dark == true) else doodleInk(look?.dark == true), cell = 26f, dense = dense)
+            if (doodles) DoodleGround(doodleInk(look?.dark == true), cell = 26f)
             if (look == null) Icon(if (icon) AppIcons.Photo else AppIcons.Image, contentDescription = null, tint = accent, modifier = Modifier.size(28.dp))
         }
         Text(label, style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center, maxLines = 2, modifier = Modifier.padding(top = 4.dp))
@@ -350,6 +349,3 @@ internal fun SceneWash(look: GlassLook?) {
 
 /** The doodles' ink: faint over the light, darker by day, lighter by night. */
 internal fun doodleInk(dark: Boolean) = if (dark) Color.White.copy(alpha = 0.07f) else Color.Black.copy(alpha = 0.075f)
-
-/** The dense doodles' ink: the accent, faint, as the chat apps' coloured papers. */
-internal fun denseInk(accent: Color, dark: Boolean) = accent.copy(alpha = if (dark) 0.20f else 0.16f)
