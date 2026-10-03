@@ -23,7 +23,8 @@ object SmsSender {
 
     /** The message's place in the store, or null when it could not even be written. */
     fun send(context: Context, address: String, text: String, subId: Int = SubscriptionManager.INVALID_SUBSCRIPTION_ID): Uri? {
-        val body = text.trim()
+        // Ordinary spaces only: a reaction's hair spaces (U+200A) are its structure.
+        val body = text.trim(' ', '\n', '\t', '\r')
         if (body.isEmpty() || address.isBlank()) return null
         val app = context.applicationContext
         val thread = runCatching { Telephony.Threads.getOrCreateThreadId(app, address) }.getOrNull() ?: return null

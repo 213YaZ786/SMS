@@ -1096,7 +1096,6 @@ private fun Bubble(
                 risky = url to verdict
             }
         }
-        // A sound link: its preview on a tap, never fetched by itself.
         // A place: its card, opened in the user's map app; else a sound link: its preview on a tap, never fetched by itself.
         val place = remember(said) { com.yaz.sms.core.sms.Places.find(said) }
         val sound = remember(said, checks) { links(said).firstOrNull { it !in checks } }
