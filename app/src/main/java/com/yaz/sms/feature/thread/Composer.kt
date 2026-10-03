@@ -79,7 +79,6 @@ fun Composer(
     onRestored: () -> Unit = {},
     onSchedule: ((String, Int) -> Unit)? = null,
     /** Held, Send offers the effects (and sending later): the text and SIM go there. */
-    onEffects: ((String, Int) -> Unit)? = null,
     /** Sends with an effect chosen from the + before the words were written. */
     onSendEffect: ((String, Int, com.yaz.sms.core.sms.Effects.Effect) -> Unit)? = null,
     /** The other side sees effects too (the encrypted chat). */
@@ -219,7 +218,13 @@ fun Composer(
         }
         if (choosingEffect) EffectSheet(
             carried = effectsCarried,
-            onLater = null,
+            // Later is a send of its own, chosen as such: offered once there are words.
+            onLater = if (onSchedule != null && text.isNotBlank() && attachments.isEmpty() && editing == null) ({
+                choosingEffect = false
+                val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                onSchedule(text, sub)
+                text = ""
+            }) else null,
             onPick = { effect ->
                 choosingEffect = false
                 armed = effect
@@ -227,37 +232,6 @@ fun Composer(
             },
             onDismiss = { choosingEffect = false }
         )
-        // The first times words are written: what holding Send offers, said once each time.
-        val hintStore: com.yaz.sms.data.settings.SettingsStore = org.koin.compose.koinInject()
-        var hintNow by remember { mutableStateOf(false) }
-        val writing = text.isNotBlank() && editing == null && attachments.isEmpty() && onEffects != null
-        LaunchedEffect(writing) {
-            if (writing && hintStore.current.sendHintShown < 3) {
-                hintNow = true
-                hintStore.update { it.copy(sendHintShown = it.sendHintShown + 1) }
-                kotlinx.coroutines.delay(4_000)
-                hintNow = false
-            } else if (!writing) hintNow = false
-        }
-        androidx.compose.animation.AnimatedVisibility(
-            visible = hintNow,
-            enter = fadeIn() + androidx.compose.animation.expandVertically(),
-            exit = fadeOut() + androidx.compose.animation.shrinkVertically(),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.CenterEnd) {
-                FloatingPane(shape = CircleShape) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                        Icon(AppIcons.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                        Text(
-                            "Hold Send: balloons, confetti, send later",
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.padding(start = 8.dp)
-                        )
-                    }
-                }
-            }
-        }
         // The styles, over the field: a tap wraps the selection (or the word) in one.
         androidx.compose.animation.AnimatedVisibility(visible = formatting && text.isNotEmpty() && take == null) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
@@ -310,12 +284,8 @@ fun Composer(
                 pickDrop.value = { drop ->
                 runCatching {
                     when (drop) {
-                        // The effects: at once with the words written, else chosen for the next message.
-                        Drop.EFFECTS -> if (text.isNotBlank() && attachments.isEmpty() && onEffects != null) {
-                            val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
-                            onEffects(text, sub)
-                            text = ""
-                        } else choosingEffect = true
+                        // An effect is chosen, then sits in the bar: the message goes only on Send.
+                        Drop.EFFECTS -> choosingEffect = true
                         Drop.PHOTOS -> pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
                         Drop.CAMERA -> {
                             val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
@@ -489,42 +459,6 @@ fun Composer(
                 }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            // Effects for the message, in sight above Send as soon as there are words.
-            val effectsReady = onEffects != null && editing == null && take == null && text.isNotBlank() && attachments.isEmpty()
-            androidx.compose.animation.AnimatedVisibility(
-                visible = effectsReady,
-                enter = scaleIn(spring(dampingRatio = 0.45f, stiffness = 500f)) + fadeIn(),
-                exit = scaleOut() + fadeOut()
-            ) {
-                // The sparkles twinkle once as the button comes.
-                val twinkle = remember { Animatable(0f) }
-                LaunchedEffect(Unit) { twinkle.animateTo(1f, androidx.compose.animation.core.tween(700)) }
-                FloatingPane(
-                    shape = CircleShape,
-                    onClick = {
-                        haptics.firm()
-                        val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
-                        onEffects?.invoke(text, sub)
-                        text = ""
-                    },
-                    modifier = Modifier.padding(bottom = 8.dp).size(40.dp)
-                ) {
-                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                        Icon(
-                            AppIcons.AutoAwesome,
-                            contentDescription = "Effects",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp).graphicsLayer {
-                                val k = twinkle.value
-                                val pulse = 1f + 0.35f * kotlin.math.sin(k * kotlin.math.PI.toFloat())
-                                scaleX = pulse
-                                scaleY = pulse
-                                rotationZ = 25f * kotlin.math.sin(k * 2 * kotlin.math.PI.toFloat())
-                            }
-                        )
-                    }
-                }
-            }
             Box(if (micMode) Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
@@ -572,11 +506,10 @@ fun Composer(
                 detectTapGestures(
                     onTap = { send() },
                     onLongPress = {
-                        if (editing == null && text.isNotBlank() && attachments.isEmpty() && (onEffects != null || onSchedule != null)) {
+                        // Held: the effects and Send later, chosen; nothing goes until Send.
+                        if (editing == null && text.isNotBlank() && attachments.isEmpty() && (onSendEffect != null || onSchedule != null)) {
                             haptics.firm()
-                            val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
-                            if (onEffects != null) onEffects(text, sub) else onSchedule?.invoke(text, sub)
-                            text = ""
+                            choosingEffect = true
                         }
                     }
                 )

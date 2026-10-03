@@ -246,7 +246,6 @@ private fun ThreadContent(
     // Sent with an effect: it plays here at once, and the bubble remembers it a while.
     val sentEffects = remember { androidx.compose.runtime.mutableStateMapOf<String, Pair<com.yaz.sms.core.sms.Effects.Effect, Long>>() }
     var playing by remember { mutableStateOf<Triple<com.yaz.sms.core.sms.Effects.Effect, String, androidx.compose.ui.geometry.Offset?>?>(null) }
-    var effecting by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var fresh by remember { mutableStateOf<Set<String>>(emptySet()) }
     val haptics = rememberHaptics()
     LaunchedEffect(list) {
@@ -314,23 +313,6 @@ private fun ThreadContent(
                 }
             }
         }
-    }
-    effecting?.let { (text, sub) ->
-        EffectSheet(
-            carried = encrypted,
-            onLater = {
-                effecting = null
-                scheduling = text to sub
-            },
-            onPick = { effect ->
-                effecting = null
-                queue(Pending(System.nanoTime(), text, sub, emptyList(), quote, effect))
-            },
-            onDismiss = {
-                effecting = null
-                restore = text
-            }
-        )
     }
     scheduling?.let { (text, sub) ->
         com.yaz.sms.feature.conversations.TimeChoice("Send later", onPick = { at ->
@@ -528,7 +510,6 @@ private fun ThreadContent(
                     editing = null
                     if (e != null && typed.isNotBlank() && typed != e.second) scope.launch { if (!chat.edit(e.first, typed)) haptics.reject() }
                 },
-                onEffects = { text, sub -> effecting = text to sub },
                 onSendEffect = { text, sub, effect -> queue(Pending(System.nanoTime(), text, sub, emptyList(), quote, effect)) },
                 effectsCarried = encrypted,
                 onPoll = if (encrypted) ({ pollOpen = true }) else null,
