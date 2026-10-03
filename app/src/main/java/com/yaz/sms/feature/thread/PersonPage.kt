@@ -201,9 +201,14 @@ fun PersonPage(
                     // About them.
                     item {
                         val digits = !group && address.count(Char::isDigit) >= 3
-                        // Compact pills in the middle, all as wide as the widest.
+                        // Cards in two columns, each its icon over its name, the rows as tall as each other.
                         Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.TopCenter) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.width(androidx.compose.foundation.layout.IntrinsicSize.Max).widthIn(min = 220.dp)) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            maxItemsInEachRow = 2,
+                            modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth()
+                        ) {
                             if (digits && NumberActions.canShowCalls(context)) Row(AppIcons.Recents, "Calls with them") { NumberActions.showCalls(context, address) }
                             // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
                             if (contactId != null && contactId > 0) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
@@ -253,17 +258,29 @@ private fun Tile(icon: ImageVector, label: String, fill: Color?, tint: Color?, o
 }
 
 /** A line of glass for something about the person. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun Row(icon: ImageVector, label: String, danger: Boolean = false, onClick: () -> Unit) {
+private fun androidx.compose.foundation.layout.FlowRowScope.Row(icon: ImageVector, label: String, danger: Boolean = false, onClick: () -> Unit) {
     val haptics = rememberHaptics()
-    ZoneSurface(shape = androidx.compose.foundation.shape.CircleShape, modifier = Modifier.fillMaxWidth(), onClick = {
+    val tint = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    ZoneSurface(shape = RoundedCornerShape(24.dp), modifier = Modifier.weight(1f).fillMaxRowHeight(), onClick = {
         haptics.tick()
         onClick()
     }) {
-        androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 18.dp, end = 24.dp, top = 12.dp, bottom = 12.dp)) {
-            Icon(icon, contentDescription = null, tint = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.width(14.dp))
-            Text(label, style = MaterialTheme.typography.bodyLarge, color = if (danger) MaterialTheme.colorScheme.error else LocalContentColor.current)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 16.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(26.dp))
+            Spacer(Modifier.height(8.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (danger) MaterialTheme.colorScheme.error else LocalContentColor.current,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                maxLines = 2
+            )
         }
     }
 }
