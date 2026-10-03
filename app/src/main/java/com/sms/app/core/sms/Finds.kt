@@ -41,19 +41,25 @@ object Finds {
     }
 
     /**
-     * Month names, full and short, as the languages write them, from the
-     * phone's own calendar data: "mars", "March", "marzo", "März", "maart"…,
+     * Month names as every language the phone knows writes them, from its
+     * own calendar data: "mars", "March", "marzo", "März", "maart", "Mayıs"…,
      * with and without their accents.
      */
     private val Months: Map<String, Int> by lazy {
-        val languages = listOf("en", "fr", "es", "de", "it", "pt", "nl", "pl", "tr", "sv", "da", "nb", "fi", "cs", "ro", "hu", "ca")
-        val styles = listOf(TextStyle.FULL, TextStyle.SHORT, TextStyle.FULL_STANDALONE, TextStyle.SHORT_STANDALONE)
+        val styles = listOf(TextStyle.FULL, TextStyle.FULL_STANDALONE)
+        // Short forms only in languages whose short forms are no everyday words elsewhere ("set", "mar").
+        val shortIn = setOf("en", "fr", "es", "de", "it", "pt", "nl")
+        val languages = Locale.getAvailableLocales().map { it.language }.filter { it.isNotEmpty() }.toSet()
         buildMap {
-            for (language in languages) for (month in Month.entries) for (style in styles) {
-                val name = month.getDisplayName(style, Locale.forLanguageTag(language)).lowercase(Locale.ROOT).trimEnd('.')
-                if (name.length < 3 || name.any(Char::isDigit)) continue
-                putIfAbsent(name, month.value)
-                putIfAbsent(plain(name), month.value)
+            for (language in languages) for (month in Month.entries) {
+                val locale = Locale.forLanguageTag(language)
+                val forms = styles + if (language in shortIn) listOf(TextStyle.SHORT, TextStyle.SHORT_STANDALONE) else emptyList()
+                for (style in forms) {
+                    val name = month.getDisplayName(style, locale).lowercase(Locale.ROOT).trimEnd('.')
+                    if (name.length < 3 || name.any(Char::isDigit)) continue
+                    putIfAbsent(name, month.value)
+                    putIfAbsent(plain(name), month.value)
+                }
             }
         }
     }

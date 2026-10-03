@@ -60,4 +60,11 @@ class FindsTest {
         assertNull(Finds.appointment("Guten Morgen! Alles gut um 9:00?", today))
         assertEquals(LocalDateTime.of(2026, 10, 2, 9, 0), Finds.appointment("Hoy por la mañana a las 9:00", today))
     }
+
+    @Test
+    fun monthsInEveryLanguageThePhoneKnows() {
+        assertEquals(LocalDateTime.of(2026, 10, 14, 10, 0), Finds.appointment("Randevu 14 Ekim saat 10:00", today))
+        assertEquals(LocalDateTime.of(2026, 10, 14, 10, 0), Finds.appointment("Wizyta 14 października o 10:00", today))
+        assertEquals(LocalDateTime.of(2026, 10, 14, 10, 0), Finds.appointment("Möte 14 oktober kl 10:00", today))
+    }
 }
