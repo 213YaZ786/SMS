@@ -131,6 +131,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             c,
             name = nameOf(c),
             photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
+            look = if (c.group) null else index.find(T9.clean(c.address))?.look,
             pinned = c.threadId in settings.pinned,
             onOpen = { onOpenThread(c.threadId, c.addresses.joinToString(",")) },
             onPeek = { peeking = c },
@@ -211,6 +212,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             c,
             title = nameOf(c) ?: Numbers.format(context, c.address),
             photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
+            look = if (c.group) null else index.find(T9.clean(c.address))?.look,
             pinned = c.threadId in settings.pinned,
             archived = Lists.isArchived(c, settings.archived),
             onDismiss = { peeking = null },
@@ -285,7 +287,7 @@ private fun Waiting(waiting: List<Conversation>, index: PhoneIndex, nameOf: (Con
                             // A group under its name or its members, never as its first member alone.
                             val entry = if (c.group) null else index.find(T9.clean(c.address))
                             val name = nameOf(c) ?: Numbers.format(context, c.address)
-                            Face(name, entry?.photo, timeLabel(context, c.date), Modifier.weight(1f)) { onOpen(c) }
+                            Face(name, entry?.photo, entry?.look, timeLabel(context, c.date), Modifier.weight(1f)) { onOpen(c) }
                         }
                         repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
                     }
@@ -296,7 +298,7 @@ private fun Waiting(waiting: List<Conversation>, index: PhoneIndex, nameOf: (Con
 }
 
 @Composable
-private fun Face(name: String, photo: String?, under: String, modifier: Modifier, onClick: () -> Unit) {
+private fun Face(name: String, photo: String?, look: com.sms.app.core.dial.ContactLook.Look?, under: String, modifier: Modifier, onClick: () -> Unit) {
     val haptics = rememberHaptics()
     val press = remember { MutableInteractionSource() }
     val pressed by press.collectIsPressedAsState()
@@ -316,7 +318,7 @@ private fun Face(name: String, photo: String?, under: String, modifier: Modifier
             })
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp)) {
-            ContactAvatar(name, photo, 44.dp)
+            ContactAvatar(name, photo, 44.dp, look = look)
             Spacer(Modifier.height(6.dp))
             Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
             Text(under, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
@@ -330,6 +332,7 @@ private fun ConversationLine(
     c: Conversation,
     name: String?,
     photo: String?,
+    look: com.sms.app.core.dial.ContactLook.Look?,
     pinned: Boolean,
     onOpen: () -> Unit,
     onPeek: () -> Unit,
@@ -409,7 +412,7 @@ private fun ConversationLine(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 14.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)) {
                 Box {
-                    ContactAvatar(name, photo, 48.dp)
+                    ContactAvatar(name, photo, 48.dp, look = look)
                     if (unread) {
                         Box(
                             contentAlignment = Alignment.Center,

@@ -128,7 +128,7 @@ fun PersonPage(
                     // Who they are.
                     item {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
-                            ContactAvatar(name, if (group) null else photo, 112.dp)
+                            ContactAvatar(name, if (group) null else photo, 112.dp, look = if (group) null else com.sms.app.ui.component.rememberLook(address).value)
                             Spacer(Modifier.height(14.dp))
                             Text(name, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             number?.takeIf { it != name }?.let {
@@ -269,7 +269,7 @@ private fun Row(icon: ImageVector, label: String, danger: Boolean = false, onCli
  * on either opens their page.
  */
 @Composable
-fun NameBlock(name: String, photo: String?, encrypted: Boolean, onOpen: () -> Unit) {
+fun NameBlock(name: String, photo: String?, encrypted: Boolean, onOpen: () -> Unit, look: com.sms.app.core.dial.ContactLook.Look? = null) {
     val haptics = rememberHaptics()
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -282,7 +282,7 @@ fun NameBlock(name: String, photo: String?, encrypted: Boolean, onOpen: () -> Un
             onOpen()
         }
     ) {
-        ContactAvatar(name, photo, 40.dp)
+        ContactAvatar(name, photo, 40.dp, look = look)
         Spacer(Modifier.height(4.dp))
         FloatingPane(shape = CircleShape, onClick = {
             haptics.tick()

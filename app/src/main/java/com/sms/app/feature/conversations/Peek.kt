@@ -75,6 +75,7 @@ internal fun Peek(
     c: Conversation,
     title: String,
     photo: String?,
+    look: com.sms.app.core.dial.ContactLook.Look?,
     pinned: Boolean,
     archived: Boolean,
     onDismiss: () -> Unit,
@@ -131,7 +132,7 @@ internal fun Peek(
                             onOpen()
                         }
                     ) {
-                        ContactAvatar(title, photo, 36.dp)
+                        ContactAvatar(title, photo, 36.dp, look = look)
                         Spacer(Modifier.width(10.dp))
                         Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     }

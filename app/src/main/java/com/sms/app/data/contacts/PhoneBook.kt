@@ -6,9 +6,11 @@ import android.content.pm.PackageManager
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
+import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import androidx.core.content.ContextCompat
 import com.sms.app.core.dial.PhoneEntry
+import com.sms.app.core.dial.ContactLook
 import com.sms.app.core.dial.T9
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +50,17 @@ class PhoneBook(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun load(): List<PhoneEntry> = runCatching {
+        // Every person's look in one read, so a list of faces asks nothing more.
+        val looks = HashMap<Long, ContactLook.Look>()
+        runCatching {
+            context.contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.Data.CONTACT_ID, ContactsContract.Data.DATA1),
+                "${ContactsContract.Data.MIMETYPE} = ?",
+                arrayOf(ContactLook.MIMETYPE),
+                null
+            )?.use { c -> while (c.moveToNext()) c.getString(1)?.let(ContactLook::parse)?.let { looks[c.getLong(0)] = it } }
+        }
         val columns = arrayOf(Phone.CONTACT_ID, Phone.DISPLAY_NAME_PRIMARY, Phone.NUMBER, Phone.PHOTO_THUMBNAIL_URI, Phone.STARRED)
         context.contentResolver.query(Phone.CONTENT_URI, columns, null, null, "${Phone.DISPLAY_NAME_PRIMARY} COLLATE LOCALIZED ASC")
             ?.use { c ->
@@ -67,7 +80,8 @@ class PhoneBook(private val context: Context, private val scope: CoroutineScope)
                                 number = number,
                                 digits = digits,
                                 photo = c.getString(3),
-                                starred = c.getInt(4) != 0
+                                starred = c.getInt(4) != 0,
+                                look = looks[id]
                             )
                         )
                     }

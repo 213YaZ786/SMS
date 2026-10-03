@@ -49,11 +49,13 @@ class MessageNotifier(private val context: Context) {
         val code = Codes.find(unread.last().second)
         // Someone with a vibration of their own rings on its channel: the one
         // the Contacts app keeps in the contact first, else the one set here.
-        val signature = com.sms.app.core.dial.ContactLook.ofNumber(context, address)?.vibration?.takeIf { it in Signatures.patterns }
+        val look = com.sms.app.core.dial.ContactLook.ofNumber(context, address)
+        val signature = look?.vibration?.takeIf { it in Signatures.patterns }
             ?: runCatching {
                 org.koin.core.context.GlobalContext.get().get<com.sms.app.data.settings.SettingsStore>().current.signatures[Signatures.key(address)]
             }.getOrNull()
-        val builder = NotificationCompat.Builder(context, signature?.let { Signatures.channel(context, it) } ?: CHANNEL)
+        // Their own sound too, when the Contacts app keeps one for them.
+        val builder = NotificationCompat.Builder(context, Signatures.channel(context, signature, look?.tone) ?: CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_sms)
             .setStyle(style)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)

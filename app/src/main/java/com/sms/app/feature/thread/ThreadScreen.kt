@@ -445,7 +445,8 @@ private fun ThreadContent(
                         name = title,
                         photo = if (group) null else entry?.photo,
                         encrypted = encrypted,
-                        onOpen = { personOpen = true }
+                        onOpen = { personOpen = true },
+                        look = if (group) null else entry?.look
                     )
                 }
                 Box(Modifier.align(Alignment.TopEnd).padding(top = 2.dp)) { CallButtons(calls) }

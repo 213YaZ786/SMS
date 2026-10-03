@@ -5,6 +5,8 @@ import java.text.Normalizer
 /** A contact with all its numbers, the first one the one called by default. */
 data class Person(val id: Long, val name: String, val photo: String?, val starred: Boolean, val numbers: List<PhoneEntry>) {
     val number: String get() = numbers.first().number
+    /** Their look from the Contacts app, the same on every number. */
+    val look: ContactLook.Look? get() = numbers.firstNotNullOfOrNull { it.look }
 }
 
 object People {

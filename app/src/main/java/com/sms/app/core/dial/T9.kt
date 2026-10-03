@@ -11,7 +11,9 @@ data class PhoneEntry(
     /** The digits only, a leading + kept, for matching what is typed. */
     val digits: String,
     val photo: String?,
-    val starred: Boolean
+    val starred: Boolean,
+    /** Their colour, monogram and the rest, as the Contacts app keeps them; null without. */
+    val look: ContactLook.Look? = null
 )
 
 /** A contact found while typing, with where the typed digits matched. */

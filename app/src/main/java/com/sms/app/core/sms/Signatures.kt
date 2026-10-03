@@ -24,13 +24,32 @@ object Signatures {
     fun key(number: String) = T9.clean(number).removePrefix("+").takeLast(9)
 
     /** The channel for [name]'s pattern, made when first needed. */
-    fun channel(context: Context, name: String): String? {
-        val pattern = patterns[name] ?: return null
-        val id = "messages_" + name.lowercase().replace(' ', '_')
+    fun channel(context: Context, name: String): String? = channel(context, name, null)
+
+    /**
+     * The channel for a person's own vibration ([name]) and own sound
+     * ([tone], chosen in the Contacts app), made when first needed: Android
+     * keeps both per channel, so one channel per pair.
+     */
+    fun channel(context: Context, name: String?, tone: String?): String? {
+        val pattern = name?.let { patterns[it] }
+        if (pattern == null && tone == null) return null
+        val id = "messages_" + (name?.lowercase()?.replace(' ', '_') ?: "phone") +
+            (tone?.let { "_" + Integer.toHexString(it.hashCode()) } ?: "")
+        val label = listOfNotNull(name, if (tone != null) "own sound" else null).joinToString(" · ")
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(id, "Messages: $name", NotificationManager.IMPORTANCE_HIGH).apply {
+            NotificationChannel(id, "Messages: $label", NotificationManager.IMPORTANCE_HIGH).apply {
                 enableVibration(true)
-                vibrationPattern = pattern
+                pattern?.let { vibrationPattern = it }
+                tone?.let {
+                    setSound(
+                        android.net.Uri.parse(it),
+                        android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                }
             }
         )
         return id
