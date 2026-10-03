@@ -21,6 +21,8 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     fun setRichChat(on: Boolean) = store.update { it.copy(richChat = on) }
     fun setRelay(relay: String) = store.update { it.copy(relay = relay) }
     fun setUndoSeconds(seconds: Int) = store.update { it.copy(undoSeconds = seconds) }
+    fun setSwipeLeft(name: String) = store.update { it.copy(swipeLeft = name) }
+    fun setSwipeRight(name: String) = store.update { it.copy(swipeRight = name) }
     fun setCheckLinks(on: Boolean) = store.update { it.copy(checkLinks = on) }
     fun setTranscribeVoice(on: Boolean) = store.update { it.copy(transcribeVoice = on) }
     fun setShareCard(on: Boolean) = store.update { it.copy(shareCard = on) }

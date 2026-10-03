@@ -25,8 +25,7 @@ import org.koin.core.component.inject
 data class Scheduled(val id: Long, val to: List<String>, val text: String, val at: Long, val sub: Int)
 
 /**
- * What waits for a time: conversations set aside ("Later") and messages
- * to send later. Android's inexact alarms, within ten minutes of the
+ * What waits for a time: messages to send later. Android's inexact alarms, within ten minutes of the
  * time, so no permission is needed.
  */
 object Timed {
@@ -46,11 +45,6 @@ object Timed {
             if (evening > now + 30 * 60 * 1000) "This evening, 8 PM" to evening else null,
             "Tomorrow, 8 AM" to morning
         )
-    }
-
-    fun later(context: Context, settings: SettingsStore, threadId: Long, at: Long) {
-        settings.update { it.copy(later = it.later + (threadId to at)) }
-        alarm(context, ACTION_LATER, threadId.toInt(), at) { putExtra("thread", threadId) }
     }
 
     fun schedule(context: Context, message: Scheduled) {
@@ -84,7 +78,7 @@ object Timed {
     internal const val SEND = ACTION_SEND
 }
 
-/** A time came: a conversation set aside comes back, a scheduled message goes. Not exported. */
+/** A time came: a scheduled message goes. Not exported. */
 class TimedReceiver : BroadcastReceiver(), KoinComponent {
     private val settings: SettingsStore by inject()
     private val chat: RichChat by inject()
@@ -95,11 +89,8 @@ class TimedReceiver : BroadcastReceiver(), KoinComponent {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 when (intent.action) {
-                    Timed.LATER -> {
-                        val thread = intent.getLongExtra("thread", -1)
-                        settings.update { it.copy(later = it.later - thread) }
-                        MessageNotifier(app).reminder(thread)
-                    }
+                    // Set aside conversations are gone; an alarm left from before does nothing.
+                    Timed.LATER -> Unit
                     Timed.SEND -> {
                         val s = Timed.take(app, intent.getLongExtra("id", -1)) ?: return@launch
                         val one = s.to.singleOrNull()

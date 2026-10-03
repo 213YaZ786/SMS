@@ -66,7 +66,7 @@ import com.yaz.sms.ui.theme.TEXT_SCALES
 import com.yaz.sms.ui.theme.textScaleLabel
 import org.koin.androidx.compose.koinViewModel
 
-private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY, UNDO }
+private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY, UNDO, SWIPE_LEFT, SWIPE_RIGHT }
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewModel()) {
@@ -138,6 +138,16 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             }
 
             Section("Messages") {
+                SettingRow(
+                    title = "Swipe left",
+                    summary = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE).label,
+                    onClick = { dialog = OpenDialog.SWIPE_LEFT }
+                )
+                SettingRow(
+                    title = "Swipe right",
+                    summary = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE).label,
+                    onClick = { dialog = OpenDialog.SWIPE_RIGHT }
+                )
                 SettingRow(
                     title = "Undo send",
                     summary = if (settings.undoSeconds == 0) "Off" else "${settings.undoSeconds} seconds to take a message back",
@@ -315,6 +325,20 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             options = listOf(0, 2, 4, 6, 10).map { it to if (it == 0) "Off" else "$it seconds" },
             selected = settings.undoSeconds,
             onSelect = viewModel::setUndoSeconds,
+            onDismiss = { dialog = OpenDialog.NONE }
+        )
+        OpenDialog.SWIPE_LEFT -> ChoiceDialog(
+            title = "Swipe left",
+            options = com.yaz.sms.core.sms.SwipeAction.entries.map { it.name to it.label },
+            selected = settings.swipeLeft,
+            onSelect = viewModel::setSwipeLeft,
+            onDismiss = { dialog = OpenDialog.NONE }
+        )
+        OpenDialog.SWIPE_RIGHT -> ChoiceDialog(
+            title = "Swipe right",
+            options = com.yaz.sms.core.sms.SwipeAction.entries.map { it.name to it.label },
+            selected = settings.swipeRight,
+            onSelect = viewModel::setSwipeRight,
             onDismiss = { dialog = OpenDialog.NONE }
         )
         OpenDialog.NONE -> Unit

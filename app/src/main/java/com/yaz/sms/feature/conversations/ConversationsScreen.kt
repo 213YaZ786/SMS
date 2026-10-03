@@ -116,23 +116,21 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     fun nameOf(c: Conversation): String? =
         if (c.group) settings.groupNames[c.threadId] ?: c.addresses.joinToString(", ") { a -> index.find(T9.clean(a))?.name?.substringBefore(' ') ?: Numbers.format(context, a) }
         else index.find(T9.clean(c.address))?.name
-    // settings.later too: a conversation set aside leaves the list at once.
-    val shown = remember(all, filter, settings.pinned, settings.archived, settings.later, query, index) {
+    // Deleted by a swipe, waiting its few seconds to be taken back.
+    var deleting by remember { mutableStateOf<Conversation?>(null) }
+    val rememberedHaptics = rememberHaptics()
+    val shown = remember(all, filter, settings.pinned, settings.archived, query, index, deleting) {
         val q = query.trim().lowercase()
-        Lists.shown(all, filter, settings.pinned, settings.archived, settings.later, known = { c -> index.find(T9.clean(c.address)) != null }).filter { c ->
-            q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
+        Lists.shown(all, filter, settings.pinned, settings.archived, known = { c -> index.find(T9.clean(c.address)) != null }).filter { c ->
+            c.threadId != deleting?.threadId &&
+            (q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q))
         }
     }
     val code = remember(all) { Lists.latestCode(all, System.currentTimeMillis()) }
     var servicesOpen by rememberSaveable { mutableStateOf(false) }
     var peeking by remember { mutableStateOf<Conversation?>(null) }
-    var setAside by remember { mutableStateOf<Conversation?>(null) }
-    // In the archive, the conversations set aside too, until their time.
-    val setAsideList = remember(all, settings.later, filter, query) {
-        if (filter != Filter.ARCHIVED || query.isNotBlank()) emptyList() else Lists.shown(all, Filter.LATER, settings.pinned, settings.archived, settings.later)
-    }
-    val waiting = remember(all, settings.archived, settings.later, filter, query) {
-        if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.waiting(all, settings.archived, System.currentTimeMillis(), later = settings.later)
+    val waiting = remember(all, settings.archived, filter, query) {
+        if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.waiting(all, settings.archived, System.currentTimeMillis())
     }
 
     val line: @Composable (Conversation) -> Unit = { c ->
@@ -144,7 +142,22 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             pinned = c.threadId in settings.pinned,
             onOpen = { onOpenThread(c.threadId, c.addresses.joinToString(",")) },
             onPeek = { peeking = c },
-            onLater = { setAside = c }
+            left = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE),
+            right = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE),
+            archived = Lists.isArchived(c, settings.archived),
+            onSwipe = { action ->
+                when (action) {
+                    com.yaz.sms.core.sms.SwipeAction.ARCHIVE -> {
+                        val on = !Lists.isArchived(c, settings.archived)
+                        store.update { s -> s.copy(archived = if (on) s.archived + (c.threadId to c.date) else s.archived - c.threadId) }
+                    }
+                    com.yaz.sms.core.sms.SwipeAction.DELETE -> deleting = c
+                    com.yaz.sms.core.sms.SwipeAction.READ -> messages.markRead(c.threadId)
+                    com.yaz.sms.core.sms.SwipeAction.PIN -> store.update { s -> s.copy(pinned = if (c.threadId in s.pinned) s.pinned - c.threadId else s.pinned + c.threadId) }
+                    com.yaz.sms.core.sms.SwipeAction.REPLY -> onOpenThread(c.threadId, c.addresses.joinToString(","))
+                    com.yaz.sms.core.sms.SwipeAction.NONE -> Unit
+                }
+            }
         )
     }
 
@@ -162,6 +175,28 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         },
         controls = {
             if (messages.canRead() && all.isNotEmpty()) Filters(query, { query = it })
+        },
+        overlay = {
+            // A conversation deleted by a swipe can be taken back for a few seconds.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = deleting != null,
+                enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
+                    .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
+                    .padding(bottom = 16.dp)
+            ) {
+                FloatingPane(shape = CircleShape) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 20.dp, end = 6.dp, top = 4.dp, bottom = 4.dp)) {
+                        Text("Conversation deleted", style = MaterialTheme.typography.bodyLarge)
+                        Spacer(Modifier.width(8.dp))
+                        androidx.compose.material3.TextButton(onClick = {
+                            rememberedHaptics.done()
+                            deleting = null
+                        }) { Text("Undo") }
+                    }
+                }
+            }
         }
     ) { padding ->
         when {
@@ -172,13 +207,12 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
             !loaded -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { LoadingMark(size = 72.dp) }
-            shown.isEmpty() && waiting.isEmpty() && setAsideList.isEmpty() -> EmptyZone(
+            shown.isEmpty() && waiting.isEmpty() -> EmptyZone(
                 title = when {
                     query.isNotBlank() -> "Nothing found"
                     filter == Filter.UNREAD -> "All read"
                     filter == Filter.ARCHIVED -> "Nothing in the archive"
                     filter == Filter.UNKNOWN -> "No one unknown"
-                    filter == Filter.LATER -> "Nothing set aside"
                     else -> "No messages yet"
                 },
                 message = when {
@@ -203,11 +237,6 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                         Waiting(waiting, index, ::nameOf) { c -> onOpenThread(c.threadId, c.addresses.joinToString(",")) }
                     }
                 }
-                if (setAsideList.isNotEmpty()) {
-                    item(key = "later/title") { Heading("Set aside, back at their time") }
-                    items(setAsideList, key = { "l/${it.threadId}" }) { c -> line(c) }
-                    if (shown.isNotEmpty()) item(key = "archived/title") { Heading("Archived") }
-                }
                 // People first; every service (banks, deliveries, codes) in one stack.
                 val (services, people) = shown.partition { Lists.isService(it) && filter == Filter.ALL && query.isBlank() }
                 if (services.isNotEmpty() && people.isNotEmpty()) item(key = "people") { Heading("People") }
@@ -224,11 +253,18 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         }
     }
 
-    setAside?.let { c ->
-        TimeChoice("Remind me later", explain = "The conversation leaves the list and comes back on top, with a notification, at the time you choose.", onPick = { at ->
-            com.yaz.sms.core.sms.Timed.later(context, store, c.threadId, at)
-            setAside = null
-        }, onDismiss = { setAside = null })
+    // The conversation deleted by a swipe goes after a few seconds, unless taken back.
+    deleting?.let { c ->
+        androidx.compose.runtime.LaunchedEffect(c.threadId) {
+            kotlinx.coroutines.delay(5_000)
+            val gone = messages.delete(c.threadId)
+            scope.launch {
+                gone.join()
+                chat.prune()
+            }
+            store.update { s -> s.copy(pinned = s.pinned - c.threadId, archived = s.archived - c.threadId) }
+            deleting = null
+        }
     }
 
     peeking?.let { c ->
@@ -247,7 +283,6 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             onPin = { on -> store.update { s -> s.copy(pinned = if (on) s.pinned + c.threadId else s.pinned - c.threadId) } },
             onArchive = { on -> store.update { s -> s.copy(archived = if (on) s.archived + (c.threadId to c.date) else s.archived - c.threadId) } },
             onRead = { messages.markRead(c.threadId) },
-            onLater = { setAside = c },
             onDelete = {
                 val gone = messages.delete(c.threadId)
                 // The chat side of its messages goes too, before their numbers are reused.
@@ -344,7 +379,10 @@ private fun ConversationLine(
     pinned: Boolean,
     onOpen: () -> Unit,
     onPeek: () -> Unit,
-    onLater: () -> Unit
+    left: com.yaz.sms.core.sms.SwipeAction,
+    right: com.yaz.sms.core.sms.SwipeAction,
+    archived: Boolean,
+    onSwipe: (com.yaz.sms.core.sms.SwipeAction) -> Unit
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -354,26 +392,40 @@ private fun ConversationLine(
     val pressed by press.collectIsPressedAsState()
     val sink by animateFloatAsState(if (pressed) 0.97f else 1f, spring(dampingRatio = 0.6f, stiffness = 500f), label = "sink")
 
-    // Swiped left, it follows the finger and, past a point, is set aside for later.
+    // Swiped either way, it follows the finger and, past a point, does
+    // what Settings chose for that side (archive and delete at first).
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val pull = remember { androidx.compose.animation.core.Animatable(0f) }
     var armed by remember { mutableStateOf(false) }
-    val reach = with(androidx.compose.ui.platform.LocalDensity.current) { 72.dp.toPx() }
-    Box(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().pointerInput(c.threadId) {
+    val reach = with(androidx.compose.ui.platform.LocalDensity.current) { 88.dp.toPx() }
+    val side = if (pull.value < 0f) left else right
+    Box(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().pointerInput(c.threadId, left, right) {
         detectHorizontalDragGestures(
             onDragEnd = {
-                if (armed) onLater()
+                val action = if (pull.value < 0f) left else right
+                val fire = armed && action != com.yaz.sms.core.sms.SwipeAction.NONE
                 armed = false
-                scope.launch { pull.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 400f)) }
+                scope.launch {
+                    if (fire && (action == com.yaz.sms.core.sms.SwipeAction.DELETE || action == com.yaz.sms.core.sms.SwipeAction.ARCHIVE)) {
+                        // It leaves the way it was pushed.
+                        pull.animateTo(if (pull.value < 0f) -size.width.toFloat() else size.width.toFloat(), androidx.compose.animation.core.tween(180))
+                        onSwipe(action)
+                        pull.snapTo(0f)
+                    } else {
+                        if (fire) onSwipe(action)
+                        pull.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 400f))
+                    }
+                }
             },
             onDragCancel = {
                 armed = false
                 scope.launch { pull.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 400f)) }
             },
             onHorizontalDrag = { change, dx ->
-                val next = (pull.value + dx * (if (pull.value < -reach) 0.35f else 1f)).coerceIn(-reach * 1.6f, 0f)
+                val beyond = kotlin.math.abs(pull.value) > reach
+                val next = (pull.value + dx * (if (beyond) 0.35f else 1f)).coerceIn(-reach * 1.6f, reach * 1.6f)
                 scope.launch { pull.snapTo(next) }
-                val now = next <= -reach
+                val now = kotlin.math.abs(next) >= reach && (if (next < 0f) left else right) != com.yaz.sms.core.sms.SwipeAction.NONE
                 if (now != armed) {
                     armed = now
                     haptics.threshold(now)
@@ -382,19 +434,40 @@ private fun ConversationLine(
             }
         )
     }) {
-        // Under the line as it slides: what letting go will do.
-        if (pull.value < 0f) Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 20.dp).graphicsLayer {
-                val shown = (-pull.value / reach).coerceIn(0f, 1f)
-                alpha = shown
-                scaleX = 0.7f + 0.3f * shown
-                scaleY = 0.7f + 0.3f * shown
+        // Under the line as it slides: what letting go will do, on the side it uncovers.
+        if (pull.value != 0f && side != com.yaz.sms.core.sms.SwipeAction.NONE) {
+            val danger = side == com.yaz.sms.core.sms.SwipeAction.DELETE
+            val tint = when {
+                !armed -> MaterialTheme.colorScheme.onSurfaceVariant
+                danger -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.primary
             }
-        ) {
-            Icon(AppIcons.Schedule, contentDescription = null, tint = if (armed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(8.dp))
-            Text("Later", style = MaterialTheme.typography.labelLarge, color = if (armed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            val icon = when (side) {
+                com.yaz.sms.core.sms.SwipeAction.ARCHIVE -> if (archived) AppIcons.Unarchive else AppIcons.Archive
+                com.yaz.sms.core.sms.SwipeAction.DELETE -> AppIcons.Delete
+                com.yaz.sms.core.sms.SwipeAction.READ -> AppIcons.DoneAll
+                com.yaz.sms.core.sms.SwipeAction.PIN -> AppIcons.PushPin
+                else -> AppIcons.Reply
+            }
+            val label = when (side) {
+                com.yaz.sms.core.sms.SwipeAction.ARCHIVE -> if (archived) "Unarchive" else "Archive"
+                com.yaz.sms.core.sms.SwipeAction.PIN -> if (pinned) "Unpin" else "Pin"
+                else -> side.label
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.align(if (pull.value < 0f) Alignment.CenterEnd else Alignment.CenterStart)
+                    .padding(horizontal = 20.dp).graphicsLayer {
+                        val shown = (kotlin.math.abs(pull.value) / reach).coerceIn(0f, 1f)
+                        alpha = shown
+                        scaleX = 0.7f + 0.3f * shown
+                        scaleY = 0.7f + 0.3f * shown
+                    }
+            ) {
+                Icon(icon, contentDescription = null, tint = tint)
+                Spacer(Modifier.width(8.dp))
+                Text(label, style = MaterialTheme.typography.labelLarge, color = tint)
+            }
         }
         val shape = RoundedCornerShape(22.dp)
         ZoneSurface(

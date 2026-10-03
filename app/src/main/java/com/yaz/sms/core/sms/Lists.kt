@@ -3,7 +3,7 @@ package com.yaz.sms.core.sms
 import com.yaz.sms.data.sms.Conversation
 
 /** Which conversations the list shows. */
-enum class Filter { ALL, UNREAD, UNKNOWN, LATER, ARCHIVED }
+enum class Filter { ALL, UNREAD, UNKNOWN, ARCHIVED }
 
 /** How the list of conversations is put together, apart from the screen. */
 object Lists {
@@ -14,11 +14,9 @@ object Lists {
     fun isArchived(c: Conversation, archived: Map<Long, Long>): Boolean = archived[c.threadId]?.let { c.date <= it } == true
 
     /** The conversations of [filter], pinned ones first, then newest first. */
-    fun shown(all: List<Conversation>, filter: Filter, pinned: List<Long>, archived: Map<Long, Long>, later: Map<Long, Long> = emptyMap(), now: Long = System.currentTimeMillis(), known: (Conversation) -> Boolean = { true }): List<Conversation> {
-        // Set aside ones leave every list but their own until their time.
-        val kept = all.filter { c -> if (filter == Filter.LATER) (later[c.threadId] ?: 0L) > now else (later[c.threadId] ?: 0L) <= now }.filter { c ->
+    fun shown(all: List<Conversation>, filter: Filter, pinned: List<Long>, archived: Map<Long, Long>, known: (Conversation) -> Boolean = { true }): List<Conversation> {
+        val kept = all.filter { c ->
             when (filter) {
-                Filter.LATER -> true
                 Filter.ALL -> !isArchived(c, archived)
                 Filter.UNREAD -> c.unread > 0 && !isArchived(c, archived)
                 // People not in the contacts: no group, no bank or delivery service.
@@ -34,8 +32,8 @@ object Lists {
      * in the last [hours] hours and was read, so the dot is gone but the
      * reply is still owed. Newest first.
      */
-    fun waiting(all: List<Conversation>, archived: Map<Long, Long>, now: Long, hours: Int = 48, limit: Int = 10, later: Map<Long, Long> = emptyMap()): List<Conversation> =
-        all.filter { !it.fromMe && it.unread == 0 && it.date >= now - hours * HOUR_MS && !isArchived(it, archived) && (later[it.threadId] ?: 0L) <= now && it.address.any(Char::isDigit) }
+    fun waiting(all: List<Conversation>, archived: Map<Long, Long>, now: Long, hours: Int = 48, limit: Int = 10): List<Conversation> =
+        all.filter { !it.fromMe && it.unread == 0 && it.date >= now - hours * HOUR_MS && !isArchived(it, archived) && it.address.any(Char::isDigit) }
             .sortedByDescending { it.date }
             .take(limit)
 
@@ -57,4 +55,13 @@ object Lists {
             .filter { !it.fromMe && it.date >= now - minutes * 60_000L }
             .sortedByDescending { it.date }
             .firstNotNullOfOrNull { c -> Codes.find(c.snippet)?.let { c to it } }
+}
+
+/** What a swipe on a conversation does, chosen for each side in Settings. */
+enum class SwipeAction(val label: String) {
+    ARCHIVE("Archive"), DELETE("Delete"), READ("Mark as read"), PIN("Pin"), REPLY("Reply"), NONE("Nothing");
+
+    companion object {
+        fun of(name: String, fallback: SwipeAction): SwipeAction = entries.firstOrNull { it.name == name } ?: fallback
+    }
 }

@@ -79,7 +79,6 @@ fun PersonPage(
     onSearch: () -> Unit,
     onSilence: () -> Unit,
     onBackground: (() -> Unit)?,
-    onRemind: (() -> Unit)?,
     onEncryption: () -> Unit,
     onName: (String) -> Unit,
     onVanish: (Int) -> Unit,
@@ -149,7 +148,7 @@ fun PersonPage(
                     // What can be done with them, side by side and onto a second line.
                     item {
                         // Lines as even as can be: 6 = 3 + 3, 5 = 3 + 2.
-                        val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onRemind, onBackground).size + 2
+                        val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onBackground).size + 2
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -164,7 +163,6 @@ fun PersonPage(
                                 onSearch()
                             }
                             Tile(if (silencedUntil != null) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silencedUntil != null) "Silenced" else "Silence", null, null, onSilence)
-                            onRemind?.let { Tile(AppIcons.Schedule, "Remind me", null, null, it) }
                             onBackground?.let { Tile(AppIcons.Palette, "Background", null, null, it) }
                         }
                     }

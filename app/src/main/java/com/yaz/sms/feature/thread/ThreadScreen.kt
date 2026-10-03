@@ -352,7 +352,6 @@ private fun ThreadContent(
     var at by remember { mutableStateOf(0) }
     var sharedOpen by remember { mutableStateOf(false) }
     var silenceOpen by remember { mutableStateOf(false) }
-    var remindOpen by remember { mutableStateOf(false) }
     var encryptionOpen by remember { mutableStateOf(false) }
     // Asked from the Contacts app's "verified" mark: the keys at once.
     val requests: com.yaz.sms.core.sms.OpenRequests = koinInject()
@@ -408,15 +407,6 @@ private fun ThreadContent(
         store.update { s -> s.copy(silenced = if (until == null) s.silenced - t else s.silenced.filterValues { it > System.currentTimeMillis() } + (t to until)) }
         if (until != null) com.yaz.sms.core.sms.MessageNotifier(context).cancel(t)
     }) { silenceOpen = false }
-    if (remindOpen && thread != null) com.yaz.sms.feature.conversations.TimeChoice(
-        "Remind me to reply",
-        explain = "The conversation leaves the list and comes back on top, with a notification, at the time you choose.",
-        onPick = { time ->
-            thread?.let { t -> com.yaz.sms.core.sms.Timed.later(context, store, t, time) }
-            remindOpen = false
-        },
-        onDismiss = { remindOpen = false }
-    )
     if (encryptionOpen) EncryptionDialog(to) { encryptionOpen = false }
     if (personOpen) PersonPage(
         name = if (group) title else entry?.name ?: Numbers.format(context, to),
@@ -434,7 +424,6 @@ private fun ThreadContent(
         onSearch = { searching = true },
         onSilence = { silenceOpen = true },
         onBackground = if (thread != null && appLook != null) ({ backgroundOpen = true }) else null,
-        onRemind = if (thread != null) ({ remindOpen = true }) else null,
         onEncryption = { encryptionOpen = true },
         onName = { name ->
             thread?.let { t ->
