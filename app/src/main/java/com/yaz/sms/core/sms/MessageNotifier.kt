@@ -45,7 +45,7 @@ class MessageNotifier(private val context: Context) {
         val name = ContactLookup.nameOf(context, address) ?: Numbers.format(context, address)
         val sender = Person.Builder().setName(name).setKey(address).build()
         val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
-        unread.forEach { (_, body, date) -> style.addMessage(Markup.plain(Effects.plain(body)), date, sender) }
+        unread.forEach { (_, body, date) -> style.addMessage(Markup.plain(Effects.plain(SmsReactions.plain(body))), date, sender) }
         val code = Codes.find(unread.last().second)
         // Someone with a vibration of their own rings on its channel: the one
         // the Contacts app keeps in the contact first, else the one set here.

@@ -589,6 +589,7 @@ private fun ThreadContent(
                         row.last,
                         fresh = row.message.box == MessageBox.RECEIVED && row.message.uid in fresh,
                         rich = chat.refOf(row.message.mms, row.message.id).also { refs.size },
+                        smsReactions = row.smsReactions,
                         onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },
                         onPollShown = { scope.launch { chat.recount(row.message.mms, row.message.id) } },
                         sender = if (group && row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null,
@@ -624,10 +625,13 @@ private fun ThreadContent(
 private sealed class Row(val key: String) {
     class Day(val label: String, day: String) : Row("day/$day")
     // An SMS and a picture message may hold the same number: the kind is part of the key.
-    class Bubble(val message: Message, val last: Boolean) : Row("m/${message.uid}")
+    class Bubble(val message: Message, val last: Boolean, val smsReactions: List<String> = emptyList()) : Row("m/${message.uid}")
 }
 
-private fun rowsOf(list: List<Message>): List<Row> {
+private fun rowsOf(all: List<Message>): List<Row> {
+    // Reactions that came as SMS sit under their message, not as messages of their own.
+    val folded = com.yaz.sms.core.sms.SmsReactions.fold(all)
+    val list = folded.messages
     val out = ArrayList<Row>()
     var day: java.time.LocalDate? = null
     val lastMine = list.lastOrNull { it.box != MessageBox.RECEIVED }?.id
@@ -637,7 +641,7 @@ private fun rowsOf(list: List<Message>): List<Row> {
             day = d
             out += Row.Day(dayLabel(d), d.toString())
         }
-        out += Row.Bubble(m, m.id == lastMine)
+        out += Row.Bubble(m, m.id == lastMine, folded.reactions[m.uid].orEmpty())
     }
     return out
 }
@@ -765,6 +769,7 @@ private fun Bubble(
     rich: RichRef?,
     onReact: (String?) -> Unit,
     sender: String?,
+    smsReactions: List<String> = emptyList(),
     onRetry: () -> Unit,
     onDelete: () -> Unit,
     onQuote: () -> Unit,
@@ -1082,7 +1087,7 @@ private fun Bubble(
             }
         }
         // A poll's votes are in its card, not here.
-        val shownReactions = rich?.reactions.orEmpty().filter { poll == null || com.yaz.sms.core.sms.Polls.choiceOf(it) < 0 }
+        val shownReactions = rich?.reactions.orEmpty().filter { poll == null || com.yaz.sms.core.sms.Polls.choiceOf(it) < 0 } + smsReactions
         if (shownReactions.isNotEmpty()) {
             FloatingPane(shape = CircleShape, modifier = Modifier.padding(top = 2.dp)) {
                 Text(shownReactions.joinToString(" "), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))

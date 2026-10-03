@@ -456,9 +456,9 @@ private fun ConversationLine(
                     }
                     Text(
                         when {
-                            c.failed -> "Not sent: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(c.snippet))
-                            c.fromMe -> "You: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(c.snippet))
-                            else -> com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(c.snippet))
+                            c.failed -> "Not sent: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
+                            c.fromMe -> "You: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
+                            else -> com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = when {
