@@ -38,6 +38,7 @@ import kotlinx.coroutines.delay
 
 /** What the + offers to send with the text. */
 enum class Drop(val icon: ImageVector, val label: String) {
+    EFFECTS(AppIcons.AutoAwesome, "Effects"),
     PHOTOS(AppIcons.Image, "Photos"),
     CAMERA(AppIcons.PhotoCamera, "Camera"),
     FILE(AppIcons.AttachFile, "File"),

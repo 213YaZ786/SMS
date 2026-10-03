@@ -262,7 +262,7 @@ fun LatestButton(newCount: Int, onClick: () -> Unit) {
 }
 
 /** How each effect is offered: its sign and its name. */
-private val effectFaces = listOf(
+internal val effectFaces = listOf(
     com.yaz.sms.core.sms.Effects.Effect.SLAM to ("💥" to "Slam"),
     com.yaz.sms.core.sms.Effects.Effect.LOUD to ("📣" to "Loud"),
     com.yaz.sms.core.sms.Effects.Effect.GENTLE to ("🍃" to "Gentle"),
@@ -285,12 +285,12 @@ private val effectFaces = listOf(
  * it to the user alone, unless its words bring one.
  */
 @Composable
-fun EffectSheet(carried: Boolean, onLater: () -> Unit, onPick: (com.yaz.sms.core.sms.Effects.Effect) -> Unit, onDismiss: () -> Unit) {
+fun EffectSheet(carried: Boolean, onLater: (() -> Unit)?, onPick: (com.yaz.sms.core.sms.Effects.Effect) -> Unit, onDismiss: () -> Unit) {
     val haptics = rememberHaptics()
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         com.yaz.sms.ui.component.ZoneSurface(shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp)) {
             Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                FloatingPane(shape = CircleShape, onClick = {
+                if (onLater != null) FloatingPane(shape = CircleShape, onClick = {
                     haptics.tick()
                     onLater()
                 }) {

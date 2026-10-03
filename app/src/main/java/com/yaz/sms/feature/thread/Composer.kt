@@ -80,6 +80,10 @@ fun Composer(
     onSchedule: ((String, Int) -> Unit)? = null,
     /** Held, Send offers the effects (and sending later): the text and SIM go there. */
     onEffects: ((String, Int) -> Unit)? = null,
+    /** Sends with an effect chosen from the + before the words were written. */
+    onSendEffect: ((String, Int, com.yaz.sms.core.sms.Effects.Effect) -> Unit)? = null,
+    /** The other side sees effects too (the encrypted chat). */
+    effectsCarried: Boolean = false,
     /** Over the encrypted chat: the + also offers a poll. */
     onPoll: (() -> Unit)? = null,
     editing: String? = null,
@@ -159,6 +163,9 @@ fun Composer(
     var arcOpen by remember { mutableStateOf(false) }
     // A voice message being recorded, and how far the finger has slid to cancel or to lock.
     var take by remember { mutableStateOf<VoiceTake?>(null) }
+    // The effect picked from the + before writing, and its chooser.
+    var armed by remember { mutableStateOf<com.yaz.sms.core.sms.Effects.Effect?>(null) }
+    var choosingEffect by remember { mutableStateOf(false) }
     var slide by remember { mutableStateOf(0f) }
     var rise by remember { mutableStateOf(0f) }
     val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -208,6 +215,28 @@ fun Composer(
                 }
             }
         }
+        // An effect chosen from the +, waiting for the words it goes with.
+        armed?.let { effect ->
+            val face = effectFaces.firstOrNull { it.first == effect }?.second
+            Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.CenterStart) {
+                FloatingPane(shape = CircleShape, accent = true, onClick = { haptics.tick(); armed = null }) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)) {
+                        Text((face?.first ?: "✨") + "  " + (face?.second ?: "Effect") + " · with your next message", style = MaterialTheme.typography.labelLarge)
+                        Icon(AppIcons.Close, contentDescription = "No effect", modifier = Modifier.padding(start = 8.dp).size(16.dp))
+                    }
+                }
+            }
+        }
+        if (choosingEffect) EffectSheet(
+            carried = effectsCarried,
+            onLater = null,
+            onPick = { effect ->
+                choosingEffect = false
+                armed = effect
+                haptics.done()
+            },
+            onDismiss = { choosingEffect = false }
+        )
         // The first times words are written: what holding Send offers, said once each time.
         val hintStore: com.yaz.sms.data.settings.SettingsStore = org.koin.compose.koinInject()
         var hintNow by remember { mutableStateOf(false) }
@@ -274,9 +303,15 @@ fun Composer(
                         Icon(AppIcons.Delete, contentDescription = "Discard the recording", tint = MaterialTheme.colorScheme.error)
                     }
                 }
-            } else if (recording == null) AttachArc(open = arcOpen, onOpen = { arcOpen = it }, drops = Drop.entries.filter { it != Drop.POLL || onPoll != null }) { drop ->
+            } else if (recording == null) AttachArc(open = arcOpen, onOpen = { arcOpen = it }, drops = Drop.entries.filter { (it != Drop.POLL || onPoll != null) && (it != Drop.EFFECTS || onSendEffect != null) }) { drop ->
                 runCatching {
                     when (drop) {
+                        // The effects: at once with the words written, else chosen for the next message.
+                        Drop.EFFECTS -> if (text.isNotBlank() && attachments.isEmpty() && onEffects != null) {
+                            val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                            onEffects(text, sub)
+                            text = ""
+                        } else choosingEffect = true
                         Drop.PHOTOS -> pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
                         Drop.CAMERA -> {
                             val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
@@ -415,6 +450,15 @@ fun Composer(
                     return
                 }
                 val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                // An effect chosen from the + goes with these words.
+                val effect = armed
+                if (effect != null && onSendEffect != null && attachments.isEmpty()) {
+                    haptics.done()
+                    onSendEffect(text, sub, effect)
+                    text = ""
+                    armed = null
+                    return
+                }
                 if (onSend(text, sub, attachments)) {
                     haptics.done()
                     text = ""
