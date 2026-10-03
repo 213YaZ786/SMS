@@ -56,8 +56,12 @@ enum class Drop(val icon: ImageVector, val label: String) {
 
 private val ButtonSize = 52.dp
 private val DropSize = 52.dp
-/** How far the drops roll: further when there are five, so they never touch. */
-private fun radiusFor(count: Int) = if (count > 4) 140.dp else 104.dp
+/** How far the drops roll: further when there are five or six, so they never touch. */
+private fun radiusFor(count: Int) = when {
+    count > 5 -> 196.dp
+    count > 4 -> 156.dp
+    else -> 104.dp
+}
 
 /** Where each drop settles: a quarter of a circle around the +, from straight up to its right. */
 private fun angles(count: Int) = List(count) { i -> 90.0 - i * 90.0 / (count - 1).coerceAtLeast(1) }
@@ -149,16 +153,17 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop
         }
         if (open) {
             val pad = with(density) { (arcRadius + DropSize).roundToPx() }
+            val margin = with(density) { DropSize.roundToPx() }
             Popup(
-                popupPositionProvider = remember(pad) { ArcPlace(pad) },
+                popupPositionProvider = remember(pad, margin) { ArcPlace(pad, margin) },
                 onDismissRequest = { onOpen(false) },
                 properties = PopupProperties(focusable = false, dismissOnClickOutside = true, clippingEnabled = false)
             ) {
-                // The popup's box: its corner at the +'s centre, the drops around it.
-                val side = with(density) { (pad * 2).toDp() }
+                // The popup's box: the quarter above and right of the +, never wider than the screen.
+                val side = with(density) { (pad + margin).toDp() }
                 Box(Modifier.size(side)) {
                     drops.forEachIndexed { i, drop ->
-                        MercuryDrop(drop, i, arcAngles[i], arcRadius, hovered = hover == i, centre = pad) {
+                        MercuryDrop(drop, i, arcAngles[i], arcRadius, hovered = hover == i, cx = margin, cy = pad) {
                             haptics.firm()
                             onOpen(false)
                             onPick(drop)
@@ -172,7 +177,7 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop
 
 /** One drop: rolls out of the + along its ray, spinning into place, a little after the one before. */
 @Composable
-private fun MercuryDrop(drop: Drop, order: Int, angle: Double, arcRadius: androidx.compose.ui.unit.Dp, hovered: Boolean, centre: Int, onClick: () -> Unit) {
+private fun MercuryDrop(drop: Drop, order: Int, angle: Double, arcRadius: androidx.compose.ui.unit.Dp, hovered: Boolean, cx: Int, cy: Int, onClick: () -> Unit) {
     val density = LocalDensity.current
     val out = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
@@ -186,7 +191,7 @@ private fun MercuryDrop(drop: Drop, order: Int, angle: Double, arcRadius: androi
     Box(
         Modifier.offset {
             val d = radius * out.value
-            IntOffset(centre + (d * cos(r)).roundToInt() - half, centre - (d * sin(r)).roundToInt() - half)
+            IntOffset(cx + (d * cos(r)).roundToInt() - half, cy - (d * sin(r)).roundToInt() - half)
         }
     ) {
         FloatingPane(
@@ -215,7 +220,7 @@ private fun MercuryDrop(drop: Drop, order: Int, angle: Double, arcRadius: androi
 }
 
 /** Places the drops' box so that its centre sits on the + button's centre. */
-private class ArcPlace(val pad: Int) : PopupPositionProvider {
+private class ArcPlace(val pad: Int, val margin: Int) : PopupPositionProvider {
     override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) =
-        IntOffset(anchorBounds.center.x - pad, anchorBounds.center.y - pad)
+        IntOffset(anchorBounds.center.x - margin, anchorBounds.center.y - pad)
 }

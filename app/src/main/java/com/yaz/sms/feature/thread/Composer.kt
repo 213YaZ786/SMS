@@ -133,13 +133,19 @@ fun Composer(
     // Where the phone is, once, into the words: the user sends it or not.
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var locating by remember { mutableStateOf(false) }
+    var lost by remember { mutableStateOf(false) }
     fun placeHere() {
         locating = true
         scope.launch {
             val here = com.yaz.sms.core.sms.HereNow.find(context)
             locating = false
-            if (here == null) haptics.reject()
-            else {
+            if (here == null) {
+                haptics.reject()
+                // Said in the field a moment: location off, or no fix within the time.
+                lost = true
+                kotlinx.coroutines.delay(3000)
+                lost = false
+            } else {
                 haptics.done()
                 val link = com.yaz.sms.core.sms.HereNow.link(here)
                 text = if (text.isBlank()) "📍 $link" else text.trimEnd() + "\n📍 " + link
@@ -304,7 +310,7 @@ fun Composer(
             } else FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f).graphicsLayer { alpha = veil }) {
               Box {
                 Box(Modifier.padding(start = 18.dp, end = if (text.isNotEmpty()) 44.dp else 18.dp, top = 15.dp, bottom = 15.dp)) {
-                    if (text.isEmpty()) Text(if (locating) "Finding where you are…" else "Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (text.isEmpty()) Text(if (locating) "Finding where you are…" else if (lost) "Not found: is location on?" else "Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val faded = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     BasicTextField(
                         value = androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(sel.start.coerceIn(0, text.length), sel.end.coerceIn(0, text.length))),

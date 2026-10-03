@@ -14,8 +14,8 @@ import kotlin.coroutines.resume
 /**
  * Where the phone is, once, when the user taps Place in the composer:
  * Android's own location (no Google service needed), a fix of the last two
- * minutes when there is one, else a fresh one within 30 seconds. Never in
- * the background, never kept.
+ * minutes when there is one, else the first fresh one any provider gives
+ * within 30 seconds. Never in the background, never kept.
  */
 object HereNow {
 
@@ -34,12 +34,21 @@ object HereNow {
             .filter { System.currentTimeMillis() - it.time < 2 * 60 * 1000L }
             .minByOrNull { it.accuracy }
         if (recent != null) return recent
+        // Every provider at once (a phone may have only one that answers): the first fix wins.
         return withTimeoutOrNull(30_000) {
             suspendCancellableCoroutine { done ->
-                val cancel = CancellationSignal()
-                done.invokeOnCancellation { cancel.cancel() }
-                manager.getCurrentLocation(providers.first(), cancel, ContextCompat.getMainExecutor(context)) { location ->
-                    if (done.isActive) done.resume(location)
+                val cancels = providers.map { CancellationSignal() }
+                done.invokeOnCancellation { cancels.forEach(CancellationSignal::cancel) }
+                var left = providers.size
+                providers.forEachIndexed { i, provider ->
+                    manager.getCurrentLocation(provider, cancels[i], ContextCompat.getMainExecutor(context)) { location ->
+                        left--
+                        if (!done.isActive) return@getCurrentLocation
+                        if (location != null) {
+                            cancels.forEach(CancellationSignal::cancel)
+                            done.resume(location)
+                        } else if (left == 0) done.resume(null)
+                    }
                 }
             }
         }
