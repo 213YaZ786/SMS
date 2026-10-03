@@ -74,6 +74,8 @@ fun Composer(
     restore: String? = null,
     onRestored: () -> Unit = {},
     onSchedule: ((String, Int) -> Unit)? = null,
+    /** Held, Send offers the effects (and sending later): the text and SIM go there. */
+    onEffects: ((String, Int) -> Unit)? = null,
     editing: String? = null,
     onCancelEdit: () -> Unit = {},
     onEdit: (String) -> Unit = {},
@@ -385,10 +387,10 @@ fun Composer(
                 detectTapGestures(
                     onTap = { send() },
                     onLongPress = {
-                        if (editing == null && text.isNotBlank() && attachments.isEmpty() && onSchedule != null) {
+                        if (editing == null && text.isNotBlank() && attachments.isEmpty() && (onEffects != null || onSchedule != null)) {
                             haptics.firm()
                             val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
-                            onSchedule(text, sub)
+                            if (onEffects != null) onEffects(text, sub) else onSchedule?.invoke(text, sub)
                             text = ""
                         }
                     }

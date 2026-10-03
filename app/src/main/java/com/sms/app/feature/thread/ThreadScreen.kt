@@ -118,6 +118,7 @@ import com.sms.app.ui.icon.AppIcons
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
+import kotlin.math.PI
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
@@ -200,6 +201,10 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     var scheduled by remember { mutableStateOf(com.sms.app.core.sms.Timed.scheduled(context)) }
     // Received messages that arrive while the conversation is open drop in.
     var known by remember { mutableStateOf<Set<String>?>(null) }
+    // Sent with an effect: it plays here at once, and the bubble remembers it a while.
+    val sentEffects = remember { androidx.compose.runtime.mutableStateMapOf<String, Pair<com.sms.app.core.sms.Effects.Effect, Long>>() }
+    var playing by remember { mutableStateOf<Triple<com.sms.app.core.sms.Effects.Effect, String, androidx.compose.ui.geometry.Offset?>?>(null) }
+    var effecting by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var fresh by remember { mutableStateOf<Set<String>>(emptySet()) }
     val haptics = rememberHaptics()
     LaunchedEffect(list) {
@@ -210,6 +215,15 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
             if (new.isNotEmpty()) {
                 fresh = fresh + new
                 haptics.tick()
+                // A message that came in with an effect, or whose words bring one, plays it.
+                list.filter { it.uid in new }.maxByOrNull { it.date }?.let { m ->
+                    val (words, carried) = com.sms.app.core.sms.Effects.read(m.body)
+                    val screen = carried?.takeIf { it.screen } ?: com.sms.app.core.sms.Effects.fromWords(words)
+                    screen?.let { playing = Triple(it, words, null) }
+                }
+            } else {
+                // Opened on unread news: the newest unread one with an effect plays once.
+                Unit
             }
         }
         known = received
@@ -220,7 +234,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
             val attachments = p.attachments.map { com.sms.app.core.mms.MediaPrivacy.clean(context, it) }
             // Over the rich chat when the number has it, quote included;
             // else a group or a picture as a picture message, the rest as SMS.
-            if (encrypted && chat.send(people, p.text, attachments, p.quoted)) return@launch
+            // The effect travels over the encrypted chat; an SMS stays plain (and cheap).
+            if (encrypted && chat.send(people, p.effect?.let { com.sms.app.core.sms.Effects.mark(p.text, it) } ?: p.text, attachments, p.quoted)) return@launch
             val text = p.quoted?.let { "«${excerpt(it)}»\n${p.text}" } ?: p.text
             if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, p.sub)
             else SmsSender.send(context, to, text, p.sub)
@@ -229,6 +244,44 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         }
     }
 
+    fun queue(p: Pending) {
+        quote = null
+        p.effect?.let { e ->
+            sentEffects[p.text] = e to System.currentTimeMillis()
+            if (e.screen) playing = Triple(e, p.text, null)
+        }
+        val delay = store.current.undoSeconds
+        if (delay <= 0) {
+            sendNow(p)
+        } else {
+            waiting = waiting + p
+            scope.launch {
+                kotlinx.coroutines.delay(delay * 1000L)
+                if (waiting.any { it.key == p.key }) {
+                    waiting = waiting.filterNot { it.key == p.key }
+                    haptics.done()
+                    sendNow(p)
+                }
+            }
+        }
+    }
+    effecting?.let { (text, sub) ->
+        EffectSheet(
+            carried = encrypted,
+            onLater = {
+                effecting = null
+                scheduling = text to sub
+            },
+            onPick = { effect ->
+                effecting = null
+                queue(Pending(System.nanoTime(), text, sub, emptyList(), quote, effect))
+            },
+            onDismiss = {
+                effecting = null
+                restore = text
+            }
+        )
+    }
     scheduling?.let { (text, sub) ->
         com.sms.app.feature.conversations.TimeChoice("Send later", onPick = { at ->
             com.sms.app.core.sms.Timed.schedule(context, com.sms.app.core.sms.Scheduled(System.currentTimeMillis(), people, text, at, sub))
@@ -389,28 +442,16 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     editing = null
                     if (e != null && typed.isNotBlank() && typed != e.second) scope.launch { if (!chat.edit(e.first, typed)) haptics.reject() }
                 },
+                onEffects = { text, sub -> effecting = text to sub },
                 onSend = { typed, sub, attachments ->
                     if (people.isEmpty()) return@Composer false
-                    val p = Pending(System.nanoTime(), typed, sub, attachments, quote)
-                    quote = null
-                    val delay = store.current.undoSeconds
-                    if (delay <= 0) {
-                        sendNow(p)
-                    } else {
-                        waiting = waiting + p
-                        scope.launch {
-                            kotlinx.coroutines.delay(delay * 1000L)
-                            if (waiting.any { it.key == p.key }) {
-                                waiting = waiting.filterNot { it.key == p.key }
-                                haptics.done()
-                                sendNow(p)
-                            }
-                        }
-                    }
+                    queue(Pending(System.nanoTime(), typed, sub, attachments, quote))
                     true
                 }
             )
           }
+          // A screen effect over everything, letting touches through.
+          playing?.let { (e, w, o) -> ScreenEffect(e, w, o) { playing = null } }
         }
     ) { padding ->
         val inset = LocalReadableInset.current
@@ -488,7 +529,9 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                         onPin = { id, on -> scope.launch { chat.pin(id, on) } },
                         chatId = chat.chatIdOf(row.message.mms, row.message.id).also { refs.size },
                         stranger = row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
-                        highlight = if (searching) query.trim().takeIf { it.isNotEmpty() } else null
+                        highlight = if (searching) query.trim().takeIf { it.isNotEmpty() } else null,
+                        sentEffect = sentEffects[com.sms.app.core.sms.Effects.plain(row.message.body)]?.takeIf { (_, at) -> row.message.box != MessageBox.RECEIVED && row.message.date >= at - 10_000 }?.first,
+                        onReplay = { e, words -> playing = Triple(e, words, null) }
                     ) }
                 }
             }
@@ -649,7 +692,9 @@ private fun Bubble(
     onPin: (Int, Boolean) -> Unit,
     chatId: Int?,
     stranger: Boolean = false,
-    highlight: String? = null
+    highlight: String? = null,
+    sentEffect: com.sms.app.core.sms.Effects.Effect? = null,
+    onReplay: (com.sms.app.core.sms.Effects.Effect, String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -657,6 +702,13 @@ private fun Bubble(
     var menuOpen by remember { mutableStateOf(false) }
     var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val mine = m.box != MessageBox.RECEIVED
+    // The words without an effect's mark, and the effect: carried, sent from here, or brought by the words.
+    val (said, carried) = remember(m.body) { com.sms.app.core.sms.Effects.read(m.body) }
+    val bubbleEffect = (carried ?: sentEffect)?.takeIf { !it.screen }
+    var replays by remember { mutableStateOf(0) }
+    // Invisible ink: blurred until touched.
+    var inked by remember(m.uid) { mutableStateOf(bubbleEffect == com.sms.app.core.sms.Effects.Effect.INK) }
+    val screenEffect = (carried ?: sentEffect)?.takeIf { it.screen } ?: remember(said) { com.sms.app.core.sms.Effects.fromWords(said) }
     // A vanishing message's ring: what is left of its time, emptying as it goes.
     var left by remember { mutableStateOf(1f) }
     val vanishAt = rich?.vanishAt ?: 0L
@@ -679,7 +731,7 @@ private fun Bubble(
         haptics.done()
         onReact(emoji)
     }) { pickingEmoji = false }
-    if (selecting) SelectTextDialog(m.body) { selecting = false }
+    if (selecting) SelectTextDialog(said) { selecting = false }
     if (confirmDeleteAll && chatId != null) {
         ZoneAlertDialog(
             onDismissRequest = { confirmDeleteAll = false },
@@ -694,23 +746,23 @@ private fun Bubble(
             dismissButton = { TextButton(onClick = { confirmDeleteAll = false }) { Text("Cancel") } }
         )
     }
-    val code = remember(m.body) { if (mine) null else Codes.find(m.body) }
-    val parcel = remember(m.body) { if (mine || code != null) null else com.sms.app.core.sms.Finds.parcel(m.body) }
-    val appointment = remember(m.body) { if (code != null) null else com.sms.app.core.sms.Finds.appointment(m.body) }
+    val code = remember(said) { if (mine) null else Codes.find(said) }
+    val parcel = remember(said) { if (mine || code != null) null else com.sms.app.core.sms.Finds.parcel(said) }
+    val appointment = remember(said) { if (code != null) null else com.sms.app.core.sms.Finds.appointment(said) }
     val accent = MaterialTheme.colorScheme.primary
     // Links in what was received are looked at for what they may hide; one tapped asks first.
     val danger = cautionColor()
     val listVersion by com.sms.app.core.link.BadHosts.version.collectAsState()
-    val checks = remember(m.body, stranger, listVersion, mine) {
-        if (mine) emptyMap() else links(m.body).associateWith { url ->
+    val checks = remember(said, stranger, listVersion, mine) {
+        if (mine) emptyMap() else links(said).associateWith { url ->
             com.sms.app.core.link.LinkCheck.check(url, stranger) { host -> com.sms.app.core.link.BadHosts.listed(context, host) }
         }.filterValues { it != null }.mapValues { it.value!! }
     }
     var risky by remember { mutableStateOf<Pair<String, com.sms.app.core.link.LinkCheck.Verdict>?>(null) }
     risky?.let { (url, verdict) -> RiskyLinkDialog(url, verdict, onDismiss = { risky = null }) }
     val found = MaterialTheme.colorScheme.tertiary
-    val text = remember(m.body, accent, checks, highlight) {
-        marked(linked(m.body, accent, danger, checks) { url, verdict ->
+    val text = remember(said, accent, checks, highlight) {
+        marked(linked(said, accent, danger, checks) { url, verdict ->
             haptics.reject()
             risky = url to verdict
         }, highlight, found)
@@ -750,9 +802,46 @@ private fun Bubble(
         val pull = remember { Animatable(0f) }
         var armed by remember { mutableStateOf(false) }
         val reach = with(LocalDensity.current) { 56.dp.toPx() }
-        if (m.body.isNotEmpty() || m.parts.isEmpty()) Box(
+        // The bubble's effect, played as it comes in or is sent, and again on Replay.
+        val fx = remember(m.uid) { Animatable(if (bubbleEffect != null && (fresh || sentEffect != null)) 0f else 1f) }
+        LaunchedEffect(replays, bubbleEffect) {
+            val e = bubbleEffect ?: return@LaunchedEffect
+            if (replays == 0 && fx.value >= 1f) return@LaunchedEffect
+            fx.snapTo(0f)
+            fx.animateTo(1f, androidx.compose.animation.core.tween(if (e == com.sms.app.core.sms.Effects.Effect.GENTLE) 1700 else 950, easing = androidx.compose.animation.core.LinearEasing))
+        }
+        LaunchedEffect(fx.value >= 0.35f) { if (bubbleEffect == com.sms.app.core.sms.Effects.Effect.SLAM && fx.value in 0.35f..0.5f) haptics.firm() }
+        if (said.isNotEmpty() || m.parts.isEmpty()) Box(
             Modifier
                 .fillMaxWidth(0.82f)
+                .graphicsLayer {
+                    val k = fx.value
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (mine) 1f else 0f, 1f)
+                    when (bubbleEffect) {
+                        // Slammed down from above, the last bit with a bounce.
+                        com.sms.app.core.sms.Effects.Effect.SLAM -> {
+                            val drop = if (k < 0.4f) 1f - (k / 0.4f) * (k / 0.4f) else 0f
+                            val bounce = if (k >= 0.4f) kotlin.math.sin(((k - 0.4f) / 0.6f) * 3 * PI).toFloat() * (1f - (k - 0.4f) / 0.6f) * 0.08f else 0f
+                            val sc = 1f + 1.3f * drop + bounce
+                            scaleX = sc; scaleY = sc
+                            translationY = -drop * 60.dp.toPx()
+                        }
+                        // Big and shaking, then settling.
+                        com.sms.app.core.sms.Effects.Effect.LOUD -> {
+                            val big = if (k < 0.65f) 1f else 1f - (k - 0.65f) / 0.35f
+                            val sc = 1f + 0.55f * big
+                            scaleX = sc; scaleY = sc
+                            rotationZ = kotlin.math.sin(k * 70f) * 4f * big
+                        }
+                        // Small and quiet, growing slowly into place.
+                        com.sms.app.core.sms.Effects.Effect.GENTLE -> {
+                            val sc = 0.55f + 0.45f * (if (k < 0.5f) 0f else (k - 0.5f) / 0.5f)
+                            scaleX = sc; scaleY = sc
+                            alpha = 0.6f + 0.4f * k
+                        }
+                        else -> Unit
+                    }
+                }
                 // Swiped right, it follows the finger, ticks once past the
                 // point where it will be answered, and springs back.
                 .pointerInput(m.id) {
@@ -822,7 +911,12 @@ private fun Bubble(
                         }
                     }
                     .clip(shape).combinedClickable(
-                    onClick = { if (m.box == MessageBox.FAILED) onRetry() },
+                    onClick = {
+                        if (inked) {
+                            haptics.tick()
+                            inked = false
+                        } else if (m.box == MessageBox.FAILED) onRetry()
+                    },
                     // A double tap gives a heart, over the rich chat.
                     onDoubleClick = if (rich != null) ({
                         haptics.done()
@@ -846,7 +940,7 @@ private fun Bubble(
                     label = "words"
                 ) { words ->
                     val blur by transition.animateDp(label = "blur") { if (it == androidx.compose.animation.EnterExitState.Visible) 0.dp else 6.dp }
-                    Text(words, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.blur(blur).padding(horizontal = 16.dp, vertical = 10.dp))
+                    Text(words, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.blur(if (inked) 14.dp else blur).padding(horizontal = 16.dp, vertical = 10.dp))
                 }
               }
             }
@@ -857,11 +951,18 @@ private fun Bubble(
                 chosen = rich?.reactions.orEmpty(),
                 actions = listOfNotNull(
                     MessageAction(AppIcons.Reply, "Reply") { onQuote() },
+                    if (bubbleEffect != null || screenEffect != null) MessageAction(AppIcons.Play, "Replay") {
+                        if (bubbleEffect != null) {
+                            if (bubbleEffect == com.sms.app.core.sms.Effects.Effect.INK) inked = true
+                            replays++
+                        }
+                        screenEffect?.let { onReplay(it, said) }
+                    } else null,
                     // Only the user's own messages of the encrypted chat change for both sides.
-                    if (chatId != null && rich?.mine == true && m.body.isNotBlank()) MessageAction(AppIcons.Create, "Edit") { onEdit(chatId) } else null,
-                    if (m.body.isNotBlank()) MessageAction(AppIcons.Copy, "Copy") { copy(context, "Message", m.body) } else null,
-                    if (m.body.length > 12) MessageAction(AppIcons.SelectAll, "Select") { selecting = true } else null,
-                    if (m.body.isNotBlank()) MessageAction(AppIcons.Forward, "Forward") { forward(context, m.body) } else null,
+                    if (chatId != null && rich?.mine == true && said.isNotBlank()) MessageAction(AppIcons.Create, "Edit") { onEdit(chatId) } else null,
+                    if (said.isNotBlank()) MessageAction(AppIcons.Copy, "Copy") { copy(context, "Message", said) } else null,
+                    if (said.length > 12) MessageAction(AppIcons.SelectAll, "Select") { selecting = true } else null,
+                    if (said.isNotBlank()) MessageAction(AppIcons.Forward, "Forward") { forward(context, said) } else null,
                     if (chatId != null) MessageAction(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin") { onPin(chatId, rich?.pinned != true) } else null,
                     if (m.box == MessageBox.FAILED && !m.mms) MessageAction(AppIcons.Send, "Try again") { onRetry() } else null,
                     if (chatId != null && rich?.mine == true) MessageAction(AppIcons.Delete, "Delete for everyone", danger = true) { confirmDeleteAll = true } else null,
@@ -922,7 +1023,7 @@ private fun Bubble(
                                 android.content.Intent(android.content.Intent.ACTION_INSERT, android.provider.CalendarContract.Events.CONTENT_URI)
                                     .putExtra(android.provider.CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin)
                                     .putExtra(android.provider.CalendarContract.EXTRA_EVENT_END_TIME, begin + 60 * 60 * 1000)
-                                    .putExtra(android.provider.CalendarContract.Events.DESCRIPTION, m.body)
+                                    .putExtra(android.provider.CalendarContract.Events.DESCRIPTION, said)
                             )
                         }
                     }) {
@@ -1230,7 +1331,7 @@ internal fun RiskyLinkDialog(url: String, verdict: com.sms.app.core.link.LinkChe
 private fun excerpt(text: String): String = text.replace('\n', ' ').let { if (it.length > 60) it.take(58).trimEnd() + "…" else it }
 
 /** A message waiting its few seconds before it goes. */
-private data class Pending(val key: Long, val text: String, val sub: Int, val attachments: List<com.sms.app.core.mms.Attachment>, val quoted: String?)
+private data class Pending(val key: Long, val text: String, val sub: Int, val attachments: List<com.sms.app.core.mms.Attachment>, val quoted: String?, val effect: com.sms.app.core.sms.Effects.Effect? = null)
 
 /**
  * The message just written: it flies up from the field into its place as

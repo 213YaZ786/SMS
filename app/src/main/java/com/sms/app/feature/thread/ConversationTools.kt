@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -256,6 +257,77 @@ fun LatestButton(newCount: Int, onClick: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             Text(if (newCount > 99) "99+" else "$newCount", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary)
+        }
+    }
+}
+
+/** How each effect is offered: its sign and its name. */
+private val effectFaces = listOf(
+    com.sms.app.core.sms.Effects.Effect.SLAM to ("💥" to "Slam"),
+    com.sms.app.core.sms.Effects.Effect.LOUD to ("📣" to "Loud"),
+    com.sms.app.core.sms.Effects.Effect.GENTLE to ("🍃" to "Gentle"),
+    com.sms.app.core.sms.Effects.Effect.INK to ("🫥" to "Invisible ink"),
+    com.sms.app.core.sms.Effects.Effect.FIREWORKS to ("🎆" to "Fireworks"),
+    com.sms.app.core.sms.Effects.Effect.CONFETTI to ("🎊" to "Confetti"),
+    com.sms.app.core.sms.Effects.Effect.BALLOONS to ("🎈" to "Balloons"),
+    com.sms.app.core.sms.Effects.Effect.LOVE to ("❤️" to "Love"),
+    com.sms.app.core.sms.Effects.Effect.LASERS to ("🔆" to "Lasers"),
+    com.sms.app.core.sms.Effects.Effect.STARS to ("🌠" to "Shooting star"),
+    com.sms.app.core.sms.Effects.Effect.CELEBRATION to ("✨" to "Celebration"),
+    com.sms.app.core.sms.Effects.Effect.ECHO to ("🔁" to "Echo"),
+    com.sms.app.core.sms.Effects.Effect.SPOTLIGHT to ("🔦" to "Spotlight")
+)
+
+/**
+ * Send with an effect, or later: held, Send opens this pane of glass, the
+ * bubble's effects first, then the screen's, each a tile that sends at once.
+ * [carried]: the other side sees it too (the encrypted chat); an SMS shows
+ * it to the user alone, unless its words bring one.
+ */
+@Composable
+fun EffectSheet(carried: Boolean, onLater: () -> Unit, onPick: (com.sms.app.core.sms.Effects.Effect) -> Unit, onDismiss: () -> Unit) {
+    val haptics = rememberHaptics()
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        com.sms.app.ui.component.ZoneSurface(shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp)) {
+            Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                FloatingPane(shape = CircleShape, onClick = {
+                    haptics.tick()
+                    onLater()
+                }) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Icon(AppIcons.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Send later", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+                listOf("Bubble" to false, "Screen" to true).forEach { (title, screen) ->
+                    Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        maxItemsInEachRow = if (screen) 3 else 2
+                    ) {
+                        effectFaces.filter { it.first.screen == screen }.forEach { (effect, face) ->
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.width(78.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).clickable {
+                                    haptics.firm()
+                                    onPick(effect)
+                                }.padding(vertical = 6.dp)
+                            ) {
+                                Text(face.first, style = MaterialTheme.typography.headlineMedium)
+                                Text(face.second, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+                if (!carried) Text(
+                    "By SMS only you see it, unless the words bring one.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+            }
         }
     }
 }
