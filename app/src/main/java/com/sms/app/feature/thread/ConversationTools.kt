@@ -6,6 +6,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,6 +40,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -194,5 +196,66 @@ private fun RoundIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, lab
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = label, tint = if (enabled) LocalContentColor.current else LocalContentColor.current.copy(alpha = 0.35f), modifier = Modifier.size(22.dp))
+    }
+}
+
+/** Android's own emoji picker in a pane of glass: the one chosen is the reaction. */
+@Composable
+fun EmojiPickerDialog(onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    // A View of Android's: its words take the light or dark of the app, not the window's.
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        com.sms.app.ui.component.ZoneSurface(shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp)) {
+            androidx.compose.ui.viewinterop.AndroidView(
+                factory = { context ->
+                    val themed = android.view.ContextThemeWrapper(context, if (dark) android.R.style.Theme_DeviceDefault else android.R.style.Theme_DeviceDefault_Light)
+                    androidx.emoji2.emojipicker.EmojiPickerView(themed).apply {
+                        emojiGridColumns = 8
+                        setOnEmojiPickedListener { onPick(it.emoji) }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(380.dp).padding(8.dp)
+            )
+        }
+    }
+}
+
+/** A message's words, free to select a part of and copy (an address, a number). */
+@Composable
+fun SelectTextDialog(text: String, onDismiss: () -> Unit) {
+    ZoneAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select text") },
+        text = {
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(text, style = MaterialTheme.typography.bodyLarge)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+    )
+}
+
+/**
+ * Back to the newest messages, when reading further up: a round pane of
+ * glass with an arrow down, and how many came in meanwhile.
+ */
+@Composable
+fun LatestButton(newCount: Int, onClick: () -> Unit) {
+    val haptics = rememberHaptics()
+    Box {
+        FloatingPane(shape = CircleShape, onClick = {
+            haptics.tick()
+            onClick()
+        }) {
+            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                Icon(AppIcons.ArrowDown, contentDescription = "Newest messages", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+            }
+        }
+        if (newCount > 0) Box(
+            Modifier.align(Alignment.TopEnd).size(20.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(if (newCount > 99) "99+" else "$newCount", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary)
+        }
     }
 }

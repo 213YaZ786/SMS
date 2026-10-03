@@ -114,7 +114,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         else index.find(T9.clean(c.address))?.name
     val shown = remember(all, filter, settings.pinned, settings.archived, query, index) {
         val q = query.trim().lowercase()
-        Lists.shown(all, filter, settings.pinned, settings.archived, settings.later).filter { c ->
+        Lists.shown(all, filter, settings.pinned, settings.archived, settings.later, known = { c -> index.find(T9.clean(c.address)) != null }).filter { c ->
             q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
         }
     }
@@ -158,6 +158,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     query.isNotBlank() -> "Nothing found"
                     filter == Filter.UNREAD -> "All read"
                     filter == Filter.ARCHIVED -> "Nothing archived"
+                    filter == Filter.UNKNOWN -> "No one unknown"
                     else -> "No messages yet"
                 },
                 message = when {
@@ -245,7 +246,7 @@ private fun Filters(filter: Filter, onFilter: (Filter) -> Unit, query: String, o
     ) {
         SearchPill(query, onQuery, hint = "Search messages", modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(), floating = true)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(Filter.ALL to "All", Filter.UNREAD to "Unread", Filter.ARCHIVED to "Archived").forEach { (value, label) ->
+            listOf(Filter.ALL to "All", Filter.UNREAD to "Unread", Filter.UNKNOWN to "Unknown", Filter.ARCHIVED to "Archived").forEach { (value, label) ->
                 FloatingPane(
                     shape = CircleShape,
                     accent = filter == value,

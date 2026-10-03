@@ -69,6 +69,7 @@ fun MessageMenu(
     actions: List<MessageAction>,
     onReact: (String) -> Unit,
     onDismiss: () -> Unit,
+    onMoreReactions: (() -> Unit)? = null,
     held: @Composable () -> Unit
 ) {
     val haptics = rememberHaptics()
@@ -147,6 +148,19 @@ fun MessageMenu(
                                 contentAlignment = androidx.compose.ui.Alignment.Center
                             ) {
                                 Text(emoji, style = MaterialTheme.typography.titleLarge)
+                            }
+                        }
+                        // Any other emoji, from Android's picker.
+                        onMoreReactions?.let { more ->
+                            Box(
+                                Modifier.size(44.dp).clickable(onClickLabel = "More reactions") {
+                                    haptics.tick()
+                                    onDismiss()
+                                    more()
+                                },
+                                contentAlignment = androidx.compose.ui.Alignment.Center
+                            ) {
+                                androidx.compose.material3.Icon(com.sms.app.ui.icon.AppIcons.Add, contentDescription = "More reactions", tint = MaterialTheme.colorScheme.primary)
                             }
                         }
                     }

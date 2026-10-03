@@ -356,6 +356,19 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                   .padding(horizontal = LocalReadableInset.current)
                   .onSizeChanged { composerHeight = with(density) { it.height.toDp() } }
           ) {
+            // Reading further up: the way back to the newest, and how many came in meanwhile.
+            val away by remember { derivedStateOf { listState.firstVisibleItemIndex > 1 } }
+            var seenAt by remember { mutableStateOf(0L) }
+            LaunchedEffect(away) { if (away) seenAt = list.maxOfOrNull { it.date } ?: 0L }
+            val newCount = if (away) list.count { it.box == MessageBox.RECEIVED && it.date > seenAt } else 0
+            androidx.compose.animation.AnimatedVisibility(
+                visible = away,
+                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = 0.6f),
+                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(targetScale = 0.6f),
+                modifier = Modifier.align(Alignment.End).padding(end = 16.dp, bottom = 8.dp)
+            ) {
+                LatestButton(newCount) { scope.launch { listState.animateScrollToItem(0) } }
+            }
             ReplyChips(if (usedFor == newest?.uid) emptyList() else replies) { reply ->
                 haptics.tick()
                 usedFor = newest?.uid
@@ -659,6 +672,14 @@ private fun Bubble(
     val ringGround = MaterialTheme.colorScheme.surface
     val ringTrack = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
     var confirmDeleteAll by remember { mutableStateOf(false) }
+    var pickingEmoji by remember { mutableStateOf(false) }
+    var selecting by remember { mutableStateOf(false) }
+    if (pickingEmoji) EmojiPickerDialog(onPick = { emoji ->
+        pickingEmoji = false
+        haptics.done()
+        onReact(emoji)
+    }) { pickingEmoji = false }
+    if (selecting) SelectTextDialog(m.body) { selecting = false }
     if (confirmDeleteAll && chatId != null) {
         ZoneAlertDialog(
             onDismissRequest = { confirmDeleteAll = false },
@@ -839,6 +860,7 @@ private fun Bubble(
                     // Only the user's own messages of the encrypted chat change for both sides.
                     if (chatId != null && rich?.mine == true && m.body.isNotBlank()) MessageAction(AppIcons.Create, "Edit") { onEdit(chatId) } else null,
                     if (m.body.isNotBlank()) MessageAction(AppIcons.Copy, "Copy") { copy(context, "Message", m.body) } else null,
+                    if (m.body.length > 12) MessageAction(AppIcons.SelectAll, "Select") { selecting = true } else null,
                     if (m.body.isNotBlank()) MessageAction(AppIcons.Forward, "Forward") { forward(context, m.body) } else null,
                     if (chatId != null) MessageAction(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin") { onPin(chatId, rich?.pinned != true) } else null,
                     if (m.box == MessageBox.FAILED && !m.mms) MessageAction(AppIcons.Send, "Try again") { onRetry() } else null,
@@ -846,7 +868,8 @@ private fun Bubble(
                     MessageAction(AppIcons.Delete, if (chatId != null && rich?.mine == true) "Delete for me" else "Delete", danger = true) { onDelete() }
                 ),
                 onReact = { emoji -> onReact(if (emoji in rich?.reactions.orEmpty()) null else emoji) },
-                onDismiss = { menuOpen = false }
+                onDismiss = { menuOpen = false },
+                onMoreReactions = if (rich != null) ({ pickingEmoji = true }) else null
             ) {
                 ZoneSurface(shape = shape, accent = mine, shadowElevation = 8.dp) {
                     Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))

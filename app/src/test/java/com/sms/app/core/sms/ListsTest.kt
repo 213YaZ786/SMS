@@ -47,4 +47,11 @@ class ListsTest {
         assertEquals("482913", Lists.latestCode(listOf(old, code), now)?.second)
         assertEquals(null, Lists.latestCode(listOf(old), now))
     }
+
+    @Test
+    fun unknownIsPeopleNotInTheContacts() {
+        val all = listOf(c(1, 1, address = "0611111111"), c(2, 2, address = "0622222222"), c(3, 3, address = "LaPoste"))
+        val shown = Lists.shown(all, Filter.UNKNOWN, emptyList(), emptyMap(), known = { it.address == "0611111111" })
+        assertEquals(listOf(2L), shown.map { it.threadId })
+    }
 }
