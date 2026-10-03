@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -152,11 +153,13 @@ fun PersonPage(
                         // Someone not saved yet: adding them comes first, at hand.
                         val unsaved = !group && address.count(Char::isDigit) >= 3 && contactId == null
                         val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onBackground).size + 2 + (if (unsaved) 1 else 0)
+                        // Cards in two columns, as the rest of the page; the calls in their colour.
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
                         FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            maxItemsInEachRow = if (count <= 4) count else (count + 1) / 2,
-                            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            maxItemsInEachRow = 2,
+                            modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth()
                         ) {
                             if (unsaved) Tile(AppIcons.PersonAdd, "Add contact", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary) { NumberActions.addContact(context, address) }
                             calls.phone?.let { Tile(AppIcons.Call, "Call", CallGreen, Color.White, it) }
@@ -168,6 +171,7 @@ fun PersonPage(
                             }
                             Tile(if (silencedUntil != null) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silencedUntil != null) "Silenced" else "Silence", null, null, onSilence)
                             onBackground?.let { Tile(AppIcons.Palette, "Background", null, null, it) }
+                        }
                         }
                     }
                     // What they and the user sent each other, by kind.
@@ -235,26 +239,31 @@ fun PersonPage(
     }
 }
 
-/** A round button of glass, its name under it; coloured when it calls. */
+/** A card, its icon over its name; filled in its colour when it calls. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun Tile(icon: ImageVector, label: String, fill: Color?, tint: Color?, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(84.dp)) {
-        if (fill != null) {
-            GlassCallButton(icon, label, fill, onClick, iconTint = tint ?: Color.White)
-        } else {
-            val haptics = rememberHaptics()
-            FloatingPane(shape = CircleShape, onClick = {
-                haptics.tick()
-                onClick()
-            }) {
-                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
-                }
-            }
+private fun androidx.compose.foundation.layout.FlowRowScope.Tile(icon: ImageVector, label: String, fill: Color?, tint: Color?, onClick: () -> Unit) {
+    val haptics = rememberHaptics()
+    val shape = RoundedCornerShape(24.dp)
+    val content: @Composable () -> Unit = {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 16.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = tint ?: MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+            Spacer(Modifier.height(8.dp))
+            Text(label, style = MaterialTheme.typography.titleSmall, color = tint ?: LocalContentColor.current, textAlign = TextAlign.Center, maxLines = 2)
         }
-        Spacer(Modifier.height(6.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center, maxLines = 2)
     }
+    if (fill != null) androidx.compose.material3.Surface(
+        shape = shape,
+        color = fill,
+        shadowElevation = 3.dp,
+        onClick = { haptics.firm(); onClick() },
+        modifier = Modifier.weight(1f).fillMaxRowHeight().heightIn(min = 100.dp)
+    ) { content() }
+    else ZoneSurface(shape = shape, modifier = Modifier.weight(1f).fillMaxRowHeight().heightIn(min = 100.dp), onClick = { haptics.tick(); onClick() }) { content() }
 }
 
 /** A line of glass for something about the person. */
@@ -263,7 +272,7 @@ private fun Tile(icon: ImageVector, label: String, fill: Color?, tint: Color?, o
 private fun androidx.compose.foundation.layout.FlowRowScope.Row(icon: ImageVector, label: String, danger: Boolean = false, onClick: () -> Unit) {
     val haptics = rememberHaptics()
     val tint = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    ZoneSurface(shape = RoundedCornerShape(24.dp), modifier = Modifier.weight(1f).fillMaxRowHeight(), onClick = {
+    ZoneSurface(shape = RoundedCornerShape(24.dp), modifier = Modifier.weight(1f).fillMaxRowHeight().heightIn(min = 100.dp), onClick = {
         haptics.tick()
         onClick()
     }) {
