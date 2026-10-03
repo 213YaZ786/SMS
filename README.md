@@ -25,6 +25,10 @@ A messaging app for Android. No account, no tracking, no ads.
   swipe a conversation left to have it back later.
 - Parcel numbers and appointments found in messages, copied or added to
   the calendar in one tap; a vibration of their own for chosen people.
+- In a conversation: search, everything you sent each other (photos,
+  files, links, dates, parcels, codes), silence it for a while, a
+  reminder to reply, and the encryption's keys to compare.
+- Short answers offered for the last message.
 - Light and dark themes in your wallpaper's colours.
 
 ## Install
