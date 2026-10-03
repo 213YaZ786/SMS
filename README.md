@@ -60,7 +60,7 @@ MIT. Icons from Google's Material Icons, Apache License 2.0. Picture
 messages use code from AOSP Messaging, Apache License 2.0. The encrypted
 chat runs chatmail core (github.com/chatmail/core), Mozilla Public
 License 2.0, downloaded unchanged at build time. Calls use WebRTC's
-Android library by webrtc-sdk, MIT License. Big emoji move with Google's Noto Animated Emoji, CC BY 4.0,
+Android library by webrtc-sdk, MIT License. Doodles background: Material Symbols by Google, Apache 2.0. Big emoji and screen effects move with Google's Noto Animated Emoji, CC BY 4.0,
 played by Lottie (Airbnb), Apache License 2.0. Voice messages are
 written out by whisper.cpp (ggml-org), MIT License, built from its
 source, with OpenAI's Whisper model, MIT License, fetched on request.
