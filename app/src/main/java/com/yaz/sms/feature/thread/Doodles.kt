@@ -21,18 +21,28 @@ import kotlin.random.Random
 /** The background "Doodles": small drawings scattered over the conversation, as chat apps have. */
 internal const val DOODLE = "doodle"
 
+/** The same, condensed: many more, of varied sizes, in a tone of the accent. */
+internal const val DOODLE_DENSE = "doodle-dense"
+
 /**
  * Material Symbols (Google, Apache 2.0) sown over the whole conversation,
  * turned a little each, in a faint tone of the light under them: hearts,
  * notes, cups, clouds, planes, cakes and the app's own signs.
  */
 @Composable
-internal fun DoodleGround(ink: Color, modifier: Modifier = Modifier.fillMaxSize(), cell: Float = 64f) {
-    val vectors = remember { DOODLES + listOf(AppIcons.Star, AppIcons.PhotoCamera, AppIcons.Place, AppIcons.Mic, AppIcons.Call, AppIcons.Send, AppIcons.Schedule, AppIcons.AutoAwesome, AppIcons.Headset) }
+internal fun DoodleGround(ink: Color, modifier: Modifier = Modifier.fillMaxSize(), cell: Float = 64f, dense: Boolean = false) {
+    val vectors = remember {
+        DOODLES + listOf(
+            AppIcons.Star, AppIcons.PhotoCamera, AppIcons.Place, AppIcons.Mic, AppIcons.Call, AppIcons.Send, AppIcons.Schedule,
+            AppIcons.AutoAwesome, AppIcons.Headset, AppIcons.Image, AppIcons.Poll, AppIcons.Videocam, AppIcons.Smartphone,
+            AppIcons.Message, AppIcons.Group, AppIcons.Person, AppIcons.Link, AppIcons.PushPin, AppIcons.Timer, AppIcons.Palette
+        )
+    }
     val painters = vectors.map { rememberVectorPainter(it) }
     val filter = remember(ink) { ColorFilter.tint(ink) }
     Canvas(modifier) {
-        val step = cell.dp.toPx()
+        // Dense: a closer grid, and sizes from a dot-like 10 to a large 34.
+        val step = (if (dense) cell * 0.62f else cell).dp.toPx()
         val random = Random(7)
         var row = 0
         var y = -step / 2
@@ -40,9 +50,13 @@ internal fun DoodleGround(ink: Color, modifier: Modifier = Modifier.fillMaxSize(
             var x = if (row % 2 == 0) -step / 2 else 0f
             while (x < size.width + step) {
                 val p = painters[random.nextInt(painters.size)]
-                val s = (20 + random.nextInt(10)).dp.toPx()
-                val jx = (random.nextFloat() - 0.5f) * step * 0.35f
-                val jy = (random.nextFloat() - 0.5f) * step * 0.35f
+                val s = if (dense) {
+                    // Mostly small, a few large ones, as hand-drawn papers have.
+                    val r = random.nextFloat()
+                    (if (r < 0.55f) 10f + r * 14f else if (r < 0.9f) 16f + r * 10f else 28f + r * 6f).dp.toPx()
+                } else (20 + random.nextInt(10)).dp.toPx()
+                val jx = (random.nextFloat() - 0.5f) * step * (if (dense) 0.4f else 0.35f)
+                val jy = (random.nextFloat() - 0.5f) * step * (if (dense) 0.4f else 0.35f)
                 val turn = (random.nextFloat() - 0.5f) * 50f
                 translate(x + jx, y + jy) {
                     rotate(turn, pivot = androidx.compose.ui.geometry.Offset(s / 2, s / 2)) {
