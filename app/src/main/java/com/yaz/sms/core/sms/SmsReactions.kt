@@ -16,7 +16,8 @@ import com.yaz.sms.data.sms.Message
  */
 object SmsReactions {
 
-    data class Parsed(val emoji: String, val quoted: String, val removed: Boolean)
+    /** [media] "image" or "video" when the reaction names a picture or a video instead of quoting words. */
+    data class Parsed(val emoji: String, val quoted: String, val removed: Boolean, val media: String? = null)
 
     private const val HAIR = '\u200a'
     private val google = Regex("(?s)^\u200a[^\u200b\u200c\u200a]*([\u200b\u200c])([^\u200b\u200c]+)\\1[^\u200a]*\u200a(.*)\u200a[^\u200a]*\u200a\\s*$")
@@ -26,14 +27,26 @@ object SmsReactions {
         if (body.first() == HAIR) google.find(body)?.let { m ->
             return Parsed(m.groupValues[2].trim(), m.groupValues[3], removed = m.groupValues[1] == "\u200c")
         }
-        return Tapbacks.parse(body.trim())
+        if (!Tapbacks.mayBe(body.trim())) return null
+        // Each message looked at once: Apple's words are many patterns.
+        synchronized(seen) { seen[body] }?.let { return it.parsed }
+        return Tapbacks.parse(body.trim()).also { synchronized(seen) { seen[body] = Seen(it) } }
+    }
+
+    private class Seen(val parsed: Parsed?)
+    private val seen = object : LinkedHashMap<String, Seen>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Seen>?) = size > 2000
     }
 
     /** A reaction message as a line of the list or a notification: short, in the app's words. */
     fun plain(body: String): String {
         val p = parse(body) ?: return body
-        val quoted = squash(p.quoted).let { if (it.length > 60) it.take(59).trimEnd() + "…" else it }
-        return (if (p.removed) "Removed ${p.emoji} from “" else "Reacted ${p.emoji} to “") + quoted + "”"
+        val what = when (p.media) {
+            "image" -> "a picture"
+            "video" -> "a video"
+            else -> "“" + squash(p.quoted).let { if (it.length > 60) it.take(59).trimEnd() + "…" else it } + "”"
+        }
+        return (if (p.removed) "Removed ${p.emoji} from " else "Reacted ${p.emoji} to ") + what
     }
 
     /**
@@ -60,7 +73,7 @@ object SmsReactions {
         list.forEachIndexed { i, m ->
             if (m.mms || m.rich) return@forEachIndexed
             val p = parse(m.body) ?: return@forEachIndexed
-            val target = targetOf(list, i, p.quoted) ?: return@forEachIndexed
+            val target = (if (p.media != null) mediaBefore(list, i, p.media) else targetOf(list, i, p.quoted)) ?: return@forEachIndexed
             hidden += m.uid
             val who = if (m.box == com.yaz.sms.data.sms.Box.RECEIVED) m.address else ""
             val mine = given.getOrPut(target.uid) { LinkedHashMap() }.getOrPut(who) { ArrayList() }
@@ -76,6 +89,14 @@ object SmsReactions {
         val reactions = given.mapValues { (_, byWho) -> byWho.values.flatten() }.filterValues { it.isNotEmpty() }
         val mine = given.mapValues { (_, byWho) -> byWho[""].orEmpty().toList() }.filterValues { it.isNotEmpty() }
         return Folded(list.filterNot { it.uid in hidden }, reactions, mine)
+    }
+
+    /** The newest picture or video before [index], as the reaction names it. */
+    private fun mediaBefore(list: List<Message>, index: Int, media: String): Message? {
+        for (j in index - 1 downTo maxOf(0, index - 200)) {
+            if (list[j].parts.any { it.contentType.startsWith("$media/") }) return list[j]
+        }
+        return null
     }
 
     /** The newest message before [index] whose text is [quoted], whole or cut short with an ellipsis. */

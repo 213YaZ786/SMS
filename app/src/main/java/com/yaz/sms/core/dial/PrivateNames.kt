@@ -25,6 +25,8 @@ object PrivateNames {
     private val authorities = listOf("com.yaz.contacts.private", "com.yaz.contacts.debug.private")
     private val known = ConcurrentHashMap<String, Private>()
     private val missed = ConcurrentHashMap<String, Long>()
+    /** Asked in the background right now: not asked twice, and not a miss yet. */
+    private val asking = ConcurrentHashMap.newKeySet<String>()
     private val pool = Executors.newSingleThreadExecutor()
 
     /** Grows when a name arrives, so a screen showing numbers looks again (read it in composition). */
@@ -49,11 +51,16 @@ object PrivateNames {
         val key = key(number) ?: return null
         known[key]?.let { return it }
         val context = app ?: return null
-        val now = SystemClock.elapsedRealtime()
-        if (now - (missed[key] ?: Long.MIN_VALUE / 2) < RETRY_MS) return null
-        // Marked as asked at once, so a list asks each number once.
-        missed[key] = now
-        pool.execute { if (ask(context, number, key) != null) version.intValue++ }
+        if (SystemClock.elapsedRealtime() - (missed[key] ?: Long.MIN_VALUE / 2) < RETRY_MS) return null
+        // A list asks each number once at a time.
+        if (!asking.add(key)) return null
+        pool.execute {
+            try {
+                if (ask(context, number, key) != null) version.intValue++
+            } finally {
+                asking.remove(key)
+            }
+        }
         return null
     }
 

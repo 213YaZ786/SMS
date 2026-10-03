@@ -45,6 +45,13 @@ class SmsReactionsTest {
     }
 
     @Test
+    fun reactionToAPicture() {
+        assertEquals(SmsReactions.Parsed("❤️", "", false, "image"), SmsReactions.parse("Loved an image"))
+        assertEquals(SmsReactions.Parsed("❤️", "", false, "image"), SmsReactions.parse("A ajouté un « J’adore » à une image."))
+        assertEquals(SmsReactions.Parsed("👀", "", false, "image"), SmsReactions.parse("Reacted 👀 to an image"))
+    }
+
+    @Test
     fun plainMessagesStay() {
         assertNull(SmsReactions.parse("See you soon"))
         assertNull(SmsReactions.parse("He said “no” again"))
