@@ -26,6 +26,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -207,30 +208,6 @@ fun Composer(
                 }
             }
         }
-        // What goes with the text, each removable with a tap.
-        if (attachments.isNotEmpty()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                attachments.forEach { a ->
-                    val picture by rememberPicture(a.uri, 240)
-                    FloatingPane(shape = RoundedCornerShape(16.dp), onClick = {
-                        haptics.tick()
-                        attachments = attachments - a
-                    }, modifier = Modifier.size(64.dp)) {
-                        Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
-                            picture?.let { Image(it, contentDescription = "Remove", contentScale = ContentScale.Crop, modifier = Modifier.size(64.dp)) }
-                                ?: Icon(
-                                    when {
-                                        a.contentType.contains("vcard") -> AppIcons.ContactPage
-                                        a.contentType.startsWith("video") -> AppIcons.Play
-                                        else -> AppIcons.AttachFile
-                                    },
-                                    contentDescription = "Remove"
-                                )
-                        }
-                    }
-                }
-            }
-        }
         // The styles, over the field: a tap wraps the selection (or the word) in one.
         androidx.compose.animation.AnimatedVisibility(visible = formatting && text.isNotEmpty() && take == null) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
@@ -308,9 +285,50 @@ fun Composer(
                     }
                 }
             } else FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f).graphicsLayer { alpha = veil }) {
+              Column {
+                // What goes with the text, inside the bar it leaves with, each with its cross.
+                if (attachments.isNotEmpty()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 10.dp)
+                    ) {
+                        attachments.forEach { a ->
+                            val picture by rememberPicture(a.uri, 240)
+                            Box(Modifier.size(72.dp)) {
+                                Box(
+                                    Modifier.padding(top = 6.dp, end = 6.dp).size(66.dp).clip(RoundedCornerShape(16.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    picture?.let { Image(it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(66.dp)) }
+                                        ?: Icon(
+                                            when {
+                                                a.contentType.contains("vcard") -> AppIcons.ContactPage
+                                                a.contentType.startsWith("video") -> AppIcons.Play
+                                                a.contentType.startsWith("audio") -> AppIcons.Mic
+                                                else -> AppIcons.AttachFile
+                                            },
+                                            contentDescription = null
+                                        )
+                                }
+                                Box(
+                                    Modifier.align(Alignment.TopEnd).size(26.dp).clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.inverseSurface)
+                                        .clickable(onClickLabel = "Remove") {
+                                            haptics.tick()
+                                            attachments = attachments - a
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(AppIcons.Close, contentDescription = "Remove", tint = MaterialTheme.colorScheme.inverseOnSurface, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
               Box {
                 Box(Modifier.padding(start = 18.dp, end = if (text.isNotEmpty()) 44.dp else 18.dp, top = 15.dp, bottom = 15.dp)) {
-                    if (text.isEmpty()) Text(if (locating) "Finding where you are…" else if (lost) "Not found: is location on?" else "Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (text.isEmpty()) Text(if (locating) "Finding where you are…" else if (lost) "Not found: is location on?" else if (attachments.isNotEmpty()) "Add a message, or send" else "Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val faded = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     BasicTextField(
                         value = androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(sel.start.coerceIn(0, text.length), sel.end.coerceIn(0, text.length))),
@@ -337,6 +355,7 @@ fun Composer(
                 ) {
                     Icon(AppIcons.TextFormat, contentDescription = "Text styles", tint = if (formatting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+              }
               }
             }
             fun sendVoice(file: java.io.File) {
