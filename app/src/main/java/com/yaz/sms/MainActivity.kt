@@ -49,6 +49,8 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         ChatService.startIfWanted(this, settings)
+        // Cards shared over the chat: the user's out, the others' to the Contacts app (when SMS opens, never on a timer).
+        lifecycleScope.launch { com.yaz.sms.core.chat.Cards.sync(this@MainActivity, org.koin.java.KoinJavaComponent.get(com.yaz.sms.core.chat.RichChat::class.java), settings) }
     }
 
     /** singleTask: a request while the app runs arrives here. */
@@ -64,6 +66,14 @@ class MainActivity : ComponentActivity() {
                 val thread = intent.getLongExtra(EXTRA_THREAD, -1L).takeIf { it >= 0 }
                 requests.open(OpenRequest(thread, intent.getStringExtra(EXTRA_ADDRESS), null))
             }
+            // The Contacts app's "verified" mark: the conversation, on its encryption's keys. Shows, never acts.
+            ACTION_SHOW_KEYS -> {
+                val to = OpenRequests.addressesOf(intent.data?.schemeSpecificPart)
+                if (to.isNotEmpty()) {
+                    requests.keysFor.value = to.first()
+                    requests.open(OpenRequest(null, to.joinToString(","), null))
+                }
+            }
             Intent.ACTION_SENDTO, Intent.ACTION_SEND -> {
                 val to = OpenRequests.addressesOf(intent.data?.schemeSpecificPart)
                 val text = OpenRequests.textOf(intent.getStringExtra("sms_body") ?: intent.getCharSequenceExtra(Intent.EXTRA_TEXT))
@@ -75,6 +85,8 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_THREAD = "com.yaz.sms.THREAD"
+        /** Opens a number's conversation on its encryption's keys (for the Contacts app). */
+        const val ACTION_SHOW_KEYS = "com.yaz.sms.action.SHOW_KEYS"
         const val EXTRA_THREAD = "thread"
         const val EXTRA_ADDRESS = "address"
     }

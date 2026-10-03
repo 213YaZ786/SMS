@@ -67,7 +67,9 @@ data class Settings(
     /** Voice messages written out under them, on the phone only. */
     val transcribeVoice: Boolean = true,
     /** The speech model chosen; empty: the one recommended for this phone. */
-    val speechModel: String = ""
+    val speechModel: String = "",
+    /** The user's name, photo and look go with the encrypted chat's messages (Android's "Me" contact). */
+    val shareCard: Boolean = true
 )
 
 /**

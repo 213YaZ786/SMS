@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.asStateFlow
 data class OpenRequest(val threadId: Long?, val address: String?, val text: String?)
 
 class OpenRequests {
+    /** A conversation to open on its encryption's keys (the Contacts app's "verified" mark), by number. */
+    val keysFor = MutableStateFlow<String?>(null)
+
     private val _pending = MutableStateFlow<OpenRequest?>(null)
     val pending: StateFlow<OpenRequest?> = _pending.asStateFlow()
 

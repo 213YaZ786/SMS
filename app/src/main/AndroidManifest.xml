@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- The old SMS (com.sms.app) hands its files over to this one, signed with the same key, once. -->
     <uses-permission android:name="${predecessor}.permission.HANDOVER" />
+    <!-- Hands the cards received over the chat to the Contacts app, signed with the same key. -->
+    <uses-permission android:name="com.yaz.contacts.permission.CARDS" />
+    <uses-permission android:name="com.yaz.contacts.debug.permission.CARDS" />
     <!-- Only used when the user chooses to install updates from the app; Android asks them then. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- New messages, and the note after an update. -->
@@ -49,6 +52,9 @@
         <!-- The old SMS, to take its files over and offer to remove it. -->
         <package android:name="${predecessor}" />
         <provider android:authorities="${predecessor}.handover" />
+        <!-- The Contacts app's door for cards shared over the chat (signature level). -->
+        <provider android:authorities="com.yaz.contacts.cards" />
+        <provider android:authorities="com.yaz.contacts.debug.cards" />
         <intent>
             <action android:name="com.dialer.app.action.SHOW_NUMBER" />
             <data android:scheme="tel" />
@@ -84,6 +90,12 @@
             </intent-filter>
             <!-- Writing to someone, asked by another app: it only fills the
                  message, the user sends. Android requires these of an SMS app. -->
+            <!-- The Contacts app's "verified" mark: a number's conversation, on its keys. Shows only. -->
+            <intent-filter>
+                <action android:name="com.yaz.sms.action.SHOW_KEYS" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="smsto" />
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <action android:name="android.intent.action.SENDTO" />

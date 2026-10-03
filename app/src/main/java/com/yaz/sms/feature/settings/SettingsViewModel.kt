@@ -23,4 +23,5 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     fun setUndoSeconds(seconds: Int) = store.update { it.copy(undoSeconds = seconds) }
     fun setCheckLinks(on: Boolean) = store.update { it.copy(checkLinks = on) }
     fun setTranscribeVoice(on: Boolean) = store.update { it.copy(transcribeVoice = on) }
+    fun setShareCard(on: Boolean) = store.update { it.copy(shareCard = on) }
 }

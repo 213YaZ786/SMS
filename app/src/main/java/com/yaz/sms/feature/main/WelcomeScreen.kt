@@ -146,6 +146,20 @@ fun WelcomeScreen(onStart: () -> Unit) {
             toggle = settings.checkLinks,
             onToggle = { on -> store.update { it.copy(checkLinks = on) } }
         )
+        // The user's own card to the people of the encrypted chat, as iOS shares name and photo.
+        if (settings.richChat) {
+            Spacer(Modifier.height(16.dp))
+            WelcomeZone(
+                icon = AppIcons.Person,
+                title = "Share your name and photo",
+                message = "Your card in Android's contacts (Me) goes with your encrypted messages; theirs arrive in the Contacts app, to apply or ignore.",
+                done = true,
+                action = null,
+                onAction = {},
+                toggle = settings.shareCard,
+                onToggle = { on -> store.update { it.copy(shareCard = on) } }
+            )
+        }
         // Voice messages written out: the model for this phone already chosen, fetched on a tap.
         val transcriber: com.yaz.sms.core.voice.Transcriber = org.koin.compose.koinInject()
         if (transcriber.available) {

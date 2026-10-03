@@ -54,6 +54,9 @@ data class ChatLink(
     val askedAt: Long = 0
 )
 
+/** A person's card as the chat brought it: their chosen name, their photo's file, their status. */
+data class SharedCard(val name: String, val photo: String?, val status: String)
+
 /** When the relays were last looked at, and how many days each has not answered. */
 @Serializable
 data class RelayHealth(val checkedAt: Long = 0, val fails: Map<String, Int> = emptyMap())
@@ -344,6 +347,35 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         return runCatching {
             val contact = engine.call("get_chat_contacts", account, link.chatId).jsonArray.map { it.jsonPrimitive.int }.first { it != SELF }
             EncryptionInfo.parse(engine.call("get_contact_encryption_info", account, contact).jsonPrimitive.content)
+        }.getOrNull()
+    }
+
+    /**
+     * The user's own card for the people of the chat: the engine carries the
+     * name, the photo and the status with the messages, end-to-end encrypted.
+     * Null and empty take them back.
+     */
+    suspend fun shareCard(name: String?, avatar: String?, status: String) {
+        if (!start()) return
+        runCatching {
+            engine.call("set_config", account, "displayname", name)
+            engine.call("set_config", account, "selfavatar", avatar)
+            engine.call("set_config", account, "selfstatus", status)
+        }
+    }
+
+    /** What a proven person shares of themselves: the name they chose, their photo's file, their status. */
+    suspend fun cardOf(phone: String): SharedCard? {
+        val link = linkFor(phone) ?: return null
+        if (!start()) return null
+        return runCatching {
+            val contact = engine.call("get_chat_contacts", account, link.chatId).jsonArray.map { it.jsonPrimitive.int }.first { it != SELF }
+            val o = engine.call("get_contact", account, contact).jsonObject
+            SharedCard(
+                name = o["authName"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                photo = o["profileImage"]?.jsonPrimitive?.contentOrNull,
+                status = o["status"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            )
         }.getOrNull()
     }
 

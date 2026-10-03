@@ -107,6 +107,12 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 )
                 val changes by chat.changes.collectAsState()
                 val relays by androidx.compose.runtime.produceState(emptyList<String>(), status, changes) { value = chat.relays() }
+                if (settings.richChat) SwitchRow(
+                    title = "Share your name and photo",
+                    summary = "Your card in Android's contacts (Me) goes with your encrypted messages.",
+                    checked = settings.shareCard,
+                    onChange = viewModel::setShareCard
+                )
                 if (settings.richChat) SettingRow(
                     title = "Relays",
                     summary = when {

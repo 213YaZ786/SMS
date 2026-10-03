@@ -345,6 +345,16 @@ private fun ThreadContent(
     var silenceOpen by remember { mutableStateOf(false) }
     var remindOpen by remember { mutableStateOf(false) }
     var encryptionOpen by remember { mutableStateOf(false) }
+    // Asked from the Contacts app's "verified" mark: the keys at once.
+    val requests: com.yaz.sms.core.sms.OpenRequests = koinInject()
+    val keysFor by requests.keysFor.collectAsState()
+    LaunchedEffect(keysFor) {
+        val number = keysFor ?: return@LaunchedEffect
+        if (com.yaz.sms.core.dial.T9.clean(number).takeLast(9) == com.yaz.sms.core.dial.T9.clean(to).takeLast(9)) {
+            encryptionOpen = true
+            requests.keysFor.value = null
+        }
+    }
     val settingsNow by store.settings.collectAsState()
     val silencedUntil = thread?.let { t -> settingsNow.silenced[t]?.takeIf { it > System.currentTimeMillis() } }
     LaunchedEffect(thread) { onThread(thread) }
