@@ -80,7 +80,7 @@ fun Composer(
     onSchedule: ((String, Int) -> Unit)? = null,
     /** Held, Send offers the effects (and sending later): the text and SIM go there. */
     /** Sends with an effect chosen from the + before the words were written. */
-    onSendEffect: ((String, Int, com.yaz.sms.core.sms.Effects.Effect) -> Unit)? = null,
+    onSendEffect: ((String, Int, com.yaz.sms.core.sms.Effects.Effect, List<Attachment>) -> Unit)? = null,
     /** The other side sees effects too (the encrypted chat). */
     effectsCarried: Boolean = false,
     /** Over the encrypted chat: the + also offers a poll. */
@@ -218,13 +218,7 @@ fun Composer(
         }
         if (choosingEffect) EffectSheet(
             carried = effectsCarried,
-            // Later is a send of its own, chosen as such: offered once there are words.
-            onLater = if (onSchedule != null && text.isNotBlank() && attachments.isEmpty() && editing == null) ({
-                choosingEffect = false
-                val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
-                onSchedule(text, sub)
-                text = ""
-            }) else null,
+            onLater = null,
             onPick = { effect ->
                 choosingEffect = false
                 armed = effect
@@ -443,10 +437,11 @@ fun Composer(
                 val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
                 // An effect chosen from the + goes with these words.
                 val effect = armed
-                if (effect != null && onSendEffect != null && attachments.isEmpty()) {
+                if (effect != null && onSendEffect != null) {
                     haptics.done()
-                    onSendEffect(text, sub, effect)
+                    onSendEffect(text, sub, effect, attachments)
                     text = ""
+                    attachments = emptyList()
                     armed = null
                     return
                 }
@@ -459,6 +454,28 @@ fun Composer(
                 }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // Send later, in sight above Send as soon as there are words.
+            val laterReady = onSchedule != null && editing == null && take == null && text.isNotBlank() && attachments.isEmpty()
+            androidx.compose.animation.AnimatedVisibility(
+                visible = laterReady,
+                enter = scaleIn(spring(dampingRatio = 0.5f, stiffness = 500f)) + fadeIn(),
+                exit = scaleOut() + fadeOut()
+            ) {
+                FloatingPane(
+                    shape = CircleShape,
+                    onClick = {
+                        haptics.tick()
+                        val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                        onSchedule?.invoke(text, sub)
+                        text = ""
+                    },
+                    modifier = Modifier.padding(bottom = 8.dp).size(40.dp)
+                ) {
+                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                        Icon(AppIcons.Schedule, contentDescription = "Send later", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
             Box(if (micMode) Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
@@ -505,13 +522,8 @@ fun Composer(
             } else Modifier.pointerInput(text, attachments, canSend, editing, take) {
                 detectTapGestures(
                     onTap = { send() },
-                    onLongPress = {
-                        // Held: the effects and Send later, chosen; nothing goes until Send.
-                        if (editing == null && text.isNotBlank() && attachments.isEmpty() && (onSendEffect != null || onSchedule != null)) {
-                            haptics.firm()
-                            choosingEffect = true
-                        }
-                    }
+                    // Held: nothing, not even a send on letting go.
+                    onLongPress = { }
                 )
             }) {
             // While recording, the lock waits above the mic; slid up to, it frees the hand.

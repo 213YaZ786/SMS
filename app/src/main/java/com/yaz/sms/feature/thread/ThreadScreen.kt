@@ -511,7 +511,7 @@ private fun ThreadContent(
                     editing = null
                     if (e != null && typed.isNotBlank() && typed != e.second) scope.launch { if (!chat.edit(e.first, typed)) haptics.reject() }
                 },
-                onSendEffect = { text, sub, effect -> queue(Pending(System.nanoTime(), text, sub, emptyList(), quote, effect)) },
+                onSendEffect = { text, sub, effect, attachments -> if (people.isNotEmpty()) queue(Pending(System.nanoTime(), text, sub, attachments, quote, effect)) },
                 effectsCarried = encrypted,
                 onPoll = if (encrypted) ({ pollOpen = true }) else null,
                 onSend = { typed, sub, attachments ->
