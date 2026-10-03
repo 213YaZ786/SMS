@@ -35,6 +35,8 @@ A messaging app for Android. No account, no tracking, no ads.
   files, links, dates, parcels, codes), silence it for a while, a
   reminder to reply, and the encryption's keys to compare.
 - Short answers offered for the last message.
+- Voice messages written out under them, on the phone itself, in any
+  language, once the speech model is fetched (asked first, 60 to 190 MB).
 - Light and dark themes in your wallpaper's colours.
 
 ## Install
@@ -45,10 +47,12 @@ Android 12 or newer.
 
 ## Privacy
 
-Your messages stay on your phone. Two connections: a check for a new
-version on GitHub, and the encrypted chat through chatmail relays (the
+Your messages stay on your phone. The connections: a check for a new
+version on GitHub; the encrypted chat through chatmail relays (the
 fastest one, with backups), which carry only end-to-end encrypted
-messages. Both can be turned off in Settings.
+messages; the public list of dangerous sites (URLhaus), once a day; the
+speech model (Hugging Face), once, only when you ask. Each can be turned
+off in Settings.
 
 ## Licence
 
@@ -57,4 +61,6 @@ messages use code from AOSP Messaging, Apache License 2.0. The encrypted
 chat runs chatmail core (github.com/chatmail/core), Mozilla Public
 License 2.0, downloaded unchanged at build time. Calls use WebRTC's
 Android library by webrtc-sdk, MIT License. Big emoji move with Google's Noto Animated Emoji, CC BY 4.0,
-played by Lottie (Airbnb), Apache License 2.0.
+played by Lottie (Airbnb), Apache License 2.0. Voice messages are
+written out by whisper.cpp (ggml-org), MIT License, built from its
+source, with OpenAI's Whisper model, MIT License, fetched on request.

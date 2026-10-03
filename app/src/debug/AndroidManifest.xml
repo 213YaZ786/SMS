@@ -4,5 +4,6 @@
     <application>
         <receiver android:name="com.sms.app.DebugHelloReceiver" android:exported="true" />
         <receiver android:name="com.sms.app.DebugBulkReceiver" android:exported="true" />
+        <receiver android:name="com.sms.app.DebugSpeakReceiver" android:exported="true" />
     </application>
 </manifest>

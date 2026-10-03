@@ -7,10 +7,17 @@ import android.net.Uri
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -152,6 +159,7 @@ fun VoiceTile(part: MmsPart, mine: Boolean) {
     val accent = MaterialTheme.colorScheme.primary
     val faint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)
     ZoneSurface(shape = RoundedCornerShape(22.dp), accent = mine, modifier = Modifier.width(240.dp)) {
+      Column(Modifier.animateContentSize()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
             Box(
                 Modifier.size(40.dp).clickable {
@@ -188,6 +196,149 @@ fun VoiceTile(part: MmsPart, mine: Boolean) {
                 }
             }
             Text(clock(length.toLong()), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Transcript(part)
+      }
+    }
+}
+
+/**
+ * The words of a voice message under it, heard on the phone the first
+ * time it is shown; three lines, the rest on a tap. Before the speech
+ * model is on the phone, a tap offers to fetch it, its size said first.
+ */
+@Composable
+private fun Transcript(part: MmsPart) {
+    val transcriber: com.sms.app.core.voice.Transcriber = org.koin.compose.koinInject()
+    val store: com.sms.app.data.settings.SettingsStore = org.koin.compose.koinInject()
+    val settings by store.settings.collectAsState()
+    if (!transcriber.available || !settings.transcribeVoice) return
+    val haptics = rememberHaptics()
+    val key = part.uri.toString()
+    val texts by transcriber.texts.collectAsState()
+    val states by transcriber.states.collectAsState()
+    val model by transcriber.model.state.collectAsState()
+    LaunchedEffect(key, model) { transcriber.transcribe(part.uri) }
+    var asking by remember { mutableStateOf(false) }
+    if (asking) SpeechModelDialog(transcriber.model, onDismiss = { asking = false })
+    val words = texts[key]
+    val state = states[key]
+    val faint = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.6f)
+    val modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 10.dp)
+    when {
+        !words.isNullOrBlank() -> {
+            var open by remember { mutableStateOf(false) }
+            Text(
+                words,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = if (open) Int.MAX_VALUE else 3,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = modifier.clickable { open = !open }
+            )
+        }
+        state == com.sms.app.core.voice.Transcriber.State.Working -> {
+            // Three dots that rise in turn while it listens.
+            val wave = androidx.compose.animation.core.rememberInfiniteTransition(label = "dots")
+            val t by wave.animateFloat(0f, 3f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1200, easing = androidx.compose.animation.core.LinearEasing)), label = "t")
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
+                Text("Writing it out", style = MaterialTheme.typography.bodySmall, color = faint)
+                repeat(3) { i ->
+                    val lift = (1f - kotlin.math.abs(t - i - 0.5f).coerceAtMost(1f))
+                    Text(".", style = MaterialTheme.typography.bodySmall, color = faint, modifier = Modifier.graphicsLayer { translationY = -4.dp.toPx() * lift })
+                }
+            }
+        }
+        model is com.sms.app.core.voice.SpeechModel.State.Fetching -> {
+            val done = (model as com.sms.app.core.voice.SpeechModel.State.Fetching).done
+            Column(modifier) {
+                Text("Getting the speech model · ${(done * 100).toInt()}%", style = MaterialTheme.typography.bodySmall, color = faint)
+                androidx.compose.material3.LinearProgressIndicator(progress = { done }, modifier = Modifier.padding(top = 6.dp).fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)))
+            }
+        }
+        model == com.sms.app.core.voice.SpeechModel.State.Missing || model == com.sms.app.core.voice.SpeechModel.State.Failed -> {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = modifier.clip(RoundedCornerShape(12.dp)).clickable {
+                    haptics.tick()
+                    asking = true
+                }
+            ) {
+                Icon(AppIcons.TextFormat, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (model == com.sms.app.core.voice.SpeechModel.State.Failed) "Could not get the speech model · Try again" else "Write it out",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+        else -> Unit
+    }
+}
+
+/** The speech model offered: the two sizes to choose from, fetched once. */
+@Composable
+internal fun SpeechModelDialog(model: com.sms.app.core.voice.SpeechModel, onDismiss: () -> Unit) {
+    val haptics = rememberHaptics()
+    val metered = remember { model.metered() }
+    val state by model.state.collectAsState()
+    com.sms.app.ui.component.ZoneAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Speech model") },
+        text = {
+            Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+                Text("On this phone only, any language.", style = MaterialTheme.typography.bodyMedium)
+                ModelChoices(model)
+                if (metered && state != com.sms.app.core.voice.SpeechModel.State.Ready) {
+                    Text("On mobile data.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                haptics.done()
+                if (state != com.sms.app.core.voice.SpeechModel.State.Ready) model.fetch()
+                onDismiss()
+            }) { Text(if (state == com.sms.app.core.voice.SpeechModel.State.Ready) "Done" else "Get it") }
+        },
+        dismissButton = {
+            if (state == com.sms.app.core.voice.SpeechModel.State.Ready) androidx.compose.material3.TextButton(onClick = {
+                haptics.reject()
+                model.remove()
+                onDismiss()
+            }) { Text("Remove") } else androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Not now") }
+        }
+    )
+}
+
+/** The models side by side: name, size and what it is good at; the one for this phone marked. */
+@Composable
+internal fun ModelChoices(model: com.sms.app.core.voice.SpeechModel) {
+    val haptics = rememberHaptics()
+    val state by model.state.collectAsState()
+    // Read again when the choice changes.
+    var chosen by remember { mutableStateOf(model.pin) }
+    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        com.sms.app.core.voice.SpeechModel.PINS.forEach { pin ->
+            val on = pin == chosen
+            val lift by androidx.compose.animation.core.animateFloatAsState(if (on) 1f else 0.96f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 500f), label = "pick")
+            com.sms.app.ui.component.FloatingPane(
+                shape = RoundedCornerShape(16.dp),
+                accent = on,
+                onClick = {
+                    if (state is com.sms.app.core.voice.SpeechModel.State.Fetching) return@FloatingPane
+                    haptics.tick()
+                    model.choose(pin)
+                    chosen = pin
+                },
+                modifier = Modifier.weight(1f).graphicsLayer { scaleX = lift; scaleY = lift }
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Text(pin.label, style = MaterialTheme.typography.titleSmall)
+                    Text("${pin.bytes / 1_000_000} MB · ${pin.quality.lowercase()}", style = MaterialTheme.typography.bodySmall)
+                    if (pin == model.recommended) Text("For this phone", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+            }
         }
     }
 }

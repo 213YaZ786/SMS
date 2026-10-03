@@ -161,6 +161,28 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     checked = settings.checkLinks,
                     onChange = viewModel::setCheckLinks
                 )
+                // Where the phone can run the speech model (64-bit ARM).
+                val transcriber: com.sms.app.core.voice.Transcriber = org.koin.compose.koinInject()
+                if (transcriber.available) {
+                    SwitchRow(
+                        title = "Transcribe voice messages",
+                        summary = "Their words written under them, on the phone itself, never sent anywhere.",
+                        checked = settings.transcribeVoice,
+                        onChange = viewModel::setTranscribeVoice
+                    )
+                    val model by transcriber.model.state.collectAsState()
+                    var offering by remember { mutableStateOf(false) }
+                    if (offering) com.sms.app.feature.thread.SpeechModelDialog(transcriber.model) { offering = false }
+                    SettingRow(
+                        title = "Speech model",
+                        summary = when (val m = model) {
+                            com.sms.app.core.voice.SpeechModel.State.Ready -> "${transcriber.model.pin.label} · ${transcriber.model.pin.bytes / 1_000_000} MB"
+                            is com.sms.app.core.voice.SpeechModel.State.Fetching -> "Getting it · ${(m.done * 100).toInt()}%"
+                            else -> "Not on the phone"
+                        },
+                        onClick = { offering = true }
+                    )
+                }
                 SettingRow(
                     title = "Blocked numbers",
                     summary = "The list Android keeps for every app",
@@ -224,6 +246,11 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     title = "Animated emoji",
                     summary = "Noto Animated Emoji by Google, CC BY 4.0",
                     onClick = { uriHandler.openUri("https://googlefonts.github.io/noto-emoji-animation/") }
+                )
+                SettingRow(
+                    title = "Speech engine",
+                    summary = "whisper.cpp and OpenAI's Whisper model, MIT License",
+                    onClick = { uriHandler.openUri("https://github.com/ggml-org/whisper.cpp") }
                 )
                 SettingRow(
                     title = "Source code",

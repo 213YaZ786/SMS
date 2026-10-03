@@ -22,4 +22,5 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     fun setRelay(relay: String) = store.update { it.copy(relay = relay) }
     fun setUndoSeconds(seconds: Int) = store.update { it.copy(undoSeconds = seconds) }
     fun setCheckLinks(on: Boolean) = store.update { it.copy(checkLinks = on) }
+    fun setTranscribeVoice(on: Boolean) = store.update { it.copy(transcribeVoice = on) }
 }

@@ -63,7 +63,11 @@ data class Settings(
     /** Conversations without notifications, by thread id, until when (Long.MAX_VALUE: until turned back on). */
     val silenced: Map<Long, Long> = emptyMap(),
     /** A conversation's background, by thread id: a scene's code or a photo's colours. */
-    val backgrounds: Map<Long, String> = emptyMap()
+    val backgrounds: Map<Long, String> = emptyMap(),
+    /** Voice messages written out under them, on the phone only. */
+    val transcribeVoice: Boolean = true,
+    /** The speech model chosen; empty: the one recommended for this phone. */
+    val speechModel: String = ""
 )
 
 /**

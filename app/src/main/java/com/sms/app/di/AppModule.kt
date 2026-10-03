@@ -20,5 +20,6 @@ val appModule = module {
     single { Messages(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)) }
     single { OpenRequests() }
     single { RichChat(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.IO), get()) }
+    single { com.sms.app.core.voice.Transcriber(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.IO), get()) }
     viewModelOf(::SettingsViewModel)
 }

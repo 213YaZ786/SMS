@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
@@ -94,6 +95,9 @@ fun WelcomeScreen(onStart: () -> Unit) {
         )
         Spacer(Modifier.height(32.dp))
 
+        // What is on by default can be turned off right here.
+        val store: com.sms.app.data.settings.SettingsStore = org.koin.compose.koinInject()
+        val settings by store.settings.collectAsState()
         val step = setup.step
         WelcomeZone(
             icon = AppIcons.Message,
@@ -107,11 +111,50 @@ fun WelcomeScreen(onStart: () -> Unit) {
         WelcomeZone(
             icon = AppIcons.Lock,
             title = "Encrypted chat",
-            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay. Turn it off in Settings.",
+            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay.",
             done = true,
             action = null,
-            onAction = {}
+            onAction = {},
+            toggle = settings.richChat,
+            onToggle = { on -> store.update { it.copy(richChat = on) } }
         )
+        Spacer(Modifier.height(16.dp))
+        WelcomeZone(
+            icon = AppIcons.Warning,
+            title = "Links checked",
+            message = "Links not recognized are pointed out before they open, also against a public list of dangerous sites, updated daily.",
+            done = true,
+            action = null,
+            onAction = {},
+            toggle = settings.checkLinks,
+            onToggle = { on -> store.update { it.copy(checkLinks = on) } }
+        )
+        // Voice messages written out: the model for this phone already chosen, fetched on a tap.
+        val transcriber: com.sms.app.core.voice.Transcriber = org.koin.compose.koinInject()
+        if (transcriber.available) {
+            val model by transcriber.model.state.collectAsState()
+            Spacer(Modifier.height(16.dp))
+            WelcomeZone(
+                icon = AppIcons.TextFormat,
+                title = "Voice messages written out",
+                message = when (val m = model) {
+                    is com.sms.app.core.voice.SpeechModel.State.Fetching -> "Getting the speech model · ${(m.done * 100).toInt()}%"
+                    com.sms.app.core.voice.SpeechModel.State.Ready -> "On this phone only, any language."
+                    else -> "On this phone only, any language. The speech model is fetched once."
+                },
+                done = !settings.transcribeVoice || model == com.sms.app.core.voice.SpeechModel.State.Ready || model is com.sms.app.core.voice.SpeechModel.State.Fetching,
+                action = "Get it",
+                onAction = { transcriber.model.fetch() },
+                toggle = settings.transcribeVoice,
+                onToggle = { on ->
+                    store.update { it.copy(transcribeVoice = on) }
+                    if (!on && model is com.sms.app.core.voice.SpeechModel.State.Fetching) transcriber.model.cancel()
+                },
+                extra = if (settings.transcribeVoice && (model == com.sms.app.core.voice.SpeechModel.State.Missing || model == com.sms.app.core.voice.SpeechModel.State.Failed)) ({
+                    com.sms.app.feature.thread.ModelChoices(transcriber.model)
+                }) else null
+            )
+        }
         Spacer(Modifier.height(16.dp))
         WelcomeZone(
             icon = AppIcons.Update,
@@ -137,8 +180,13 @@ private fun WelcomeZone(
     message: String,
     done: Boolean,
     action: String?,
-    onAction: () -> Unit
+    onAction: () -> Unit,
+    extra: (@Composable () -> Unit)? = null,
+    /** On by default, turned off here: a switch by the title. */
+    toggle: Boolean? = null,
+    onToggle: (Boolean) -> Unit = {}
 ) {
+    val haptics = com.sms.app.ui.component.rememberHaptics()
     ZoneSurface(shape = RoundedCornerShape(24.dp), modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth()) {
         Column(
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -146,13 +194,20 @@ private fun WelcomeZone(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    if (done) AppIcons.CheckCircle else icon,
+                    if (done && toggle != false) AppIcons.CheckCircle else icon,
                     contentDescription = if (done) "Done" else null,
                     tint = MaterialTheme.colorScheme.primary
                 )
-                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 12.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 12.dp).weight(1f))
+                toggle?.let { on ->
+                    androidx.compose.material3.Switch(checked = on, onCheckedChange = {
+                        haptics.tick()
+                        onToggle(it)
+                    })
+                }
             }
             Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            extra?.invoke()
             if (!done && action != null) {
                 Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End) {
                     BoldButton(onClick = onAction) { Text(action) }
