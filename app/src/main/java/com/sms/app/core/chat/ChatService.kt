@@ -54,10 +54,7 @@ class ChatService : Service(), KoinComponent {
     }
 
     private fun notice(): Notification {
-        val manager = getSystemService(NotificationManager::class.java)
-        // No dot on the app's icon and no bubble: nothing here looks like a message.
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Encrypted chat connection", NotificationManager.IMPORTANCE_MIN).apply { setShowBadge(false) })
-        runCatching { manager.deleteNotificationChannel("connection") }
+        channel(this)
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         // As quiet as Android allows: no sound, no banner, shown again without a
         // word after a restart or an update, hidden on the lock screen.
@@ -79,6 +76,26 @@ class ChatService : Service(), KoinComponent {
     companion object {
         const val CHANNEL = "chat_link"
         private const val ID = 42
+
+        /** The connection's channel: no dot on the app's icon, no sound, nothing that looks like a message. */
+        fun channel(context: Context) {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(NotificationChannel(CHANNEL, "Encrypted chat connection", NotificationManager.IMPORTANCE_MIN).apply { setShowBadge(false) })
+            runCatching { manager.deleteNotificationChannel("connection") }
+        }
+
+        /** Android's page of that notification, where it can be turned off while the chat keeps receiving. */
+        fun hideNotice(context: Context) {
+            channel(context)
+            runCatching {
+                context.startActivity(
+                    Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, CHANNEL)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+        }
 
         /** Starts it when the chat is on and SMS is the messaging app. */
         fun startIfWanted(context: Context, settings: SettingsStore) {

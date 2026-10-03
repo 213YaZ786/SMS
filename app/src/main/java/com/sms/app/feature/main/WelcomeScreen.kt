@@ -111,10 +111,14 @@ fun WelcomeScreen(onStart: () -> Unit) {
         WelcomeZone(
             icon = AppIcons.Lock,
             title = "Encrypted chat",
-            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay.",
-            done = true,
-            action = null,
-            onAction = {},
+            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay. A silent notification keeps it connected; it can be hidden.",
+            // Read again on coming back from Android's page.
+            done = !settings.richChat || remember(checks) {
+                context.getSystemService(android.app.NotificationManager::class.java)
+                    .getNotificationChannel(com.sms.app.core.chat.ChatService.CHANNEL)?.importance == android.app.NotificationManager.IMPORTANCE_NONE
+            },
+            action = "Hide its notification",
+            onAction = { com.sms.app.core.chat.ChatService.hideNotice(context) },
             toggle = settings.richChat,
             onToggle = { on -> store.update { it.copy(richChat = on) } }
         )
