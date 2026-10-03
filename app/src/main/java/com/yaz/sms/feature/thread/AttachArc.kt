@@ -161,6 +161,10 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop
             ) {
                 // The popup's box: the quarter above and right of the +, never wider than the screen.
                 val side = with(density) { (pad + margin).toDp() }
+                // In a popup the recorded screen does not line up with the drops: their
+                // lens would show another part of it (a background's colour with nothing
+                // behind). Frosted zones instead, neutral wherever they are.
+                androidx.compose.runtime.CompositionLocalProvider(com.yaz.sms.ui.glass.LocalGlassBackdrop provides null) {
                 Box(Modifier.size(side)) {
                     drops.forEachIndexed { i, drop ->
                         MercuryDrop(drop, i, arcAngles[i], arcRadius, hovered = hover == i, cx = margin, cy = pad) {
@@ -169,6 +173,7 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop
                             onPick(drop)
                         }
                     }
+                }
                 }
             }
         }
@@ -194,9 +199,11 @@ private fun MercuryDrop(drop: Drop, order: Int, angle: Double, arcRadius: androi
             IntOffset(cx + (d * cos(r)).roundToInt() - half, cy - (d * sin(r)).roundToInt() - half)
         }
     ) {
-        FloatingPane(
+        // A plain light disc, the same over any background (glass cannot line up in a popup).
+        androidx.compose.material3.Surface(
             shape = CircleShape,
-            accent = hovered,
+            color = if (hovered) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+            shadowElevation = 6.dp,
             onClick = onClick,
             modifier = Modifier.size(DropSize).graphicsLayer {
                 val s = (0.4f + 0.6f * out.value) * swell
