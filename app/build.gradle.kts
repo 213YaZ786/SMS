@@ -24,8 +24,8 @@ android {
         applicationId = "com.sms.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 17
-        versionName = "0.10.2"
+        versionCode = 18
+        versionName = "0.10.3"
         // Voice messages written out on the phone: whisper.cpp, for 64-bit ARM phones.
         externalNativeBuild {
             cmake {
