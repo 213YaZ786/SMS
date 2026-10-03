@@ -121,7 +121,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     fun nameOf(c: Conversation): String? =
         if (c.group) settings.groupNames[c.threadId] ?: c.addresses.joinToString(", ") { a -> index.find(T9.clean(a))?.name?.substringBefore(' ') ?: Numbers.format(context, a) }
         else index.find(T9.clean(c.address))?.name
-    val shown = remember(all, filter, settings.pinned, settings.archived, query, index) {
+    // settings.later too: a conversation set aside leaves the list at once.
+    val shown = remember(all, filter, settings.pinned, settings.archived, settings.later, query, index) {
         val q = query.trim().lowercase()
         Lists.shown(all, filter, settings.pinned, settings.archived, settings.later, known = { c -> index.find(T9.clean(c.address)) != null }).filter { c ->
             q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
@@ -131,8 +132,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     var servicesOpen by rememberSaveable { mutableStateOf(false) }
     var peeking by remember { mutableStateOf<Conversation?>(null) }
     var setAside by remember { mutableStateOf<Conversation?>(null) }
-    val waiting = remember(all, settings.archived, filter, query) {
-        if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.waiting(all, settings.archived, System.currentTimeMillis())
+    val waiting = remember(all, settings.archived, settings.later, filter, query) {
+        if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.waiting(all, settings.archived, System.currentTimeMillis(), later = settings.later)
     }
 
     val line: @Composable (Conversation) -> Unit = { c ->

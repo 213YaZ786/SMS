@@ -338,7 +338,13 @@ private fun ThreadContent(
     // Off the main thread: folding reactions and days over a long thread
     // would hold the first frame; the rows on screen stay until the new ones are ready.
     var rows by remember { mutableStateOf<List<Row>>(emptyList()) }
-    LaunchedEffect(list) { rows = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { rowsOf(list) } }
+    // The messages the rows on screen were made from.
+    var rowsOfList by remember { mutableStateOf<List<Message>?>(null) }
+    LaunchedEffect(list) {
+        val from = list
+        rows = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { rowsOf(from) }
+        rowsOfList = from
+    }
     // The person's page, opened from their face: the calls, the tools, what was shared.
     var personOpen by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
@@ -541,8 +547,13 @@ private fun ThreadContent(
         if (picture != null) PictureGround(picture, com.yaz.sms.ui.glass.LocalGlass.current?.ground ?: MaterialTheme.colorScheme.background)
         else HeroGlow(if (group) null else entry?.photo, height = padding.calculateTopPadding() + 320.dp)
         // Near the oldest message shown, with more behind it: read the next page.
+        // Only once the rows of the messages read are on screen: before, the
+        // empty list looks like its top, and pages were read one after the
+        // other until the whole conversation was (seconds on a long one).
         val nearTop by remember { derivedStateOf { (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= listState.layoutInfo.totalItemsCount - 15 } }
-        LaunchedEffect(nearTop, list.size) { if (nearTop && list.size >= window) window += Messages.PAGE }
+        LaunchedEffect(nearTop, rowsOfList, list.size) {
+            if (nearTop && rowsOfList === list && rows.isNotEmpty() && list.size >= window && listState.layoutInfo.totalItemsCount > 15) window += Messages.PAGE
+        }
         LazyColumn(
             state = listState,
             reverseLayout = true,

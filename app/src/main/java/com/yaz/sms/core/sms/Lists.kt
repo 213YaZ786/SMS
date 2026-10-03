@@ -34,8 +34,8 @@ object Lists {
      * in the last [hours] hours and was read, so the dot is gone but the
      * reply is still owed. Newest first.
      */
-    fun waiting(all: List<Conversation>, archived: Map<Long, Long>, now: Long, hours: Int = 48, limit: Int = 10): List<Conversation> =
-        all.filter { !it.fromMe && it.unread == 0 && it.date >= now - hours * HOUR_MS && !isArchived(it, archived) && it.address.any(Char::isDigit) }
+    fun waiting(all: List<Conversation>, archived: Map<Long, Long>, now: Long, hours: Int = 48, limit: Int = 10, later: Map<Long, Long> = emptyMap()): List<Conversation> =
+        all.filter { !it.fromMe && it.unread == 0 && it.date >= now - hours * HOUR_MS && !isArchived(it, archived) && (later[it.threadId] ?: 0L) <= now && it.address.any(Char::isDigit) }
             .sortedByDescending { it.date }
             .take(limit)
 
