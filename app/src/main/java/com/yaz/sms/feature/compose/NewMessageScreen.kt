@@ -118,7 +118,7 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (typed != null) {
-                item(key = "typed") { Line(null, null, if (group) "Add $typed" else "Send to $typed", null, false) { pick(typed) } }
+                item(key = "typed") { Line(null, null, null, if (group) "Add $typed" else "Send to $typed", null, false) { pick(typed) } }
             }
             if (!allowed) {
                 item(key = "allow") {
@@ -133,7 +133,7 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
             }
             found.forEach { person ->
                 items(person.numbers, key = { "n/${person.id}/${it.number}" }) { n ->
-                    Line(person.name, person.photo, person.name, n.number, n.number in chosen) { pick(n.number) }
+                    Line(person.name, person.photo, person.look, person.name, n.number, n.number in chosen) { pick(n.number) }
                 }
             }
         }
@@ -141,7 +141,7 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
 }
 
 @Composable
-private fun Line(name: String?, photo: String?, title: String, under: String?, chosen: Boolean, onClick: () -> Unit) {
+private fun Line(name: String?, photo: String?, look: com.yaz.sms.core.dial.ContactLook.Look?, title: String, under: String?, chosen: Boolean, onClick: () -> Unit) {
     val haptics = rememberHaptics()
     val shape = RoundedCornerShape(22.dp)
     ZoneSurface(
@@ -154,7 +154,7 @@ private fun Line(name: String?, photo: String?, title: String, under: String?, c
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
             if (name != null) {
-                ContactAvatar(name, photo, 44.dp)
+                ContactAvatar(name, photo, 44.dp, look = look)
             } else {
                 ZoneSurface(shape = CircleShape, accent = true, modifier = Modifier.size(44.dp)) {
                     Box(contentAlignment = Alignment.Center) { Icon(AppIcons.Send, contentDescription = null) }

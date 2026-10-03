@@ -698,7 +698,7 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
             menuOpen = true
         }) {
           Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = if (face != null) 5.dp else 0.dp)) {
-            face?.let { (name, photo) -> com.yaz.sms.ui.component.ContactAvatar(name, photo, 34.dp) }
+            face?.let { (name, photo) -> com.yaz.sms.ui.component.ContactAvatar(name, photo, 34.dp, look = if (group) null else com.yaz.sms.ui.component.rememberLook(address).value) }
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(start = if (face != null) 10.dp else 18.dp, end = 18.dp, top = if (under != null) 6.dp else 10.dp, bottom = if (under != null) 6.dp else 10.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 under?.let {
