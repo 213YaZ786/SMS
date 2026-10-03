@@ -1,5 +1,6 @@
 package com.sms.app.core.chat
 
+import com.sms.app.core.common.readAtMost
 import android.content.Context
 import com.sms.app.core.common.writeTextAtomically
 import java.io.File
@@ -39,7 +40,7 @@ object Relays {
                 readTimeout = 10_000
                 instanceFollowRedirects = false
                 try {
-                    if (responseCode != 200) null else inputStream.use { String(it.readNBytes(512 * 1024)) }
+                    if (responseCode != 200) null else inputStream.use { String(it.readAtMost(512 * 1024)) }
                 } finally {
                     disconnect()
                 }

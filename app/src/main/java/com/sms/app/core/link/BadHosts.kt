@@ -1,5 +1,6 @@
 package com.sms.app.core.link
 
+import com.sms.app.core.common.readAtMost
 import android.content.Context
 import com.sms.app.core.common.writeTextAtomically
 import java.io.File
@@ -55,7 +56,7 @@ object BadHosts {
                 readTimeout = 15_000
                 instanceFollowRedirects = false
                 try {
-                    if (responseCode != 200) null else inputStream.use { String(it.readNBytes(2 * 1024 * 1024)) }
+                    if (responseCode != 200) null else inputStream.use { String(it.readAtMost(2 * 1024 * 1024)) }
                 } finally {
                     disconnect()
                 }

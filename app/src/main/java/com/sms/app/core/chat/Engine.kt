@@ -67,7 +67,7 @@ class Engine(private val context: Context, private val scope: CoroutineScope) {
         process = started
         writer = started.outputStream.bufferedWriter()
         // Its error output is read and dropped: it may carry addresses.
-        Thread { runCatching { started.errorStream.copyTo(java.io.OutputStream.nullOutputStream()) } }.apply { isDaemon = true }.start()
+        Thread { runCatching { val drop = ByteArray(8192); while (started.errorStream.read(drop) >= 0) Unit } }.apply { isDaemon = true }.start()
         Thread { read(started.inputStream.bufferedReader()) }.apply { isDaemon = true }.start()
         pump = scope.launch(Dispatchers.IO) {
             while (isActive && running) {
