@@ -36,8 +36,20 @@ object SmsReactions {
         return (if (p.removed) "Removed ${p.emoji} from “" else "Reacted ${p.emoji} to “") + quoted + "”"
     }
 
-    /** The conversation without its reaction messages, and each message's reactions by its uid. */
-    data class Folded(val messages: List<Message>, val reactions: Map<String, List<String>>)
+    /**
+     * A reaction of the user's own, as Google Messages writes one: the words
+     * are for whoever reads it as text (an iPhone, an older app), the marks
+     * carry the emoji and the quoted message, so it shows as a reaction in
+     * Google Messages and here, in any language.
+     */
+    fun write(emoji: String, text: String, removed: Boolean): String {
+        val quoted = squash(text).let { if (it.length > 200) it.take(199).trimEnd() + "…" else it }
+        val mark = if (removed) '\u200c' else '\u200b'
+        return "$HAIR${if (removed) "Removed " else "Reacted "}$mark$emoji$mark${if (removed) " from " else " to "}$HAIR$quoted$HAIR$HAIR"
+    }
+
+    /** The conversation without its reaction messages, each message's reactions by its uid, and the user's own among them. */
+    data class Folded(val messages: List<Message>, val reactions: Map<String, List<String>>, val mine: Map<String, List<String>> = emptyMap())
 
     /** [list] oldest first. */
     fun fold(list: List<Message>): Folded {
@@ -62,7 +74,8 @@ object SmsReactions {
         }
         if (hidden.isEmpty()) return Folded(list, emptyMap())
         val reactions = given.mapValues { (_, byWho) -> byWho.values.flatten() }.filterValues { it.isNotEmpty() }
-        return Folded(list.filterNot { it.uid in hidden }, reactions)
+        val mine = given.mapValues { (_, byWho) -> byWho[""].orEmpty().toList() }.filterValues { it.isNotEmpty() }
+        return Folded(list.filterNot { it.uid in hidden }, reactions, mine)
     }
 
     /** The newest message before [index] whose text is [quoted], whole or cut short with an ellipsis. */

@@ -37,6 +37,14 @@ class SmsReactionsTest {
     }
 
     @Test
+    fun ownReactionReadBack() {
+        assertEquals(SmsReactions.Parsed("😂", "See you soon", false), SmsReactions.parse(SmsReactions.write("😂", "See you  soon", false)))
+        assertEquals(SmsReactions.Parsed("😂", "See you soon", true), SmsReactions.parse(SmsReactions.write("😂", "See you soon", true)))
+        val list = listOf(msg(1, "See you soon", Box.RECEIVED), msg(2, SmsReactions.write("👍", "See you soon", false), Box.SENT))
+        assertEquals(mapOf("sms/1" to listOf("👍")), SmsReactions.fold(list).mine)
+    }
+
+    @Test
     fun plainMessagesStay() {
         assertNull(SmsReactions.parse("See you soon"))
         assertNull(SmsReactions.parse("He said “no” again"))

@@ -590,6 +590,13 @@ private fun ThreadContent(
                         fresh = row.message.box == MessageBox.RECEIVED && row.message.uid in fresh,
                         rich = chat.refOf(row.message.mms, row.message.id).also { refs.size },
                         smsReactions = row.smsReactions,
+                        // A reaction by SMS to a message with words, one to one: Google Messages shows it as such, an iPhone as words.
+                        onSmsReact = if (!group && !row.message.rich && row.message.body.isNotBlank()) ({ emoji ->
+                            val removed = emoji in row.smsMine
+                            val said = com.yaz.sms.core.sms.Effects.read(row.message.body).first
+                            scope.launch(Dispatchers.IO) { SmsSender.send(context, to, com.yaz.sms.core.sms.SmsReactions.write(emoji, said, removed), row.message.subId) }
+                        }) else null,
+                        smsMine = row.smsMine,
                         onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },
                         onPollShown = { scope.launch { chat.recount(row.message.mms, row.message.id) } },
                         sender = if (group && row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null,
@@ -625,7 +632,7 @@ private fun ThreadContent(
 private sealed class Row(val key: String) {
     class Day(val label: String, day: String) : Row("day/$day")
     // An SMS and a picture message may hold the same number: the kind is part of the key.
-    class Bubble(val message: Message, val last: Boolean, val smsReactions: List<String> = emptyList()) : Row("m/${message.uid}")
+    class Bubble(val message: Message, val last: Boolean, val smsReactions: List<String> = emptyList(), val smsMine: List<String> = emptyList()) : Row("m/${message.uid}")
 }
 
 private fun rowsOf(all: List<Message>): List<Row> {
@@ -641,7 +648,7 @@ private fun rowsOf(all: List<Message>): List<Row> {
             day = d
             out += Row.Day(dayLabel(d), d.toString())
         }
-        out += Row.Bubble(m, m.id == lastMine, folded.reactions[m.uid].orEmpty())
+        out += Row.Bubble(m, m.id == lastMine, folded.reactions[m.uid].orEmpty(), folded.mine[m.uid].orEmpty())
     }
     return out
 }
@@ -770,6 +777,8 @@ private fun Bubble(
     onReact: (String?) -> Unit,
     sender: String?,
     smsReactions: List<String> = emptyList(),
+    smsMine: List<String> = emptyList(),
+    onSmsReact: ((String) -> Unit)? = null,
     onRetry: () -> Unit,
     onDelete: () -> Unit,
     onQuote: () -> Unit,
@@ -1047,8 +1056,8 @@ private fun Bubble(
             if (menuOpen) MessageMenu(
                 bounds = bounds,
                 mine = mine,
-                reactions = if (rich != null) Reactions else null,
-                chosen = rich?.reactions.orEmpty(),
+                reactions = if (rich != null || onSmsReact != null) Reactions else null,
+                chosen = if (rich != null) rich.reactions else smsMine,
                 actions = listOfNotNull(
                     MessageAction(AppIcons.Reply, "Reply") { onQuote() },
                     if (bubbleEffect != null || screenEffect != null) MessageAction(AppIcons.Play, "Replay") {
@@ -1068,7 +1077,7 @@ private fun Bubble(
                     if (chatId != null && rich?.mine == true) MessageAction(AppIcons.Delete, "Delete for everyone", danger = true) { confirmDeleteAll = true } else null,
                     MessageAction(AppIcons.Delete, if (chatId != null && rich?.mine == true) "Delete for me" else "Delete", danger = true) { onDelete() }
                 ),
-                onReact = { emoji -> onReact(if (emoji in rich?.reactions.orEmpty()) null else emoji) },
+                onReact = { emoji -> if (rich == null && onSmsReact != null) onSmsReact(emoji) else onReact(if (emoji in rich?.reactions.orEmpty()) null else emoji) },
                 onDismiss = { menuOpen = false },
                 onMoreReactions = if (rich != null) ({ pickingEmoji = true }) else null
             ) {
