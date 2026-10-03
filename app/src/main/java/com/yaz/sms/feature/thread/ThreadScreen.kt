@@ -1096,6 +1096,9 @@ private fun Bubble(
                 risky = url to verdict
             }
         }
+        // A sound link: its preview on a tap, never fetched by itself.
+        val sound = remember(said, checks) { links(said).firstOrNull { it !in checks } }
+        if (sound != null && checks.isEmpty() && m.parts.isEmpty()) LinkPreviewCapsule(sound)
         // A poll's votes are in its card, not here.
         val shownReactions = rich?.reactions.orEmpty().filter { poll == null || com.yaz.sms.core.sms.Polls.choiceOf(it) < 0 } + smsReactions
         if (shownReactions.isNotEmpty()) {
