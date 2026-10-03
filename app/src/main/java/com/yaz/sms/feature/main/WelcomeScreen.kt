@@ -124,13 +124,13 @@ fun WelcomeScreen(onStart: () -> Unit) {
         WelcomeZone(
             icon = AppIcons.Lock,
             title = "Encrypted chat",
-            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay. A silent notification keeps it connected; it can be hidden.",
+            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay. A silent notification keeps it connected: Android shows it for any app that stays connected, and only you can hide it or fold it to one line.",
             // Read again on coming back from Android's page.
             done = !settings.richChat || remember(checks) {
                 context.getSystemService(android.app.NotificationManager::class.java)
-                    .getNotificationChannel(com.yaz.sms.core.chat.ChatService.CHANNEL)?.importance == android.app.NotificationManager.IMPORTANCE_NONE
+                    .getNotificationChannel(com.yaz.sms.core.chat.ChatService.CHANNEL)?.let { it.importance <= android.app.NotificationManager.IMPORTANCE_MIN } == true
             },
-            action = "Hide its notification",
+            action = "Hide or fold it",
             onAction = { com.yaz.sms.core.chat.ChatService.hideNotice(context) },
             toggle = settings.richChat,
             onToggle = { on -> store.update { it.copy(richChat = on) } }
