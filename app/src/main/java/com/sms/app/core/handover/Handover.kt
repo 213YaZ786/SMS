@@ -129,8 +129,10 @@ class HandoverProvider : ContentProvider() {
                         val root = context.dataDir
                         val parts = if (speech) listOf(File(context.filesDir, "speech")) else listOf("files", "databases", "shared_prefs").map { File(root, it) }
                         parts.filter { it.exists() }.forEach { add(zip, root, it, speech) }
+                        // Every file is out: from now on the new app holds them. Marked before the
+                        // archive's end, which the reader may close the pipe on.
+                        if (!speech) File(context.filesDir, Handover.HANDED).createNewFile()
                     }
-                    if (!speech) File(context.filesDir, Handover.HANDED).createNewFile()
                 }
             }
         }.start()
