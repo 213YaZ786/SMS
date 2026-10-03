@@ -107,19 +107,16 @@ fun WelcomeScreen(onStart: () -> Unit) {
             action = step?.action,
             onAction = { step?.let(setup.run) }
         )
-        // Moved from the old SMS: everything came over; the old one can go.
-        val oldThere = remember(checks) { com.yaz.sms.core.handover.Handover.oldInstalled(context) }
-        if (oldThere) {
-            Spacer(Modifier.height(16.dp))
-            WelcomeZone(
-                icon = AppIcons.Delete,
-                title = "The old SMS",
-                message = "Your messages, chats and settings are here now. Remove the old app.",
-                done = false,
-                action = "Remove it",
-                onAction = { com.yaz.sms.core.handover.Handover.removeOld(context) }
-            )
-        }
+        // Nothing to bring over: Android keeps the messages for every messaging app.
+        Spacer(Modifier.height(16.dp))
+        WelcomeZone(
+            icon = AppIcons.Done,
+            title = "Already here",
+            message = "Your SMS and MMS are Android's: those of the app you used before are here. RCS chats stay in the app that had them.",
+            done = true,
+            action = null,
+            onAction = {}
+        )
         Spacer(Modifier.height(16.dp))
         WelcomeZone(
             icon = AppIcons.Lock,

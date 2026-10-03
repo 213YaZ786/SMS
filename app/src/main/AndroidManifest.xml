@@ -3,8 +3,6 @@
 
     <!-- One request to GitHub when the app opens, for the newest release. Nothing else goes out. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- The old SMS (com.sms.app) hands its files over to this one, signed with the same key, once. -->
-    <uses-permission android:name="${predecessor}.permission.HANDOVER" />
     <!-- Hands the cards received over the chat to the Contacts app, signed with the same key. -->
     <uses-permission android:name="com.yaz.contacts.permission.CARDS" />
     <uses-permission android:name="com.yaz.contacts.debug.permission.CARDS" />
@@ -49,9 +47,6 @@
 
     <!-- Dialer, when installed, shows the calls with a number. -->
     <queries>
-        <!-- The old SMS, to take its files over and offer to remove it. -->
-        <package android:name="${predecessor}" />
-        <provider android:authorities="${predecessor}.handover" />
         <!-- The Contacts app's door for cards shared over the chat (signature level). -->
         <provider android:authorities="com.yaz.contacts.cards" />
         <provider android:authorities="com.yaz.contacts.debug.cards" />
@@ -74,8 +69,6 @@
         android:enableOnBackInvokedCallback="false"
         android:usesCleartextTraffic="false"
         android:networkSecurityConfig="@xml/network_security_config">
-        <!-- The package SMS came from (core/handover). -->
-        <meta-data android:name="handover.predecessor" android:value="${predecessor}" />
 
         <activity
             android:name=".MainActivity"

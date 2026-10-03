@@ -26,8 +26,6 @@ android {
         targetSdk = 37
         versionCode = 20
         versionName = "0.11.0"
-        // The package SMS came from: its files are taken over at the first start (core/handover).
-        manifestPlaceholders["predecessor"] = "com.sms.app"
         // Voice messages written out on the phone: whisper.cpp, for 64-bit ARM phones.
         externalNativeBuild {
             cmake {
@@ -58,7 +56,6 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            manifestPlaceholders["predecessor"] = "com.sms.app.debug"
             versionNameSuffix = "-debug"
         }
         release {
