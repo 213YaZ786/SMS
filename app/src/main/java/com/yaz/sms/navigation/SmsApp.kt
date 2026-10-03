@@ -152,6 +152,10 @@ private fun SmsNavHost(navController: NavHostController) {
             ReadableScroll {
                 NewMessageScreen(
                     onBack = { navController.popBackStack() },
+                    onSection = { section ->
+                        com.yaz.sms.feature.conversations.Sections.asked.value = section
+                        navController.popBackStack()
+                    },
                     onPick = { address ->
                         navController.popBackStack()
                         navController.navigate(Routes.thread(null, address, text))

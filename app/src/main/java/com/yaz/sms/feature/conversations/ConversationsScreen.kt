@@ -110,6 +110,12 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     }
     // The section chosen in Settings, All unless changed.
     var filter by rememberSaveable { mutableStateOf(runCatching { Filter.valueOf(store.current.startFilter) }.getOrDefault(Filter.ALL)) }
+    // A section chosen from the pill of another screen (a new message) opens here.
+    val asked by Sections.asked.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(asked) {
+        asked?.let { filter = it; Sections.asked.value = null }
+    }
+    androidx.compose.runtime.SideEffect { Sections.current.value = filter }
     var query by rememberSaveable { mutableStateOf("") }
 
     fun nameOf(c: Conversation): String? =
@@ -151,28 +157,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         // The sections in a floating pill at the bottom, as Dialer's tabs:
         // a dot on Unread while a message waits to be read.
         overlay = {
-            if (messages.canRead() && all.isNotEmpty()) {
-                // All in the middle, the narrower ones around it.
-                val sections = listOf(
-                    Filter.UNREAD to com.yaz.sms.ui.component.DockItem(AppIcons.Message, "Unread", dot = all.any { it.unread > 0 && !Lists.isArchived(it, settings.archived) }, dotColor = MaterialTheme.colorScheme.error),
-                    Filter.UNKNOWN to com.yaz.sms.ui.component.DockItem(AppIcons.QuestionMark, "Unknown"),
-                    Filter.ALL to com.yaz.sms.ui.component.DockItem(AppIcons.TextSms, "All"),
-                    Filter.LATER to com.yaz.sms.ui.component.DockItem(AppIcons.Schedule, "Later"),
-                    Filter.ARCHIVED to com.yaz.sms.ui.component.DockItem(AppIcons.Archive, "Archived")
-                )
-                val at by androidx.compose.animation.core.animateFloatAsState(
-                    sections.indexOfFirst { it.first == filter }.coerceAtLeast(0).toFloat(),
-                    androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 500f), label = "section"
-                )
-                com.yaz.sms.ui.component.FloatingDock(
-                    items = sections.map { it.second },
-                    position = at,
-                    onSelect = { filter = sections[it].first },
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                        .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
-                        .padding(bottom = 16.dp)
-                )
-            }
+            if (messages.canRead() && all.isNotEmpty()) SectionsDock(filter, unread = all.any { it.unread > 0 && !Lists.isArchived(it, settings.archived) }, onSelect = { filter = it })
         }
     ) { padding ->
         when {
@@ -488,4 +473,40 @@ private fun ConversationLine(
             }
         }
     }
+}
+
+/** The list's section, shared with the screens that show the same pill. */
+object Sections {
+    /** The section the list shows now. */
+    val current = kotlinx.coroutines.flow.MutableStateFlow(Filter.ALL)
+    /** A section chosen elsewhere, for the list to open on. */
+    val asked = kotlinx.coroutines.flow.MutableStateFlow<Filter?>(null)
+}
+
+/**
+ * The sections in a floating pill at the bottom, as Dialer's tabs: All in
+ * the middle, the narrower ones around it, a red dot on Unread while a
+ * message waits to be read.
+ */
+@Composable
+fun androidx.compose.foundation.layout.BoxScope.SectionsDock(filter: Filter?, unread: Boolean, onSelect: (Filter) -> Unit) {
+    val sections = listOf(
+        Filter.UNREAD to com.yaz.sms.ui.component.DockItem(AppIcons.Message, "Unread", dot = unread, dotColor = MaterialTheme.colorScheme.error),
+        Filter.UNKNOWN to com.yaz.sms.ui.component.DockItem(AppIcons.QuestionMark, "Unknown"),
+        Filter.ALL to com.yaz.sms.ui.component.DockItem(AppIcons.TextSms, "All"),
+        Filter.LATER to com.yaz.sms.ui.component.DockItem(AppIcons.Schedule, "Later"),
+        Filter.ARCHIVED to com.yaz.sms.ui.component.DockItem(AppIcons.Archive, "Archived")
+    )
+    val at by androidx.compose.animation.core.animateFloatAsState(
+        sections.indexOfFirst { it.first == filter }.let { if (it < 0) -1f else it.toFloat() },
+        androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 500f), label = "section"
+    )
+    com.yaz.sms.ui.component.FloatingDock(
+        items = sections.map { it.second },
+        position = at,
+        onSelect = { onSelect(sections[it].first) },
+        modifier = Modifier.align(Alignment.BottomCenter)
+            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
+            .padding(bottom = 16.dp)
+    )
 }
