@@ -1097,8 +1097,11 @@ private fun Bubble(
             }
         }
         // A sound link: its preview on a tap, never fetched by itself.
+        // A place: its card, opened in the user's map app; else a sound link: its preview on a tap, never fetched by itself.
+        val place = remember(said) { com.yaz.sms.core.sms.Places.find(said) }
         val sound = remember(said, checks) { links(said).firstOrNull { it !in checks } }
-        if (sound != null && checks.isEmpty() && m.parts.isEmpty()) LinkPreviewCapsule(sound)
+        if (place != null && checks.isEmpty()) PlaceCard(place)
+        else if (sound != null && checks.isEmpty() && m.parts.isEmpty()) LinkPreviewCapsule(sound)
         // A poll's votes are in its card, not here.
         val shownReactions = rich?.reactions.orEmpty().filter { poll == null || com.yaz.sms.core.sms.Polls.choiceOf(it) < 0 } + smsReactions
         if (shownReactions.isNotEmpty()) {

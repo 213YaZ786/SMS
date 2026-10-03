@@ -132,3 +132,41 @@ internal fun LinkPreviewCapsule(url: String) {
         }
     }
 }
+
+/**
+ * A place shared in a message: a card of glass with a pin that drops in,
+ * its name or "Shared place" and the coordinates; a tap opens the user's
+ * own map app there. Nothing is fetched.
+ */
+@Composable
+internal fun PlaceCard(place: com.yaz.sms.core.sms.Places.Place) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val haptics = rememberHaptics()
+    val drop = remember { Animatable(-14f) }
+    LaunchedEffect(Unit) { drop.animateTo(0f, spring(dampingRatio = 0.4f, stiffness = 400f)) }
+    FloatingPane(
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.padding(top = 4.dp).widthIn(max = 300.dp),
+        onClick = {
+            haptics.tick()
+            runCatching {
+                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(place.geo())))
+            }.onFailure { haptics.reject() }
+        }
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Icon(
+                AppIcons.Place, contentDescription = null, tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp).graphicsLayer { translationY = drop.value * density }
+            )
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text(place.label ?: "Shared place", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "%.5f, %.5f".format(java.util.Locale.ROOT, place.lat, place.lon) + " · Open in maps",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
