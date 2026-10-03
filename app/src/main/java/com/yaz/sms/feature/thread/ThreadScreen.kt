@@ -526,10 +526,11 @@ private fun ThreadContent(
         }
     ) { padding ->
         val inset = LocalReadableInset.current
-        // The conversation's own photo when one was chosen; else the person's light: their photo, blurred, or a glow.
+        // The conversation's own photo when one was chosen; else the person's light, a glow of their colour.
         if (picture != null) PictureGround(picture, com.yaz.sms.ui.glass.LocalGlass.current?.ground ?: MaterialTheme.colorScheme.background)
         else if (doodles) DoodleGround(doodleInk(com.yaz.sms.ui.glass.LocalGlass.current?.dark ?: (MaterialTheme.colorScheme.background.luminance() < 0.5f)))
-        else HeroGlow(if (group) null else entry?.photo, height = padding.calculateTopPadding() + 320.dp)
+        // Only light: the colours, never their photo blurred behind the words.
+        else HeroGlow(null, height = padding.calculateTopPadding() + 320.dp, color = if (group) null else entry?.look?.color?.let { androidx.compose.ui.graphics.Color(it) })
         // Near the oldest message shown, with more behind it: read the next page.
         // Only once the rows of the messages read are on screen: before, the
         // empty list looks like its top, and pages were read one after the
