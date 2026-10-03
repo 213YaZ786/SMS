@@ -47,10 +47,12 @@ class MessageNotifier(private val context: Context) {
         val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
         unread.forEach { (_, body, date) -> style.addMessage(Markup.plain(Effects.plain(body)), date, sender) }
         val code = Codes.find(unread.last().second)
-        // Someone with a vibration of their own rings on its channel.
-        val signature = runCatching {
-            org.koin.core.context.GlobalContext.get().get<com.sms.app.data.settings.SettingsStore>().current.signatures[Signatures.key(address)]
-        }.getOrNull()
+        // Someone with a vibration of their own rings on its channel: the one
+        // the Contacts app keeps in the contact first, else the one set here.
+        val signature = com.sms.app.core.dial.ContactLook.ofNumber(context, address)?.vibration?.takeIf { it in Signatures.patterns }
+            ?: runCatching {
+                org.koin.core.context.GlobalContext.get().get<com.sms.app.data.settings.SettingsStore>().current.signatures[Signatures.key(address)]
+            }.getOrNull()
         val builder = NotificationCompat.Builder(context, signature?.let { Signatures.channel(context, it) } ?: CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_sms)
             .setStyle(style)

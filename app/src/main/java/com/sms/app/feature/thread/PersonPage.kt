@@ -204,7 +204,10 @@ fun PersonPage(
                             if (contactId != null) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
                             else if (digits) Row(AppIcons.PersonAdd, "Add to contacts") { NumberActions.addContact(context, address) }
                             if (!group) Row(AppIcons.Copy, "Copy number") { NumberActions.copy(context, address) }
-                            if (!group) Row(AppIcons.Vibration, "Vibration") { choosingSignature = true }
+                            // Kept in the contact by the Contacts app when it is on the phone; here otherwise.
+                            if (!group) Row(AppIcons.Vibration, "Vibration") {
+                                if (contactId == null || !com.sms.app.core.dial.ContactLook.openInContacts(context, contactId)) choosingSignature = true
+                            }
                             if (group) Row(AppIcons.Create, "Name the group") { naming = true }
                             if (vanish != null) Row(AppIcons.Timer, if (vanish > 0) "Vanishing messages · ${vanishLabel(vanish)}" else "Vanishing messages") { choosingVanish = true }
                             if (!group && NumberActions.canBlock(context)) Row(AppIcons.Block, if (blocked) "Unblock" else "Block", danger = !blocked) {

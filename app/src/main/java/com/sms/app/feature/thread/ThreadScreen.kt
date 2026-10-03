@@ -135,7 +135,15 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     val settings by store.settings.collectAsState()
     var shownThread by remember { mutableStateOf(threadId) }
     val base = com.sms.app.ui.glass.LocalGlass.current
-    val look = rememberSceneLook(shownThread?.let { settings.backgrounds[it] }, base)
+    // Unless chosen here, the person's own colour from the Contacts app.
+    val context = LocalContext.current
+    val personColor by androidx.compose.runtime.produceState<Int?>(null, address) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            if (address.contains(',')) null else com.sms.app.core.dial.ContactLook.ofNumber(context, address)?.color
+        }
+    }
+    val chosen = shownThread?.let { settings.backgrounds[it] }
+    val look = rememberSceneLook(chosen ?: personColor?.let { colorCode(it) }, base)
     androidx.compose.runtime.CompositionLocalProvider(com.sms.app.ui.glass.LocalGlass provides look) {
         Box(Modifier.fillMaxSize()) {
             ThreadContent(threadId, address, draft, onBack, base, onThread = { shownThread = it })
@@ -336,10 +344,14 @@ private fun ThreadContent(
         queue(Pending(System.nanoTime(), com.sms.app.core.sms.Polls.write(question, options), android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID, emptyList(), null))
     }) { pollOpen = false }
     var backgroundOpen by remember { mutableStateOf(false) }
+    val theirColor by androidx.compose.runtime.produceState<Int?>(null, to) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.sms.app.core.dial.ContactLook.ofNumber(context, to)?.color }
+    }
     if (backgroundOpen && thread != null && appLook != null) BackgroundSheet(
         current = settingsNow.backgrounds[thread],
         base = appLook,
         theirPhoto = if (group) null else entry?.photo,
+        theirColor = if (group) null else theirColor,
         onPick = { code ->
             backgroundOpen = false
             val t = thread ?: return@BackgroundSheet

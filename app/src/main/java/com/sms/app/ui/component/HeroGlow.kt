@@ -34,11 +34,12 @@ import kotlinx.coroutines.withContext
 
 /**
  * The light behind a person's page: their photo, blurred and fading into
- * the page, or a glow of the accent when there is none. [height] tall,
- * drawn under the top of the page.
+ * the page, or a glow when there is none: of the person's own [color]
+ * (chosen in the Contacts app) or of the accent. [height] tall, drawn
+ * under the top of the page.
  */
 @Composable
-fun HeroGlow(photo: String?, height: Dp) {
+fun HeroGlow(photo: String?, height: Dp, color: Color? = null) {
     val context = LocalContext.current
     val image by produceState<ImageBitmap?>(null, photo) {
         value = photo?.let { uri ->
@@ -51,7 +52,7 @@ fun HeroGlow(photo: String?, height: Dp) {
     }
     val show = remember { Animatable(0f) }
     LaunchedEffect(Unit) { show.animateTo(1f, tween(700)) }
-    val accent = MaterialTheme.colorScheme.primary
+    val accent = color ?: MaterialTheme.colorScheme.primary
     // Faded out towards the bottom as a whole, so it melts into the page's
     // own light instead of ending on an edge.
     Box(

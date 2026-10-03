@@ -41,6 +41,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -124,6 +125,19 @@ internal fun sceneLook(code: String?, base: GlassLook, hour: Int): GlassLook {
         }
         return GlassLook(dark, ground, halos, base.zoneTint, base.floatTint, base.accentTint)
     }
+    if (code.startsWith(COLOR)) {
+        // A person's colour: its light, with two neighbours of its hue around it.
+        val c = Color(code.removePrefix(COLOR).toLongOrNull(16)?.toInt() ?: return base)
+        val hsv = FloatArray(3).also { android.graphics.Color.colorToHSV(c.toArgb(), it) }
+        fun hue(shift: Float, sat: Float, value: Float) = Color(android.graphics.Color.HSVToColor(floatArrayOf((hsv[0] + shift + 360f) % 360f, (hsv[1] * sat).coerceIn(0f, 1f), (hsv[2] * value).coerceIn(0f, 1f))))
+        val lights = listOf(c, hue(28f, 0.9f, 1.05f), hue(-22f, 0.7f, 1.1f), hue(0f, 0.5f, 1.15f))
+        val halos = lights.mapIndexed { i, l ->
+            val (x, y, radius) = spots[i]
+            Halo(x, y, radius, l.copy(alpha = (if (dark) nightStrength else dayStrength)[i]))
+        }
+        val ground = lerp(c, if (dark) Color(0xFF101114) else Color.White, if (dark) 0.88f else 0.9f)
+        return GlassLook(dark, ground, halos, base.zoneTint, base.floatTint, base.accentTint)
+    }
     val scene = Scene.entries.firstOrNull { it.code == code } ?: return base
     val palette = if (scene == Scene.SKY) skyAt(hour) else palettes[scene] ?: return base
     val halos = palette.lights.mapIndexed { i, c ->
@@ -134,6 +148,10 @@ internal fun sceneLook(code: String?, base: GlassLook, hour: Int): GlassLook {
 }
 
 internal const val PHOTO = "photo:"
+internal const val COLOR = "color:"
+
+/** The background code of a person's colour (ARGB). */
+internal fun colorCode(argb: Int) = COLOR + "%08x".format(argb)
 
 private fun hourNow() = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
@@ -175,7 +193,7 @@ private fun photoLight(context: Context, uri: Uri): String? = runCatching {
  * in its light; a photo gives its colours, never itself.
  */
 @Composable
-internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: String?, onPick: (String?) -> Unit, onDismiss: () -> Unit) {
+internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: String?, theirColor: Int?, onPick: (String?) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
@@ -203,11 +221,18 @@ internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: Stri
                     maxItemsInEachRow = 3
                 ) {
                     var order = 0
+                    // Their colour, from the Contacts app: what the conversation shows unless chosen here.
+                    theirColor?.let { argb ->
+                        SceneTile(sceneLook(colorCode(argb), base, hour), "Their colour", current == null, order++) {
+                            haptics.tick()
+                            onPick(null)
+                        }
+                    }
                     Scene.entries.forEach { scene ->
-                        val chosen = (current ?: Scene.YOURS.code) == scene.code
+                        val chosen = (current ?: if (theirColor == null) Scene.YOURS.code else null) == scene.code
                         SceneTile(sceneLook(scene.code, base, hour), scene.label, chosen, order++) {
                             haptics.tick()
-                            onPick(if (scene == Scene.YOURS) null else scene.code)
+                            onPick(if (scene == Scene.YOURS && theirColor == null) null else scene.code)
                         }
                     }
                     val photoChosen = current?.startsWith(PHOTO) == true
