@@ -44,6 +44,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- The encrypted chat's invite, for the Contacts app when two phones touch: apps signed with the same key only. -->
+    <permission
+        android:name="${applicationId}.permission.INVITE"
+        android:protectionLevel="signature" />
 
     <!-- Dialer, when installed, shows the calls with a number. -->
     <queries>
@@ -231,5 +235,11 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <!-- The Contacts app reads this phone's invite and joins the other's, at the user's tap there. -->
+        <provider
+            android:name=".core.chat.InviteProvider"
+            android:authorities="${applicationId}.invite"
+            android:exported="true"
+            android:permission="${applicationId}.permission.INVITE" />
     </application>
 </manifest>

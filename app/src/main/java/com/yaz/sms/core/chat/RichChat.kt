@@ -120,6 +120,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     /** Nonces to send back once a joined chat can carry encrypted messages, by chat. */
     private val proofs = java.util.concurrent.ConcurrentHashMap<Int, ByteArray>()
+    /** Invites received in person, by the chat they open: the number they bind once the keys are exchanged. */
+    private val inPerson = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
     private val _links = MutableStateFlow(load())
     val links: StateFlow<Map<String, ChatLink>> = _links.asStateFlow()
@@ -450,6 +452,30 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         if (known == null || known.myNonce.isEmpty()) hello(from, force = true)
     }
 
+    /** Our invite link, for the Contacts app to hand over in person (phones touched); null when the chat is off. */
+    suspend fun inviteLink(): String? {
+        if (!enabled || !start()) return null
+        return runCatching { engine.call("get_chat_securejoin_qr_code", account, null).jsonPrimitive.content }.getOrNull()
+    }
+
+    /**
+     * An invite received in person: the phones touched and the user saved the
+     * card in the Contacts app. Joined, and [phone] bound to that chat once the
+     * keys are exchanged, proven as by an SMS. A number proven to someone else
+     * stays theirs: it changes only through the SMS proof.
+     */
+    suspend fun joinInPerson(link: String, phone: String): Boolean {
+        if (!enabled || T9.clean(phone).count(Char::isDigit) < 7) return false
+        // Rebuilt from its checked parts: nothing in the card adds to the link the engine joins.
+        val hello = Hello.fromLink(link, ByteArray(Hello.NONCE_BYTES)) ?: return false
+        val known = _links.value[key(phone)]
+        if (known?.proven == true && known.address != hello.address) return false
+        if (!start()) return false
+        val chat = runCatching { engine.call("secure_join", account, hello.link()).jsonPrimitive.int }.getOrNull() ?: return false
+        inPerson[chat] = phone
+        return true
+    }
+
     private suspend fun onEvent(event: ChatEvent) {
         val msgId = event.data["msgId"]?.jsonPrimitive?.intOrNull
         when (event.kind) {
@@ -461,6 +487,15 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                     val chat = runCatching { engine.call("get_chat_id_by_contact_id", account, contact).jsonPrimitive.intOrNull }.getOrNull()
                     val nonce = chat?.let { proofs.remove(it) }
                     if (nonce != null) runCatching { engine.call("misc_send_text_message", account, chat, Hello.proofText(nonce)) }
+                    // Met in person: the number is theirs, and the Contacts app may say so.
+                    val phone = if (progress >= 1000) chat?.let { inPerson.remove(it) } else null
+                    if (phone != null && chat != null) {
+                        val address = runCatching { engine.call("get_contact", account, contact).jsonObject["address"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+                        if (address != null) {
+                            save(phone) { (it ?: ChatLink(phone)).copy(address = address, chatId = chat, proven = true, myNonce = "") }
+                            withContext(Dispatchers.IO) { ContactsCards.verified(context, phone, true) }
+                        }
+                    }
                 }
             }
             "MsgDelivered" -> if (msgId != null) _refs.value[msgId]?.let {
