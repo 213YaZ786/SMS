@@ -335,7 +335,10 @@ private fun ThreadContent(
     }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val calls = rememberCallChoices(to, linked != null, canCall)
-    val rows = remember(list) { rowsOf(list) }
+    // Off the main thread: folding reactions and days over a long thread
+    // would hold the first frame; the rows on screen stay until the new ones are ready.
+    var rows by remember { mutableStateOf<List<Row>>(emptyList()) }
+    LaunchedEffect(list) { rows = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { rowsOf(list) } }
     // The person's page, opened from their face: the calls, the tools, what was shared.
     var personOpen by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }

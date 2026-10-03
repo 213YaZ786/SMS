@@ -26,6 +26,7 @@ fun TabFrame(
     title: String,
     onOpenSettings: () -> Unit,
     controls: (@Composable () -> Unit)? = null,
+    overlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
     content: @Composable (PaddingValues) -> Unit
 ) {
     val inset = LocalReadableInset.current
@@ -36,7 +37,8 @@ fun TabFrame(
             // Until SMS can take messages, the steps to get there come first.
             Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.TopCenter) { SetupZone() }
             controls?.invoke()
-        }
+        },
+        overlay = overlay
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(horizontal = inset)) { content(padding) }
     }

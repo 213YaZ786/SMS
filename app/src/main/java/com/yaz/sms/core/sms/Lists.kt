@@ -3,7 +3,7 @@ package com.yaz.sms.core.sms
 import com.yaz.sms.data.sms.Conversation
 
 /** Which conversations the list shows. */
-enum class Filter { ALL, UNREAD, UNKNOWN, ARCHIVED }
+enum class Filter { ALL, UNREAD, UNKNOWN, LATER, ARCHIVED }
 
 /** How the list of conversations is put together, apart from the screen. */
 object Lists {
@@ -15,8 +15,10 @@ object Lists {
 
     /** The conversations of [filter], pinned ones first, then newest first. */
     fun shown(all: List<Conversation>, filter: Filter, pinned: List<Long>, archived: Map<Long, Long>, later: Map<Long, Long> = emptyMap(), now: Long = System.currentTimeMillis(), known: (Conversation) -> Boolean = { true }): List<Conversation> {
-        val kept = all.filter { c -> (later[c.threadId] ?: 0L) <= now }.filter { c ->
+        // Set aside ones leave every list but their own until their time.
+        val kept = all.filter { c -> if (filter == Filter.LATER) (later[c.threadId] ?: 0L) > now else (later[c.threadId] ?: 0L) <= now }.filter { c ->
             when (filter) {
+                Filter.LATER -> true
                 Filter.ALL -> !isArchived(c, archived)
                 Filter.UNREAD -> c.unread > 0 && !isArchived(c, archived)
                 // People not in the contacts: no group, no bank or delivery service.

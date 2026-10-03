@@ -1,0 +1,4 @@
+# Every class and method of the app compiled ahead of time at install,
+# so the first screens open fast on a new install, not after days of use.
+HSPLcom/yaz/sms/**->**(**)**
+Lcom/yaz/sms/**;

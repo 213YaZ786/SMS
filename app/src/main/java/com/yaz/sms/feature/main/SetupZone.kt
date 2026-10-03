@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +44,11 @@ internal enum class SetupStep(val title: String, val message: String, val action
         "Allow notifications",
         "To see new messages and answer them.",
         "Allow"
+    ),
+    BUBBLES(
+        "New messages in bubbles",
+        "A conversation floats over any app as a bubble, to answer without leaving what you do. Android asks you to allow it once.",
+        "Allow bubbles"
     )
 }
 
@@ -80,8 +86,20 @@ internal fun rememberSetup(): Setup {
                 } else {
                     openNotificationSettings(context)
                 }
+            SetupStep.BUBBLES -> {
+                // Asked once: whatever is chosen on Android's page stands.
+                context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).edit().putBoolean(BUBBLES_ASKED, true).apply()
+                context.startActivity(
+                    Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                )
+            }
         }
     }
+}
+
+/** The step a "Not now" sets aside for good (only an optional one). */
+internal fun skip(context: Context, step: SetupStep) {
+    if (step == SetupStep.BUBBLES) context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).edit().putBoolean(BUBBLES_ASKED, true).apply()
 }
 
 /**
@@ -92,7 +110,10 @@ internal fun rememberSetup(): Setup {
 @Composable
 fun SetupZone(modifier: Modifier = Modifier) {
     val setup = rememberSetup()
+    val context = LocalContext.current
+    var dismissed by remember { mutableStateOf(false) }
     val step = setup.step ?: return
+    if (dismissed && step == SetupStep.BUBBLES) return
 
     ZoneSurface(
         shape = RoundedCornerShape(24.dp),
@@ -110,7 +131,10 @@ fun SetupZone(modifier: Modifier = Modifier) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
-            Row(Modifier.padding(top = 4.dp)) {
+            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (step == SetupStep.BUBBLES) {
+                    BoldButton(filled = false, onClick = { skip(context, step); dismissed = true }) { Text("Not now") }
+                }
                 BoldButton(filled = true, onClick = { setup.run(step) }) { Text(step.action) }
             }
         }
@@ -122,8 +146,15 @@ private fun nextStep(context: Context): SetupStep? {
     if (roles.isRoleAvailable(RoleManager.ROLE_SMS) && !roles.isRoleHeld(RoleManager.ROLE_SMS)) return SetupStep.ROLE
     val notifications = context.getSystemService(NotificationManager::class.java)
     if (!notifications.areNotificationsEnabled()) return SetupStep.NOTIFICATIONS
+    // Android lets an app's messages bubble only once the user allows it.
+    if (notifications.bubblePreference != NotificationManager.BUBBLE_PREFERENCE_ALL &&
+        !context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).getBoolean(BUBBLES_ASKED, false)
+    ) return SetupStep.BUBBLES
     return null
 }
+
+private const val SETUP = "setup"
+private const val BUBBLES_ASKED = "bubbles_asked"
 
 private fun openNotificationSettings(context: Context) {
     context.startActivity(

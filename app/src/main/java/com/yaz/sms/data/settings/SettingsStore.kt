@@ -37,6 +37,8 @@ data class Settings(
     val composeY: Float = -1f,
     /** The little show of the new message button moving was seen. */
     val composeHintSeen: Boolean = false,
+    /** The section of the list the app opens on: ALL unless the user chose another. */
+    val startFilter: String = "ALL",
     /** Conversations set aside until a time: thread id to when they come back. */
     val later: Map<Long, Long> = emptyMap(),
     /** A vibration of their own for some people, by the last nine digits of their number. */

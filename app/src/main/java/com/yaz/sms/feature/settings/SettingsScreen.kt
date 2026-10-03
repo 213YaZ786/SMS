@@ -66,7 +66,7 @@ import com.yaz.sms.ui.theme.TEXT_SCALES
 import com.yaz.sms.ui.theme.textScaleLabel
 import org.koin.androidx.compose.koinViewModel
 
-private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY, UNDO }
+private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY, UNDO, START }
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewModel()) {
@@ -138,6 +138,11 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             }
 
             Section("Messages") {
+                SettingRow(
+                    title = "Opens on",
+                    summary = START_FILTERS.firstOrNull { it.first == settings.startFilter }?.second ?: "All",
+                    onClick = { dialog = OpenDialog.START }
+                )
                 SettingRow(
                     title = "Undo send",
                     summary = if (settings.undoSeconds == 0) "Off" else "${settings.undoSeconds} seconds to take a message back",
@@ -317,9 +322,19 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             onSelect = viewModel::setUndoSeconds,
             onDismiss = { dialog = OpenDialog.NONE }
         )
+        OpenDialog.START -> ChoiceDialog(
+            title = "Opens on",
+            options = START_FILTERS,
+            selected = settings.startFilter,
+            onSelect = viewModel::setStartFilter,
+            onDismiss = { dialog = OpenDialog.NONE }
+        )
         OpenDialog.NONE -> Unit
     }
 }
+
+/** The sections of the list the app may open on. */
+private val START_FILTERS = listOf("ALL" to "All", "UNREAD" to "Unread", "UNKNOWN" to "Unknown", "LATER" to "Later", "ARCHIVED" to "Archived")
 
 /** A titled group of rows on one rounded zone. */
 @Composable

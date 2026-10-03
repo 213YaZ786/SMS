@@ -188,7 +188,8 @@ private fun Main(onOpenSettings: () -> Unit, onOpenThread: (Long, String) -> Uni
             }
         }
         CompositionLocalProvider(LocalGlassBackdrop provides backdrop.takeIf { look != null }) {
-            MovableComposeButton(onClick = onNew, above = 16.dp)
+            // Above the sections' pill at the bottom of the list.
+            MovableComposeButton(onClick = onNew, above = com.yaz.sms.ui.component.DockClearance)
         }
         if (showWelcome) {
             Surface(
@@ -228,7 +229,8 @@ private fun MovableComposeButton(onClick: () -> Unit, above: Dp) {
         val roomX = (constraints.maxWidth - side).coerceAtLeast(0f)
         val roomY = (constraints.maxHeight - side).coerceAtLeast(0f)
         val usual = with(density) { Offset(roomX - 8.dp.toPx(), roomY - above.toPx()) }
-        val saved = if (settings.composeX >= 0f) Offset(settings.composeX * roomX, settings.composeY * roomY) else null
+        // A place saved before the pill at the bottom came stays above it.
+        val saved = (if (settings.composeX >= 0f) Offset(settings.composeX * roomX, settings.composeY * roomY) else null)?.let { Offset(it.x, minOf(it.y, usual.y)) }
         var dragging by remember { mutableStateOf<Offset?>(null) }
         val at = dragging ?: saved ?: usual
         val current by rememberUpdatedState(at)

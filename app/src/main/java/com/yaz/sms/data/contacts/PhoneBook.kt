@@ -61,7 +61,8 @@ class PhoneBook(private val context: Context, private val scope: CoroutineScope)
                 null
             )?.use { c -> while (c.moveToNext()) c.getString(1)?.let(ContactLook::parse)?.let { looks[c.getLong(0)] = it } }
         }
-        val columns = arrayOf(Phone.CONTACT_ID, Phone.DISPLAY_NAME_PRIMARY, Phone.NUMBER, Phone.PHOTO_THUMBNAIL_URI, Phone.STARRED)
+        // The display photo (the thumbnail when there is none): sharp on the big faces too.
+        val columns = arrayOf(Phone.CONTACT_ID, Phone.DISPLAY_NAME_PRIMARY, Phone.NUMBER, Phone.PHOTO_URI, Phone.STARRED)
         context.contentResolver.query(Phone.CONTENT_URI, columns, null, null, "${Phone.DISPLAY_NAME_PRIMARY} COLLATE LOCALIZED ASC")
             ?.use { c ->
                 val seen = HashSet<String>()

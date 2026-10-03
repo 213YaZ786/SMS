@@ -50,8 +50,8 @@ val DockClearance: Dp = 96.dp
  */
 val SideDockClearance: Dp = 96.dp
 
-/** A tab of the dock; [dot] marks something new on it. */
-data class DockItem(val icon: ImageVector, val label: String, val dot: Boolean = false)
+/** A tab of the dock; [dot] marks something new on it, in [dotColor] when given (the accent otherwise). */
+data class DockItem(val icon: ImageVector, val label: String, val dot: Boolean = false, val dotColor: Color = Color.Unspecified)
 
 /**
  * A floating pill with one icon per tab. The highlight follows the finger
@@ -144,7 +144,11 @@ fun FloatingDock(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(item.icon, contentDescription = item.label, tint = tint)
-                        NewDot(item.dot, Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = if (vertical) 6.dp else 14.dp))
+                        if (item.dotColor == Color.Unspecified) NewDot(item.dot, Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = if (vertical) 6.dp else 14.dp))
+                        else if (item.dot) Box(
+                            Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = if (vertical) 6.dp else 14.dp)
+                                .size(10.dp).background(item.dotColor, CircleShape)
+                        )
                     }
                 }
             }

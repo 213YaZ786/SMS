@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -41,11 +42,19 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ContactAvatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifier, look: ContactLook.Look? = null) {
     val context = LocalContext.current
-    val image by produceState<ImageBitmap?>(null, photo) {
+    val px = with(LocalDensity.current) { size.roundToPx() }
+    val image by produceState<ImageBitmap?>(null, photo, px) {
         value = photo?.let { uri ->
             withContext(Dispatchers.IO) {
                 runCatching {
-                    context.contentResolver.openInputStream(Uri.parse(uri))?.use { BitmapFactory.decodeStream(it) }?.asImageBitmap()
+                    // The full photo, sampled down only to the size shown: sharp, never wasteful.
+                    val u = Uri.parse(uri)
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    context.contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                    var sample = 1
+                    while (bounds.outWidth / (sample * 2) >= px && bounds.outHeight / (sample * 2) >= px) sample *= 2
+                    val options = BitmapFactory.Options().apply { inSampleSize = sample }
+                    context.contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it, null, options) }?.asImageBitmap()
                 }.getOrNull()
             }
         }

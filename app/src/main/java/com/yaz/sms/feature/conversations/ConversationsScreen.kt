@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -106,7 +108,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     androidx.compose.runtime.LaunchedEffect(settings.checkLinks) {
         if (settings.checkLinks) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.yaz.sms.core.link.BadHosts.refresh(context) }
     }
-    var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
+    // The section chosen in Settings, All unless changed.
+    var filter by rememberSaveable { mutableStateOf(runCatching { Filter.valueOf(store.current.startFilter) }.getOrDefault(Filter.ALL)) }
     var query by rememberSaveable { mutableStateOf("") }
 
     fun nameOf(c: Conversation): String? =
@@ -143,7 +146,33 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         title = "Messages",
         onOpenSettings = onOpenSettings,
         controls = {
-            if (messages.canRead() && all.isNotEmpty()) Filters(filter, { filter = it }, query, { query = it })
+            if (messages.canRead() && all.isNotEmpty()) Filters(query, { query = it })
+        },
+        // The sections in a floating pill at the bottom, as Dialer's tabs:
+        // a dot on Unread while a message waits to be read.
+        overlay = {
+            if (messages.canRead() && all.isNotEmpty()) {
+                // All in the middle, the narrower ones around it.
+                val sections = listOf(
+                    Filter.UNREAD to com.yaz.sms.ui.component.DockItem(AppIcons.Message, "Unread", dot = all.any { it.unread > 0 && !Lists.isArchived(it, settings.archived) }, dotColor = MaterialTheme.colorScheme.error),
+                    Filter.UNKNOWN to com.yaz.sms.ui.component.DockItem(AppIcons.QuestionMark, "Unknown"),
+                    Filter.ALL to com.yaz.sms.ui.component.DockItem(AppIcons.TextSms, "All"),
+                    Filter.LATER to com.yaz.sms.ui.component.DockItem(AppIcons.Schedule, "Later"),
+                    Filter.ARCHIVED to com.yaz.sms.ui.component.DockItem(AppIcons.Archive, "Archived")
+                )
+                val at by androidx.compose.animation.core.animateFloatAsState(
+                    sections.indexOfFirst { it.first == filter }.coerceAtLeast(0).toFloat(),
+                    androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 500f), label = "section"
+                )
+                com.yaz.sms.ui.component.FloatingDock(
+                    items = sections.map { it.second },
+                    position = at,
+                    onSelect = { filter = sections[it].first },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                        .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
+                        .padding(bottom = 16.dp)
+                )
+            }
         }
     ) { padding ->
         when {
@@ -160,6 +189,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     filter == Filter.UNREAD -> "All read"
                     filter == Filter.ARCHIVED -> "Nothing archived"
                     filter == Filter.UNKNOWN -> "No one unknown"
+                    filter == Filter.LATER -> "Nothing set aside"
                     else -> "No messages yet"
                 },
                 message = when {
@@ -237,30 +267,14 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     }
 }
 
-/** All, unread or archived conversations, and the search: under the name, in glass. */
+/** The search, under the name, in glass; the sections are in the pill at the bottom. */
 @Composable
-private fun Filters(filter: Filter, onFilter: (Filter) -> Unit, query: String, onQuery: (String) -> Unit) {
-    val haptics = rememberHaptics()
+private fun Filters(query: String, onQuery: (String) -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
         SearchPill(query, onQuery, hint = "Search messages", modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(), floating = true)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(Filter.ALL to "All", Filter.UNREAD to "Unread", Filter.UNKNOWN to "Unknown", Filter.ARCHIVED to "Archived").forEach { (value, label) ->
-                FloatingPane(
-                    shape = CircleShape,
-                    accent = filter == value,
-                    onClick = {
-                        haptics.tick()
-                        onFilter(value)
-                    }
-                ) {
-                    Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
-                }
-            }
-        }
     }
 }
 
