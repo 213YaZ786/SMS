@@ -201,7 +201,9 @@ fun PersonPage(
                     // About them.
                     item {
                         val digits = !group && address.count(Char::isDigit) >= 3
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(top = 8.dp)) {
+                        // Compact pills in the middle, all as wide as the widest.
+                        Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.TopCenter) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.width(androidx.compose.foundation.layout.IntrinsicSize.Max).widthIn(min = 220.dp)) {
                             if (digits && NumberActions.canShowCalls(context)) Row(AppIcons.Recents, "Calls with them") { NumberActions.showCalls(context, address) }
                             // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
                             if (contactId != null && contactId > 0) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
@@ -218,6 +220,7 @@ fun PersonPage(
                                     blocked = NumberActions.isBlocked(context, address)
                                 } else confirmBlock = true
                             }
+                        }
                         }
                     }
                 }
@@ -253,11 +256,11 @@ private fun Tile(icon: ImageVector, label: String, fill: Color?, tint: Color?, o
 @Composable
 private fun Row(icon: ImageVector, label: String, danger: Boolean = false, onClick: () -> Unit) {
     val haptics = rememberHaptics()
-    ZoneSurface(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth(), onClick = {
+    ZoneSurface(shape = androidx.compose.foundation.shape.CircleShape, modifier = Modifier.fillMaxWidth(), onClick = {
         haptics.tick()
         onClick()
     }) {
-        androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+        androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 18.dp, end = 24.dp, top = 12.dp, bottom = 12.dp)) {
             Icon(icon, contentDescription = null, tint = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(14.dp))
             Text(label, style = MaterialTheme.typography.bodyLarge, color = if (danger) MaterialTheme.colorScheme.error else LocalContentColor.current)
