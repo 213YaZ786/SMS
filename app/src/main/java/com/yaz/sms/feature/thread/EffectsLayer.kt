@@ -1,5 +1,9 @@
 package com.yaz.sms.feature.thread
 
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -43,7 +47,8 @@ import kotlin.random.Random
 fun ScreenEffect(effect: Effect, words: String, origin: Offset?, onDone: () -> Unit) {
     val time = remember(effect, words) { Animatable(0f) }
     val length = when (effect) {
-        Effect.FIREWORKS, Effect.LASERS -> 3200
+        Effect.FIREWORKS -> 3600
+        Effect.LASERS -> 3200
         Effect.BALLOONS, Effect.ECHO -> 3400
         else -> 2800
     }
@@ -60,6 +65,9 @@ fun ScreenEffect(effect: Effect, words: String, origin: Offset?, onDone: () -> U
     val seed = remember(effect, words) { Random(words.hashCode() xor effect.ordinal) }
     val pieces = remember(effect, words) { List(220) { floatArrayOf(seed.nextFloat(), seed.nextFloat(), seed.nextFloat(), seed.nextFloat(), seed.nextFloat()) } }
     val textColor = scheme.onSurface
+    // The festive ones play Google's animated emoji (Noto, CC BY 4.0) across
+    // the screen, the drawn shapes kept as a light layer under them.
+    lottieOf(effect)?.let { name -> LottieShower(name, effect, words, time.value, pieces) }
     Canvas(Modifier.fillMaxSize()) {
         val t = time.value
         val fade = if (t > 0.85f) (1f - t) / 0.15f else 1f
@@ -132,28 +140,49 @@ private fun DrawScope.balloons(t: Float, pieces: List<FloatArray>, palette: List
 }
 
 private fun DrawScope.fireworks(t: Float, fade: Float, pieces: List<FloatArray>, palette: List<Color>) {
-    // The screen dims a little, so the light reads.
-    drawRect(Color.Black.copy(alpha = 0.35f * (if (t < 0.1f) t / 0.1f else 1f) * fade))
-    val bursts = 6
-    for (b in 0 until bursts) {
-        val start = b * 0.13f
-        val k = ((t - start) / 0.45f).coerceIn(0f, 1f)
-        if (k <= 0f || k >= 1f) continue
+    // Night falls a little, so the light reads.
+    drawRect(Color(0xFF05070F).copy(alpha = 0.55f * (if (t < 0.08f) t / 0.08f else 1f) * fade))
+    // Bright, festive hues, not the theme's quiet ones.
+    val hues = listOf(Color(0xFFFFD54F), Color(0xFFFF5E7E), Color(0xFF64D8FF), Color(0xFFB388FF), Color(0xFF69F0AE), Color(0xFFFFAB40), palette.first())
+    val shells = 7
+    for (b in 0 until shells) {
         val seed = pieces[b]
-        val c = Offset(size.width * (0.18f + seed[0] * 0.64f), size.height * (0.15f + seed[1] * 0.45f))
-        val color = palette[b % palette.size]
-        val reach = (90 + seed[2] * 70).dp.toPx()
-        val spread = 1f - (1f - k) * (1f - k)
-        val a = (1f - k) * fade
-        for (j in 0 until 48) {
-            val ang = j / 48.0 * 2 * PI + seed[3]
-            val d = reach * spread * (0.75f + pieces[j + 10][0] * 0.35f)
-            val fall = 40.dp.toPx() * k * k
-            val p = c + Offset((cos(ang) * d).toFloat(), (sin(ang) * d).toFloat() + fall)
-            val tail = c + Offset((cos(ang) * d * 0.82f).toFloat(), (sin(ang) * d * 0.82f).toFloat() + fall * 0.8f)
-            drawLine(color.copy(alpha = 0.55f * a), tail, p, strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
-            drawCircle(color.copy(alpha = a), 2.6.dp.toPx(), p)
-            drawCircle(Color.White.copy(alpha = 0.7f * a), 1.1.dp.toPx(), p)
+        val launch = b * 0.11f + seed[4] * 0.05f
+        val climb = 0.16f
+        val burst = Offset(size.width * (0.14f + seed[0] * 0.72f), size.height * (0.14f + seed[1] * 0.36f))
+        val ground = Offset(burst.x + (seed[2] - 0.5f) * size.width * 0.12f, size.height * 1.02f)
+        val color = hues[b % hues.size]
+        val second = hues[(b + 3) % hues.size]
+        // The rocket: a bright head climbing with a fading trail.
+        val r = ((t - launch) / climb).coerceIn(0f, 1f)
+        if (r > 0f && r < 1f) {
+            val ease = 1f - (1f - r) * (1f - r)
+            val head = ground + (burst - ground) * ease
+            val tail = ground + (burst - ground) * (ease - 0.12f).coerceAtLeast(0f)
+            drawLine(Brush.linearGradient(listOf(color.copy(alpha = 0f), Color.White.copy(alpha = 0.9f * fade)), tail, head), tail, head, strokeWidth = 2.5.dp.toPx(), cap = StrokeCap.Round)
+            drawCircle(Color.White.copy(alpha = fade), 2.8.dp.toPx(), head)
+        }
+        // The burst: sparks thrown out, slowing, falling, twinkling as they die.
+        val k = ((t - launch - climb) / 0.42f).coerceIn(0f, 1f)
+        if (k <= 0f || k >= 1f) continue
+        if (k < 0.1f) drawCircle(Brush.radialGradient(listOf(Color.White.copy(alpha = (1f - k / 0.1f) * fade), color.copy(alpha = 0f)), burst, 60.dp.toPx()), 60.dp.toPx(), burst)
+        val reach = (110 + seed[3] * 80).dp.toPx()
+        val out = 1f - (1f - k) * (1f - k) * (1f - k)
+        val gravity = 70.dp.toPx() * k * k
+        val sparks = 64
+        for (j in 0 until sparks) {
+            val jitter = pieces[(j * 3 + b) % pieces.size]
+            val ang = j * 2 * PI / sparks + seed[3] * 6
+            val speed = 0.7f + jitter[0] * 0.45f
+            val d = reach * out * speed
+            val p = burst + Offset((cos(ang) * d).toFloat(), (sin(ang) * d).toFloat() + gravity)
+            val back = burst + Offset((cos(ang) * d * 0.86f).toFloat(), (sin(ang) * d * 0.86f).toFloat() + gravity * 0.8f)
+            val twinkle = if (k > 0.55f) (0.5f + 0.5f * sin((k * 40f + jitter[1] * 20f))) else 1f
+            val a = (1f - k) * fade * twinkle
+            val c = if (j % 2 == 0) color else second
+            drawLine(c.copy(alpha = 0.5f * a), back, p, strokeWidth = 2.2.dp.toPx(), cap = StrokeCap.Round)
+            drawCircle(c.copy(alpha = a), 2.4.dp.toPx(), p)
+            drawCircle(Color.White.copy(alpha = 0.8f * a), 1.dp.toPx(), p)
         }
     }
 }
@@ -236,4 +265,55 @@ private fun DrawScope.spotlight(t: Float, origin: Offset?) {
     val r = 90.dp.toPx() + 30.dp.toPx() * sin(t * 6f)
     drawRect(Brush.radialGradient(listOf(Color.Transparent, Color.Transparent, Color.Black.copy(alpha = 0.7f * open)), center = c, radius = r * 1.6f))
     translate(0f, 0f) { drawCircle(Color.White.copy(alpha = 0.10f * open), r, c) }
+}
+
+/** The animated emoji of a screen effect, or null when it is drawn only. */
+private fun lottieOf(effect: Effect): String? = when (effect) {
+    Effect.CONFETTI -> "1f38a"
+    Effect.BALLOONS -> "1f388"
+    Effect.CELEBRATION -> "1f389"
+    Effect.LOVE -> "2764_fe0f"
+    Effect.STARS -> "2728"
+    else -> null
+}
+
+/**
+ * A handful of the effect's animated emoji over the screen: balloons and
+ * hearts rise from below, fireworks burst here and there, confetti and
+ * party poppers go off along the sides; each plays its own animation.
+ */
+@Composable
+private fun LottieShower(name: String, effect: Effect, words: String, t: Float, pieces: List<FloatArray>) {
+    val composition by com.airbnb.lottie.compose.rememberLottieComposition(com.airbnb.lottie.compose.LottieCompositionSpec.Asset("emoji/$name.json"))
+    val count = when (effect) { Effect.BALLOONS -> 9; Effect.LOVE -> 8; Effect.STARS -> 10; else -> 6 }
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        val w = maxWidth
+        val h = maxHeight
+        repeat(count) { i ->
+            val p = pieces[i]
+            val start = p[2] * 0.45f
+            val local = ((t - start) / 0.55f).coerceIn(0f, 1f)
+            if (local <= 0f || local >= 1f) return@repeat
+            val size = w * (0.22f + p[3] * 0.16f)
+            val rising = effect == Effect.BALLOONS || effect == Effect.LOVE
+            val x = (w - size) * p[0]
+            val y = if (rising) h * (1.05f - local * (1.15f + p[1] * 0.2f)) else (h * 0.65f) * p[1]
+            val alpha = when {
+                local < 0.12f -> local / 0.12f
+                local > 0.85f -> (1f - local) / 0.15f
+                else -> 1f
+            }
+            com.airbnb.lottie.compose.LottieAnimation(
+                composition = composition,
+                progress = { (local * (1.3f + p[4])) % 1f },
+                modifier = Modifier
+                    .offset(x, y)
+                    .size(size)
+                    .graphicsLayer {
+                        this.alpha = alpha
+                        rotationZ = if (rising) 8f * kotlin.math.sin((local * 6f + p[4] * 6f)) else 0f
+                    }
+            )
+        }
+    }
 }
