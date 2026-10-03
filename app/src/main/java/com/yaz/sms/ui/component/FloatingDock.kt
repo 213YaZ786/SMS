@@ -127,7 +127,8 @@ fun FloatingDock(
                     val closeness = (1f - abs(animated - index)).coerceIn(0f, 1f)
                     val tint = lerp(
                         MaterialTheme.colorScheme.onSurfaceVariant,
-                        MaterialTheme.colorScheme.onSecondaryContainer,
+                        // On the dark wash of the night the chosen one is light, as the night's text.
+                        if (glass && look!!.dark) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSecondaryContainer,
                         closeness
                     )
                     Box(

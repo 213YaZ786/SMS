@@ -68,7 +68,7 @@ fun FloatingPane(
         ZoneSurface(shape = shape, modifier = modifier, accent = accent, onClick = onClick, content = content)
         return
     }
-    val color = if (accent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    val color = if (accent && !look.dark) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
     CompositionLocalProvider(LocalContentColor provides color) {
         Box(
             modifier
