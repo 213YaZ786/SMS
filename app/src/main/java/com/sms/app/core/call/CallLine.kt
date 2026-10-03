@@ -30,7 +30,7 @@ object CallLine : KoinComponent {
 
     /** Dialer shows the calls of this line; without it, they are not offered. */
     fun dialerShowsCalls(context: Context): Boolean =
-        context.getSystemService(android.telecom.TelecomManager::class.java)?.defaultDialerPackage?.startsWith("com.dialer.app") == true
+        context.getSystemService(android.telecom.TelecomManager::class.java)?.defaultDialerPackage?.let { it.startsWith("com.dialer.app") || it.startsWith("com.yaz.dialer") } == true
 
     /** Signals of the chat for the call in progress: its answer, its end. */
     fun watch() {

@@ -26,6 +26,8 @@ android {
         targetSdk = 37
         versionCode = 18
         versionName = "0.10.3"
+        // The package SMS moves to, handed its files over (core/handover).
+        manifestPlaceholders["successor"] = "com.yaz.sms"
         // Voice messages written out on the phone: whisper.cpp, for 64-bit ARM phones.
         externalNativeBuild {
             cmake {
@@ -56,6 +58,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
+            manifestPlaceholders["successor"] = "com.yaz.sms.debug"
             versionNameSuffix = "-debug"
         }
         release {

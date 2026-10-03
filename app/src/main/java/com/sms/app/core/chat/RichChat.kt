@@ -201,6 +201,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     /** The profile on the relay made and connected; false when off or unreachable. */
     suspend fun start(): Boolean = lock.withLock {
+        // Moved to the new SMS: its files, the chat's account among them, are there now.
+        if (com.sms.app.core.handover.Handover.handedOver(context)) return@withLock false
         if (!enabled) return false
         if (_ready.value && engine.running) return true
         _status.value = "Connecting"

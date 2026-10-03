@@ -88,8 +88,15 @@ fun SmsApp() {
     // The only owner of the window insets: screens below draw under the bars
     // and take them as padding themselves. Transparent, because the page's
     // ground with its ambient light is painted once under the whole app.
+    // Moved to the new SMS (read again each time the app comes back): only the way there.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var moved by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(com.sms.app.core.handover.Handover.handedOver(context)) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        moved = com.sms.app.core.handover.Handover.handedOver(context)
+        onPauseOrDispose { }
+    }
     Scaffold(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onBackground) { _ ->
-        SmsNavHost(navController)
+        if (moved) com.sms.app.feature.main.MovedScreen() else SmsNavHost(navController)
     }
 }
 

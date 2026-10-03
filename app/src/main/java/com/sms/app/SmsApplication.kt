@@ -10,7 +10,14 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-class SmsApplication : Application() {
+class SmsApplication : Application(), com.sms.app.core.handover.Handover.Host {
+
+    /** Before the new SMS takes the files: the chat's engine stops writing them, for good here. */
+    override fun beforeHandover() {
+        runCatching { org.koin.java.KoinJavaComponent.get<com.sms.app.core.chat.RichChat>(com.sms.app.core.chat.RichChat::class.java).stop() }
+        com.sms.app.core.chat.ChatService.stop(this)
+    }
+
     override fun onCreate() {
         super.onCreate()
         startKoin {

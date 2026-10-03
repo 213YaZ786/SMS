@@ -100,6 +100,8 @@ class ChatService : Service(), KoinComponent {
         /** Starts it when the chat is on and SMS is the messaging app. */
         fun startIfWanted(context: Context, settings: SettingsStore) {
             if (!settings.current.richChat) return
+            // Moved to the new SMS: the chat lives there now.
+            if (com.sms.app.core.handover.Handover.handedOver(context)) return
             val roles = context.getSystemService(RoleManager::class.java)
             if (!roles.isRoleHeld(RoleManager.ROLE_SMS)) return
             runCatching { context.startForegroundService(Intent(context, ChatService::class.java)) }
