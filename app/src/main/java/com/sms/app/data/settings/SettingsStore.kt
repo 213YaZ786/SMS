@@ -61,7 +61,9 @@ data class Settings(
     /** Links are also looked up in a public list of dangerous sites, fetched once a day. */
     val checkLinks: Boolean = true,
     /** Conversations without notifications, by thread id, until when (Long.MAX_VALUE: until turned back on). */
-    val silenced: Map<Long, Long> = emptyMap()
+    val silenced: Map<Long, Long> = emptyMap(),
+    /** A conversation's background, by thread id: a scene's code or a photo's colours. */
+    val backgrounds: Map<Long, String> = emptyMap()
 )
 
 /**

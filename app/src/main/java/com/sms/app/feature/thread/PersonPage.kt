@@ -1,6 +1,7 @@
 package com.sms.app.feature.thread
 
 import androidx.compose.foundation.background
+import com.sms.app.ui.glass.glassGround
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -77,6 +78,7 @@ fun PersonPage(
     silencedUntil: Long?,
     onSearch: () -> Unit,
     onSilence: () -> Unit,
+    onBackground: (() -> Unit)?,
     onRemind: (() -> Unit)?,
     onEncryption: () -> Unit,
     onName: (String) -> Unit,
@@ -115,7 +117,7 @@ fun PersonPage(
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+            Box(Modifier.fillMaxSize().glassGround(com.sms.app.ui.glass.LocalGlass.current, MaterialTheme.colorScheme.surface)) {
                 HeroGlow(if (group) null else photo, height = 420.dp)
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -147,7 +149,7 @@ fun PersonPage(
                     // What can be done with them, side by side and onto a second line.
                     item {
                         // Lines as even as can be: 6 = 3 + 3, 5 = 3 + 2.
-                        val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onRemind).size + 2
+                        val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onRemind, onBackground).size + 2
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -163,6 +165,7 @@ fun PersonPage(
                             }
                             Tile(if (silencedUntil != null) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silencedUntil != null) "Silenced" else "Silence", null, null, onSilence)
                             onRemind?.let { Tile(AppIcons.Schedule, "Remind me", null, null, it) }
+                            onBackground?.let { Tile(AppIcons.Palette, "Background", null, null, it) }
                         }
                     }
                     // What they and the user sent each other, by kind.

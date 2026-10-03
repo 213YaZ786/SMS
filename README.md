@@ -27,6 +27,8 @@ A messaging app for Android. No account, no tracking, no ads.
   fireworks and more), some brought by the words themselves; emoji sent
   alone shown big and moving; bold, italic, underline and strikethrough;
   any emoji as a reaction.
+- A background for each conversation: soft lights in a choice of
+  colours, the sky of the hour, or the colours of a photo.
 - Parcel numbers and appointments found in messages, copied or added to
   the calendar in one tap; a vibration of their own for chosen people.
 - In a conversation: search, everything you sent each other (photos,

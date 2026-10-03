@@ -130,6 +130,29 @@ import org.koin.compose.koinInject
  */
 @Composable
 fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> Unit) {
+    // The conversation's own background: the light all its glass lies on.
+    val store: SettingsStore = koinInject()
+    val settings by store.settings.collectAsState()
+    var shownThread by remember { mutableStateOf(threadId) }
+    val base = com.sms.app.ui.glass.LocalGlass.current
+    val look = rememberSceneLook(shownThread?.let { settings.backgrounds[it] }, base)
+    androidx.compose.runtime.CompositionLocalProvider(com.sms.app.ui.glass.LocalGlass provides look) {
+        Box(Modifier.fillMaxSize()) {
+            ThreadContent(threadId, address, draft, onBack, base, onThread = { shownThread = it })
+            SceneWash(look)
+        }
+    }
+}
+
+@Composable
+private fun ThreadContent(
+    threadId: Long?,
+    address: String,
+    draft: String,
+    onBack: () -> Unit,
+    appLook: com.sms.app.ui.glass.GlassLook?,
+    onThread: (Long?) -> Unit
+) {
     val context = LocalContext.current
     val messages: Messages = koinInject()
     val book: PhoneBook = koinInject()
@@ -306,6 +329,19 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
     var encryptionOpen by remember { mutableStateOf(false) }
     val settingsNow by store.settings.collectAsState()
     val silencedUntil = thread?.let { t -> settingsNow.silenced[t]?.takeIf { it > System.currentTimeMillis() } }
+    LaunchedEffect(thread) { onThread(thread) }
+    var backgroundOpen by remember { mutableStateOf(false) }
+    if (backgroundOpen && thread != null && appLook != null) BackgroundSheet(
+        current = settingsNow.backgrounds[thread],
+        base = appLook,
+        theirPhoto = if (group) null else entry?.photo,
+        onPick = { code ->
+            backgroundOpen = false
+            val t = thread ?: return@BackgroundSheet
+            store.update { s -> s.copy(backgrounds = if (code == null) s.backgrounds - t else s.backgrounds + (t to code)) }
+        },
+        onDismiss = { backgroundOpen = false }
+    )
     // Searching reads further back than the screen does.
     LaunchedEffect(searching) { if (searching && window < 5000) window = 5000 }
     val matches = remember(rows, query) {
@@ -348,6 +384,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
         silencedUntil = silencedUntil,
         onSearch = { searching = true },
         onSilence = { silenceOpen = true },
+        onBackground = if (thread != null && appLook != null) ({ backgroundOpen = true }) else null,
         onRemind = if (thread != null) ({ remindOpen = true }) else null,
         onEncryption = { encryptionOpen = true },
         onName = { name ->
@@ -910,7 +947,10 @@ private fun Bubble(
                             )
                         }
                     }
-                    .clip(if (big != null) RoundedCornerShape(28.dp) else shape).combinedClickable(
+                    // Big emoji are not clipped: their glow stays round, and a tap shows as their motion.
+                    .then(if (big != null) Modifier else Modifier.clip(shape)).combinedClickable(
+                    interactionSource = null,
+                    indication = if (big != null) null else androidx.compose.foundation.LocalIndication.current,
                     onClick = {
                         if (inked) {
                             haptics.tick()
@@ -932,7 +972,7 @@ private fun Bubble(
                     },
                     onLongClickLabel = "More"
                 )
-            if (big != null) BigEmojiRow(big, emojiPlay, held.blur(if (inked) 14.dp else 0.dp))
+            if (big != null) BigEmojiRow(big, emojiPlay, if (inked) held.blur(14.dp, androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded) else held)
             else ZoneSurface(shape = shape, accent = mine, modifier = held) {
               Column {
                 // An edit changes the words in a soft blur, not at a stroke.
