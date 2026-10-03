@@ -153,6 +153,9 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         }
     }
 
+    // Conversations over the encrypted chat carry a lock in the list.
+    val links by chat.links.collectAsState()
+    fun encrypted(c: Conversation): Boolean = if (c.group) chat.groupReady(c.addresses) else chat.linkFor(c.address) != null
     val line: @Composable (Conversation) -> Unit = { c ->
         ConversationLine(
             c,
@@ -162,6 +165,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             pinned = c.threadId in settings.pinned,
             onOpen = { onOpenThread(c.threadId, c.addresses.joinToString(",")) },
             onPeek = { peeking = c },
+            encrypted = remember(links, c.threadId) { encrypted(c) },
             left = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE),
             right = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE),
             archived = Lists.isArchived(c, settings.archived),
@@ -414,6 +418,7 @@ private fun ConversationLine(
     pinned: Boolean,
     onOpen: () -> Unit,
     onPeek: () -> Unit,
+    encrypted: Boolean,
     left: com.yaz.sms.core.sms.SwipeAction,
     right: com.yaz.sms.core.sms.SwipeAction,
     archived: Boolean,
@@ -558,6 +563,10 @@ private fun ConversationLine(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f, fill = false)
                             )
+                            if (encrypted) {
+                                Spacer(Modifier.width(6.dp))
+                                Icon(AppIcons.Lock, contentDescription = "End-to-end encrypted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                            }
                             if (pinned) {
                                 Spacer(Modifier.width(6.dp))
                                 Icon(AppIcons.PushPin, contentDescription = "Pinned", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
