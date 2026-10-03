@@ -206,7 +206,7 @@ fun EmojiPickerDialog(onPick: (String) -> Unit, onDismiss: () -> Unit) {
     // A View of Android's: its words take the light or dark of the app, not the window's.
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        com.yaz.sms.ui.component.ZoneSurface(shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp)) {
+        com.yaz.sms.ui.component.DialogPane {
             androidx.compose.ui.viewinterop.AndroidView(
                 factory = { context ->
                     val themed = android.view.ContextThemeWrapper(context, if (dark) android.R.style.Theme_DeviceDefault else android.R.style.Theme_DeviceDefault_Light)
@@ -288,7 +288,7 @@ internal val effectFaces = listOf(
 fun EffectSheet(carried: Boolean, onLater: (() -> Unit)?, onPick: (com.yaz.sms.core.sms.Effects.Effect) -> Unit, onDismiss: () -> Unit) {
     val haptics = rememberHaptics()
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        com.yaz.sms.ui.component.ZoneSurface(shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp)) {
+        com.yaz.sms.ui.component.DialogPane {
             Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 if (onLater != null) FloatingPane(shape = CircleShape, onClick = {
                     haptics.tick()

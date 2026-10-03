@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -80,15 +81,27 @@ private fun DayAndTime(onPick: (Long) -> Unit, onDismiss: () -> Unit) {
         is24Hour = android.text.format.DateFormat.is24HourFormat(androidx.compose.ui.platform.LocalContext.current)
     )
     var day by remember { mutableStateOf<Long?>(null) }
-    if (day == null) androidx.compose.material3.DatePickerDialog(
+    // The day in a pane of glass too, the calendar's own ground left out.
+    if (day == null) ZoneAlertDialog(
         onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.padding(horizontal = 8.dp).widthIn(max = 460.dp),
+        text = {
+            androidx.compose.material3.DatePicker(
+                dayState,
+                title = null,
+                headline = null,
+                showModeToggle = false,
+                colors = androidx.compose.material3.DatePickerDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+            )
+        },
         confirmButton = { TextButton(onClick = { haptics.tick(); day = dayState.selectedDateMillis ?: today }) { Text("Next") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    ) { androidx.compose.material3.DatePicker(dayState) }
+    )
     else ZoneAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("At what time?") },
-        text = { androidx.compose.material3.TimePicker(timeState) },
+        text = { androidx.compose.material3.TimePicker(timeState, colors = androidx.compose.material3.TimePickerDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)) },
         confirmButton = {
             TextButton(onClick = {
                 val date = java.time.Instant.ofEpochMilli(day!!).atZone(java.time.ZoneOffset.UTC).toLocalDate()

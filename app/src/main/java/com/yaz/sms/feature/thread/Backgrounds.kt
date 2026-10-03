@@ -247,7 +247,7 @@ internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: Stri
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::fromPhoto) }
     val hour = remember { hourNow() }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        ZoneSurface(shape = RoundedCornerShape(28.dp)) {
+        com.yaz.sms.ui.component.DialogPane {
             Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Background", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 12.dp))
                 FlowRow(

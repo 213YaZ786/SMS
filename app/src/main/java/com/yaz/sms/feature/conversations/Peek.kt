@@ -100,6 +100,7 @@ internal fun Peek(
     LaunchedEffect(Unit) { dim.animateTo(1f, tween(220)) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        com.yaz.sms.ui.component.BlurBehind()
         Box(
             Modifier
                 .fillMaxSize()
