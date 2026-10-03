@@ -1,5 +1,4 @@
 <resources>
-    <!-- By night the ground is a deep neutral, the glyph a lighter accent. -->
+    <!-- By night the ground is a deep neutral; the bubble keeps its accent. -->
     <color name="ic_launcher_background">@android:color/system_neutral1_800</color>
-    <color name="ic_launcher_glyph">@android:color/system_accent1_200</color>
 </resources>

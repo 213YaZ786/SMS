@@ -1,6 +1,6 @@
 <resources>
     <!-- The launcher icon follows the wallpaper: the palest tone of the
-         accent by day, a deep neutral by night, the glyph in the accent. -->
+         accent by day, a deep neutral by night, the bubble in the accent. -->
     <color name="ic_launcher_background">@android:color/system_accent1_50</color>
-    <color name="ic_launcher_glyph">@android:color/system_accent1_600</color>
+    <color name="ic_launcher_bubble">@android:color/system_accent1_500</color>
 </resources>

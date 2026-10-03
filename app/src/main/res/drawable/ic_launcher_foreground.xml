@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- For now, until the app's own icon: the Material textsms glyph (Apache 2.0)
-     in the wallpaper's accent, centred in the adaptive icon's safe zone. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <group android:translateX="30" android:translateY="30" android:scaleX="2" android:scaleY="2">
-        <path android:fillColor="@color/ic_launcher_glyph" android:pathData="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM9 11H7V9h2v2zm4 0h-2V9h2v2zm4 0h-2V9h2v2z" />
-    </group>
-</vector>
+<!-- SMS's launcher glyph: a bubble in soft relief with three white dots.
+     The bubble's grey body is multiplied by a tone of the wallpaper's accent,
+     its light lies on it untinted, and the dots lie on top as drawn. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <bitmap
+            android:src="@drawable/sms_body"
+            android:tint="@color/ic_launcher_bubble"
+            android:tintMode="multiply" />
+    </item>
+    <item android:drawable="@drawable/sms_shine" />
+    <item android:drawable="@drawable/sms_dots" />
+</layer-list>
