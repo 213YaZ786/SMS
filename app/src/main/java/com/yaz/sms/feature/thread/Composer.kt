@@ -215,18 +215,6 @@ fun Composer(
                 }
             }
         }
-        // An effect chosen from the +, waiting for the words it goes with.
-        armed?.let { effect ->
-            val face = effectFaces.firstOrNull { it.first == effect }?.second
-            Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.CenterStart) {
-                FloatingPane(shape = CircleShape, accent = true, onClick = { haptics.tick(); armed = null }) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)) {
-                        Text((face?.first ?: "✨") + "  " + (face?.second ?: "Effect") + " · with your next message", style = MaterialTheme.typography.labelLarge)
-                        Icon(AppIcons.Close, contentDescription = "No effect", modifier = Modifier.padding(start = 8.dp).size(16.dp))
-                    }
-                }
-            }
-        }
         if (choosingEffect) EffectSheet(
             carried = effectsCarried,
             onLater = null,
@@ -352,6 +340,21 @@ fun Composer(
                 }
             } else FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f).graphicsLayer { alpha = veil }) {
               Column {
+                // An effect chosen from the +, inside the bar with the words it goes with.
+                armed?.let { effect ->
+                    val face = effectFaces.firstOrNull { it.first == effect }?.second
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(start = 12.dp, end = 10.dp, top = 10.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .clickable(onClickLabel = "No effect") { haptics.tick(); armed = null }
+                            .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp)
+                    ) {
+                        Text((face?.first ?: "✨") + "  " + (face?.second ?: "Effect"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Icon(AppIcons.Close, contentDescription = "No effect", tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(start = 6.dp).size(16.dp))
+                    }
+                }
                 // What goes with the text, inside the bar it leaves with, each with its cross.
                 if (attachments.isNotEmpty()) {
                     Row(
@@ -394,7 +397,7 @@ fun Composer(
                 }
               Box {
                 Box(Modifier.padding(start = 18.dp, end = if (text.isNotEmpty()) 44.dp else 18.dp, top = 15.dp, bottom = 15.dp)) {
-                    if (text.isEmpty()) Text(if (locating) "Finding where you are…" else if (lost) "Not found: is location on?" else if (attachments.isNotEmpty()) "Add a message, or send" else "Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (text.isEmpty()) Text(if (locating) "Finding where you are…" else if (lost) "Not found: is location on?" else if (attachments.isNotEmpty()) "Add a message, or send" else if (armed != null) "Your message, with its effect" else "Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val faded = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     BasicTextField(
                         value = androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(sel.start.coerceIn(0, text.length), sel.end.coerceIn(0, text.length))),
