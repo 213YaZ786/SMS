@@ -25,6 +25,7 @@ import com.yaz.sms.ui.icon.AppIcons
 fun TabFrame(
     title: String,
     onOpenSettings: () -> Unit,
+    leading: (@Composable () -> Unit)? = null,
     controls: (@Composable () -> Unit)? = null,
     overlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
     content: @Composable (PaddingValues) -> Unit
@@ -33,7 +34,7 @@ fun TabFrame(
     FloatingFrame(
         bottom = LocalDockPadding.current + 16.dp,
         top = {
-            FloatingTop(title = title, trailing = { FloatingAction(AppIcons.Settings, "Settings", onOpenSettings) })
+            FloatingTop(title = title, leading = leading, trailing = { FloatingAction(AppIcons.Settings, "Settings", onOpenSettings) })
             // Until SMS can take messages, the steps to get there come first.
             Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.TopCenter) { SetupZone() }
             controls?.invoke()

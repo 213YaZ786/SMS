@@ -152,10 +152,6 @@ private fun SmsNavHost(navController: NavHostController) {
             ReadableScroll {
                 NewMessageScreen(
                     onBack = { navController.popBackStack() },
-                    onSection = { section ->
-                        com.yaz.sms.feature.conversations.Sections.asked.value = section
-                        navController.popBackStack()
-                    },
                     onPick = { address ->
                         navController.popBackStack()
                         navController.navigate(Routes.thread(null, address, text))
@@ -192,8 +188,7 @@ private fun Main(onOpenSettings: () -> Unit, onOpenThread: (Long, String) -> Uni
             }
         }
         CompositionLocalProvider(LocalGlassBackdrop provides backdrop.takeIf { look != null }) {
-            // Above the sections' pill at the bottom of the list.
-            MovableComposeButton(onClick = onNew, above = com.yaz.sms.ui.component.DockClearance)
+            MovableComposeButton(onClick = onNew, above = 16.dp)
         }
         if (showWelcome) {
             Surface(

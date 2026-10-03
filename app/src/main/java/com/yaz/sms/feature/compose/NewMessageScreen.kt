@@ -42,7 +42,6 @@ import com.yaz.sms.data.contacts.PhoneBook
 import com.yaz.sms.ui.component.ContactAvatar
 import com.yaz.sms.ui.component.EmptyZone
 import com.yaz.sms.ui.component.FloatingAction
-import com.yaz.sms.feature.conversations.SectionsDock
 import com.yaz.sms.ui.component.FloatingFrame
 import com.yaz.sms.ui.component.FloatingPane
 import com.yaz.sms.ui.component.FloatingTop
@@ -57,7 +56,7 @@ import org.koin.compose.koinInject
  * Every number of a contact is its own line, so the right one is chosen.
  */
 @Composable
-fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit, onSection: (com.yaz.sms.core.sms.Filter) -> Unit = {}) {
+fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
     val book: PhoneBook = koinInject()
     var allowed by remember { mutableStateOf(book.canRead()) }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed = it }
@@ -78,23 +77,10 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit, onSection: (c
     }
     val found = remember(people, query) { People.search(people, query) }
     val typed = query.filter { it.isDigit() || it == '+' }.takeIf { it.count(Char::isDigit) >= 3 && query.none(Char::isLetter) }
-    // Room for the sections' pill, kept here as on the list.
-    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + com.yaz.sms.ui.component.DockClearance
-    val messages: com.yaz.sms.data.sms.Messages = koinInject()
-    val conversations by messages.conversations.collectAsState()
-    val settingsStore: com.yaz.sms.data.settings.SettingsStore = koinInject()
-    val settings by settingsStore.settings.collectAsState()
+    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp
 
     FloatingFrame(
         bottom = bottom,
-        overlay = {
-            // The list's pill stays: a section takes back to the list on it.
-            SectionsDock(
-                filter = null,
-                unread = conversations.any { it.unread > 0 && !com.yaz.sms.core.sms.Lists.isArchived(it, settings.archived) },
-                onSelect = onSection
-            )
-        },
         top = {
             FloatingTop(
                 title = if (group) "New group" else "New message",

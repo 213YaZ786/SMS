@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -363,11 +364,11 @@ internal fun ModelChoices(model: com.yaz.sms.core.voice.SpeechModel) {
     // Read again when the choice changes.
     var chosen by remember(system) { mutableStateOf(if (model.usesSystem) com.yaz.sms.core.voice.SpeechModel.SYSTEM else model.pin.name) }
     @Composable
-    fun Choice(key: String, title: String, line: String, mark: String?, modifier: Modifier, onPick: () -> Unit) {
+    fun Choice(key: String, title: String, size: String, line: String, modifier: Modifier, onPick: () -> Unit) {
         val on = key == chosen
         val lift by androidx.compose.animation.core.animateFloatAsState(if (on) 1f else 0.96f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 500f), label = "pick")
         com.yaz.sms.ui.component.FloatingPane(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             accent = on,
             onClick = {
                 if (state is com.yaz.sms.core.voice.SpeechModel.State.Fetching) return@FloatingPane
@@ -377,24 +378,31 @@ internal fun ModelChoices(model: com.yaz.sms.core.voice.SpeechModel) {
             },
             modifier = modifier.graphicsLayer { scaleX = lift; scaleY = lift }
         ) {
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                Text(line, style = MaterialTheme.typography.bodySmall)
-                mark?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+            // The same three lines in each, so the tiles are the same size.
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp)
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                Text(size, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
         }
     }
-    Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
         if (system) {
             val language = remember { java.util.Locale.getDefault().let { it.getDisplayLanguage(it).replaceFirstChar { c -> c.titlecase(it) } } }
-            Choice(com.yaz.sms.core.voice.SpeechModel.SYSTEM, "This phone's", "0 MB · $language only", "Already here", Modifier.fillMaxWidth()) { model.chooseSystem() }
+            Choice(com.yaz.sms.core.voice.SpeechModel.SYSTEM, "This phone's", "Nothing to fetch", "$language only", Modifier.fillMaxWidth()) { model.chooseSystem() }
         }
-        Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        // Side by side, of equal height; the one this phone runs best is chosen at first.
+        Row(
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth().height(androidx.compose.foundation.layout.IntrinsicSize.Max)
+        ) {
             com.yaz.sms.core.voice.SpeechModel.PINS.forEach { pin ->
                 Choice(
-                    pin.name, pin.label, "${pin.bytes / 1_000_000} MB · ${pin.quality.lowercase()}",
-                    if (pin == model.recommended && !system) "For this phone" else null,
-                    Modifier.weight(1f)
+                    pin.name, pin.label, "${pin.bytes / 1_000_000} MB", pin.quality,
+                    Modifier.weight(1f).fillMaxHeight()
                 ) { model.choose(pin) }
             }
         }

@@ -108,14 +108,9 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     androidx.compose.runtime.LaunchedEffect(settings.checkLinks) {
         if (settings.checkLinks) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.yaz.sms.core.link.BadHosts.refresh(context) }
     }
-    // The section chosen in Settings, All unless changed.
-    var filter by rememberSaveable { mutableStateOf(runCatching { Filter.valueOf(store.current.startFilter) }.getOrDefault(Filter.ALL)) }
-    // A section chosen from the pill of another screen (a new message) opens here.
-    val asked by Sections.asked.collectAsState()
-    androidx.compose.runtime.LaunchedEffect(asked) {
-        asked?.let { filter = it; Sections.asked.value = null }
-    }
-    androidx.compose.runtime.SideEffect { Sections.current.value = filter }
+    // Everything together, SMS and chat; the archive behind its button.
+    var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
+    androidx.activity.compose.BackHandler(enabled = filter == Filter.ARCHIVED) { filter = Filter.ALL }
     var query by rememberSaveable { mutableStateOf("") }
 
     fun nameOf(c: Conversation): String? =
@@ -132,6 +127,10 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     var servicesOpen by rememberSaveable { mutableStateOf(false) }
     var peeking by remember { mutableStateOf<Conversation?>(null) }
     var setAside by remember { mutableStateOf<Conversation?>(null) }
+    // In the archive, the conversations set aside too, until their time.
+    val setAsideList = remember(all, settings.later, filter, query) {
+        if (filter != Filter.ARCHIVED || query.isNotBlank()) emptyList() else Lists.shown(all, Filter.LATER, settings.pinned, settings.archived, settings.later)
+    }
     val waiting = remember(all, settings.archived, settings.later, filter, query) {
         if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.waiting(all, settings.archived, System.currentTimeMillis(), later = settings.later)
     }
@@ -149,16 +148,20 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         )
     }
 
+    val archive = filter == Filter.ARCHIVED
     TabFrame(
-        title = "Messages",
+        title = if (archive) "Archive" else "Messages",
         onOpenSettings = onOpenSettings,
+        // Top left, facing Settings: the archive, and back from it.
+        leading = {
+            com.yaz.sms.ui.component.FloatingAction(
+                if (archive) AppIcons.ArrowBack else AppIcons.Archive,
+                if (archive) "Back to messages" else "Archive",
+                { filter = if (archive) Filter.ALL else Filter.ARCHIVED }
+            )
+        },
         controls = {
             if (messages.canRead() && all.isNotEmpty()) Filters(query, { query = it })
-        },
-        // The sections in a floating pill at the bottom, as Dialer's tabs:
-        // a dot on Unread while a message waits to be read.
-        overlay = {
-            if (messages.canRead() && all.isNotEmpty()) SectionsDock(filter, unread = all.any { it.unread > 0 && !Lists.isArchived(it, settings.archived) }, onSelect = { filter = it })
         }
     ) { padding ->
         when {
@@ -169,11 +172,11 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
             !loaded -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { LoadingMark(size = 72.dp) }
-            shown.isEmpty() && waiting.isEmpty() -> EmptyZone(
+            shown.isEmpty() && waiting.isEmpty() && setAsideList.isEmpty() -> EmptyZone(
                 title = when {
                     query.isNotBlank() -> "Nothing found"
                     filter == Filter.UNREAD -> "All read"
-                    filter == Filter.ARCHIVED -> "Nothing archived"
+                    filter == Filter.ARCHIVED -> "Nothing in the archive"
                     filter == Filter.UNKNOWN -> "No one unknown"
                     filter == Filter.LATER -> "Nothing set aside"
                     else -> "No messages yet"
@@ -181,7 +184,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 message = when {
                     query.isNotBlank() -> "No name, number or message matches \"$query\"."
                     filter == Filter.ALL -> "Write to someone with the button below."
-                    else -> ""
+                    else -> "Archive a conversation with a long press; it comes back with its next message."
                 },
                 icon = AppIcons.Message,
                 modifier = Modifier.fillMaxSize().padding(padding)
@@ -199,6 +202,11 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     item(key = "waiting") {
                         Waiting(waiting, index, ::nameOf) { c -> onOpenThread(c.threadId, c.addresses.joinToString(",")) }
                     }
+                }
+                if (setAsideList.isNotEmpty()) {
+                    item(key = "later/title") { Heading("Set aside, back at their time") }
+                    items(setAsideList, key = { "l/${it.threadId}" }) { c -> line(c) }
+                    if (shown.isNotEmpty()) item(key = "archived/title") { Heading("Archived") }
                 }
                 // People first; every service (banks, deliveries, codes) in one stack.
                 val (services, people) = shown.partition { Lists.isService(it) && filter == Filter.ALL && query.isBlank() }
@@ -474,40 +482,4 @@ private fun ConversationLine(
             }
         }
     }
-}
-
-/** The list's section, shared with the screens that show the same pill. */
-object Sections {
-    /** The section the list shows now. */
-    val current = kotlinx.coroutines.flow.MutableStateFlow(Filter.ALL)
-    /** A section chosen elsewhere, for the list to open on. */
-    val asked = kotlinx.coroutines.flow.MutableStateFlow<Filter?>(null)
-}
-
-/**
- * The sections in a floating pill at the bottom, as Dialer's tabs: All in
- * the middle, the narrower ones around it, a red dot on Unread while a
- * message waits to be read.
- */
-@Composable
-fun androidx.compose.foundation.layout.BoxScope.SectionsDock(filter: Filter?, unread: Boolean, onSelect: (Filter) -> Unit) {
-    val sections = listOf(
-        Filter.UNREAD to com.yaz.sms.ui.component.DockItem(AppIcons.Message, "Unread", dot = unread, dotColor = MaterialTheme.colorScheme.error),
-        Filter.UNKNOWN to com.yaz.sms.ui.component.DockItem(AppIcons.QuestionMark, "Unknown"),
-        Filter.ALL to com.yaz.sms.ui.component.DockItem(AppIcons.TextSms, "All"),
-        Filter.LATER to com.yaz.sms.ui.component.DockItem(AppIcons.Schedule, "Later"),
-        Filter.ARCHIVED to com.yaz.sms.ui.component.DockItem(AppIcons.Archive, "Archived")
-    )
-    val at by androidx.compose.animation.core.animateFloatAsState(
-        sections.indexOfFirst { it.first == filter }.let { if (it < 0) -1f else it.toFloat() },
-        androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 500f), label = "section"
-    )
-    com.yaz.sms.ui.component.FloatingDock(
-        items = sections.map { it.second },
-        position = at,
-        onSelect = { onSelect(sections[it].first) },
-        modifier = Modifier.align(Alignment.BottomCenter)
-            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
-            .padding(bottom = 16.dp)
-    )
 }
