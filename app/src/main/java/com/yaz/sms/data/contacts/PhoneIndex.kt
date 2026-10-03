@@ -1,6 +1,7 @@
 package com.yaz.sms.data.contacts
 
 import com.yaz.sms.core.dial.PhoneEntry
+import com.yaz.sms.core.dial.PrivateNames
 import com.yaz.sms.core.dial.T9
 
 /**
@@ -20,10 +21,13 @@ class PhoneIndex(entries: List<PhoneEntry>) {
         }
     }
 
+    /** Android's contacts first, then the Contacts app's private ones (asked in the background, see [PrivateNames.version]). */
     fun find(digits: String): PhoneEntry? {
         val d = digits.removePrefix("+")
         if (d.isEmpty()) return null
-        return exact[d] ?: if (d.length >= 9) byTail[d.takeLast(9)] else null
+        return exact[d] ?: (if (d.length >= 9) byTail[d.takeLast(9)] else null) ?: PrivateNames.cached(digits)?.let {
+            PhoneEntry(PrivateNames.CONTACT_ID, it.name, digits, digits, null, false, it.look)
+        }
     }
 
     /** All the numbers of one contact match the same way, for the call screen. */

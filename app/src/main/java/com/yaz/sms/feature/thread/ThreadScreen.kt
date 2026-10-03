@@ -210,7 +210,7 @@ private fun ThreadContent(
         if (list.any { it.box == MessageBox.RECEIVED && !it.read }) messages.markRead(t)
         MessageNotifier(context).cancel(t)
     }
-    val index = remember(contacts) { PhoneIndex(contacts) }
+    val index = remember(contacts, com.yaz.sms.core.dial.PrivateNames.version.intValue) { PhoneIndex(contacts) }
     val to = people.firstOrNull().orEmpty()
     val group = people.size > 1
     val entry = remember(index, to) { index.find(T9.clean(to)) }
@@ -727,8 +727,9 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
             pillBounds,
             listOfNotNull(
                 if (digits && NumberActions.canShowCalls(context)) MessageAction(AppIcons.Recents, "Calls") { NumberActions.showCalls(context, address) } else null,
-                if (contactId != null) MessageAction(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
-                else if (digits) MessageAction(AppIcons.PersonAdd, "Add to contacts") { NumberActions.addContact(context, address) } else null,
+                // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
+                if (contactId != null && contactId > 0) MessageAction(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
+                else if (digits && contactId == null) MessageAction(AppIcons.PersonAdd, "Add to contacts") { NumberActions.addContact(context, address) } else null,
                 if (!group) MessageAction(AppIcons.Copy, "Copy number") { NumberActions.copy(context, address) } else null,
                 if (!group) MessageAction(AppIcons.Vibration, "Vibration") { choosingSignature = true } else null,
                 if (group) MessageAction(AppIcons.Create, "Name the group") { naming = true } else null,

@@ -201,12 +201,13 @@ fun PersonPage(
                         val digits = !group && address.count(Char::isDigit) >= 3
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(top = 8.dp)) {
                             if (digits && NumberActions.canShowCalls(context)) Row(AppIcons.Recents, "Calls with them") { NumberActions.showCalls(context, address) }
-                            if (contactId != null) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
-                            else if (digits) Row(AppIcons.PersonAdd, "Add to contacts") { NumberActions.addContact(context, address) }
+                            // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
+                            if (contactId != null && contactId > 0) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
+                            else if (digits && contactId == null) Row(AppIcons.PersonAdd, "Add to contacts") { NumberActions.addContact(context, address) }
                             if (!group) Row(AppIcons.Copy, "Copy number") { NumberActions.copy(context, address) }
                             // Kept in the contact by the Contacts app when it is on the phone; here otherwise.
                             if (!group) Row(AppIcons.Vibration, "Vibration") {
-                                if (contactId == null || !com.yaz.sms.core.dial.ContactLook.openInContacts(context, contactId)) choosingSignature = true
+                                if (contactId == null || contactId < 0 || !com.yaz.sms.core.dial.ContactLook.openInContacts(context, contactId)) choosingSignature = true
                             }
                             if (group) Row(AppIcons.Create, "Name the group") { naming = true }
                             if (vanish != null) Row(AppIcons.Timer, if (vanish > 0) "Vanishing messages · ${vanishLabel(vanish)}" else "Vanishing messages") { choosingVanish = true }

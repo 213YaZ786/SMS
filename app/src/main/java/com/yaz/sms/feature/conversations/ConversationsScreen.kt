@@ -99,7 +99,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     val loaded by messages.loaded.collectAsState()
     val contacts by book.entries.collectAsState()
     val settings by store.settings.collectAsState()
-    val index = remember(contacts) { PhoneIndex(contacts) }
+    val index = remember(contacts, com.yaz.sms.core.dial.PrivateNames.version.intValue) { PhoneIndex(contacts) }
     val context = LocalContext.current
     // The list of dangerous sites is kept a day fresh while the app is in front (Android
     // gives an app started in the background for a message no network).

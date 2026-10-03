@@ -9,9 +9,9 @@ import android.provider.ContactsContract.PhoneLookup
 import androidx.core.content.ContextCompat
 
 /**
- * Who a number belongs to, asked of Android's contacts directly: for the
- * moments the app may not be running yet, a call being screened or a
- * missed call to announce.
+ * Who a number belongs to, asked of Android's contacts directly, then of
+ * the Contacts app's private ones: for the moments the app may not be
+ * running yet, a call being screened or a missed call to announce.
  */
 object ContactLookup {
 
@@ -23,7 +23,7 @@ object ContactLookup {
             context.contentResolver.query(uri, arrayOf(PhoneLookup.DISPLAY_NAME), null, null, null)?.use { c ->
                 if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null
             }
-        }.getOrNull() ?: byLastDigits(context, number)
+        }.getOrNull() ?: byLastDigits(context, number) ?: PrivateNames.lookup(context, number)?.name
     }
 
     /**

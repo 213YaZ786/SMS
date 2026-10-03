@@ -3,6 +3,12 @@
 
     <!-- One request to GitHub when the app opens, for the newest release. Nothing else goes out. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- What the Contacts app may ask about the messages (keep in touch), and the private names it keeps: apps signed with the same key only. -->
+    <permission
+        android:name="${applicationId}.permission.PEOPLE"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.yaz.contacts.permission.PRIVATE" />
+    <uses-permission android:name="com.yaz.contacts.debug.permission.PRIVATE" />
     <!-- Hands the cards received over the chat to the Contacts app, signed with the same key. -->
     <uses-permission android:name="com.yaz.contacts.permission.CARDS" />
     <uses-permission android:name="com.yaz.contacts.debug.permission.CARDS" />
@@ -51,6 +57,9 @@
 
     <!-- Dialer, when installed, shows the calls with a number. -->
     <queries>
+        <!-- The Contacts app's private names (signature level). -->
+        <provider android:authorities="com.yaz.contacts.private" />
+        <provider android:authorities="com.yaz.contacts.debug.private" />
         <!-- The Contacts app's door for cards shared over the chat (signature level). -->
         <provider android:authorities="com.yaz.contacts.cards" />
         <provider android:authorities="com.yaz.contacts.debug.cards" />
@@ -241,5 +250,11 @@
             android:authorities="${applicationId}.invite"
             android:exported="true"
             android:permission="${applicationId}.permission.INVITE" />
+        <!-- The Contacts app asks when the last messages with some numbers were, and which unsaved numbers come back often. -->
+        <provider
+            android:name=".core.sms.MessagesDoor"
+            android:authorities="${applicationId}.people"
+            android:exported="true"
+            android:permission="${applicationId}.permission.PEOPLE" />
     </application>
 </manifest>
