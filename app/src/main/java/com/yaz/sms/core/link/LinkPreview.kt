@@ -45,7 +45,7 @@ object LinkPreview {
     private fun get(url: String, limit: Int, html: Boolean): Pair<ByteArray, URL>? = runCatching {
         var at = URL(url)
         repeat(4) {
-            if (at.protocol != "https") return null
+            if (at.protocol != "https" || !public(at.host)) return null
             val connection = (at.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 8_000
                 readTimeout = 10_000
@@ -71,6 +71,14 @@ object LinkPreview {
         }
         null
     }.getOrNull()
+
+    /** A host on the internet: never this phone, the home network or a link-local address, which a link could aim at. */
+    private fun public(host: String): Boolean = runCatching {
+        java.net.InetAddress.getAllByName(host).none {
+            it.isLoopbackAddress || it.isSiteLocalAddress || it.isLinkLocalAddress || it.isAnyLocalAddress ||
+                it.isMulticastAddress || (it is java.net.Inet6Address && (it.address[0].toInt() and 0xfe) == 0xfc)
+        }
+    }.getOrDefault(false)
 
     /** The page's own charset when its head names one, else UTF-8. */
     private fun charsetOf(page: ByteArray): java.nio.charset.Charset = runCatching {

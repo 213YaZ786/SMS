@@ -50,6 +50,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Where the phone is, once, when the user taps Place in the composer; never in the background. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- The encrypted chat's invite, for the Contacts app when two phones touch: apps signed with the same key only. -->
     <permission
         android:name="${applicationId}.permission.INVITE"

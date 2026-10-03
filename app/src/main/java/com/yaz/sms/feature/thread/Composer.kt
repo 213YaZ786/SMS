@@ -61,6 +61,7 @@ import androidx.core.content.ContextCompat
 import com.yaz.sms.ui.component.FloatingPane
 import com.yaz.sms.ui.component.rememberHaptics
 import com.yaz.sms.ui.icon.AppIcons
+import kotlinx.coroutines.launch
 
 /**
  * The message being written, floating over the conversation: the text in
@@ -128,6 +129,25 @@ fun Composer(
     val person = rememberLauncherForActivityResult(ActivityResultContracts.PickContact()) { uri ->
         val card = uri?.let { contactCard(context, it) }
         if (card != null) add(listOf(Attachment(card, "text/x-vcard")))
+    }
+    // Where the phone is, once, into the words: the user sends it or not.
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var locating by remember { mutableStateOf(false) }
+    fun placeHere() {
+        locating = true
+        scope.launch {
+            val here = com.yaz.sms.core.sms.HereNow.find(context)
+            locating = false
+            if (here == null) haptics.reject()
+            else {
+                haptics.done()
+                val link = com.yaz.sms.core.sms.HereNow.link(here)
+                text = if (text.isBlank()) "📍 $link" else text.trimEnd() + "\n📍 " + link
+            }
+        }
+    }
+    val askPlace = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        if (granted.values.any { it }) placeHere() else haptics.reject()
     }
     var arcOpen by remember { mutableStateOf(false) }
     // A voice message being recorded, and how far the finger has slid to cancel or to lock.
@@ -254,6 +274,8 @@ fun Composer(
                         Drop.FILE -> file.launch(arrayOf("*/*"))
                         Drop.CONTACT -> person.launch(null)
                         Drop.POLL -> onPoll?.invoke()
+                        Drop.PLACE -> if (com.yaz.sms.core.sms.HereNow.allowed(context)) placeHere()
+                            else askPlace.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
                     }
                 }
             }
@@ -282,7 +304,7 @@ fun Composer(
             } else FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f).graphicsLayer { alpha = veil }) {
               Box {
                 Box(Modifier.padding(start = 18.dp, end = if (text.isNotEmpty()) 44.dp else 18.dp, top = 15.dp, bottom = 15.dp)) {
-                    if (text.isEmpty()) Text("Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (text.isEmpty()) Text(if (locating) "Finding where you are…" else "Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val faded = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     BasicTextField(
                         value = androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(sel.start.coerceIn(0, text.length), sel.end.coerceIn(0, text.length))),

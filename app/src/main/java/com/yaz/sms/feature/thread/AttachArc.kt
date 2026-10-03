@@ -50,6 +50,7 @@ enum class Drop(val icon: ImageVector, val label: String) {
     CAMERA(AppIcons.PhotoCamera, "Camera"),
     FILE(AppIcons.AttachFile, "File"),
     CONTACT(AppIcons.ContactPage, "Contact"),
+    PLACE(AppIcons.Place, "Place"),
     POLL(AppIcons.Poll, "Poll")
 }
 
