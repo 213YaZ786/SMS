@@ -221,6 +221,11 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     onClick = { uriHandler.openUri("https://github.com/chatmail/core") }
                 )
                 SettingRow(
+                    title = "Animated emoji",
+                    summary = "Noto Animated Emoji by Google, CC BY 4.0",
+                    onClick = { uriHandler.openUri("https://googlefonts.github.io/noto-emoji-animation/") }
+                )
+                SettingRow(
                     title = "Source code",
                     summary = "github.com/213YaZ786/SMS",
                     onClick = { uriHandler.openUri("https://github.com/213YaZ786/SMS") }

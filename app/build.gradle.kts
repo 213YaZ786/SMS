@@ -82,6 +82,9 @@ dependencies {
     implementation("io.github.webrtc-sdk:android:150.7871.01")
     // Any emoji as a reaction: Android's own emoji picker (Apache-2.0).
     implementation("androidx.emoji2:emoji2-emojipicker:1.7.0")
+    // A message of only emoji shows them big and moving: Lottie by Airbnb (Apache-2.0)
+    // playing Google's Noto animated emoji (CC BY 4.0) kept in assets/emoji.
+    implementation("com.airbnb.android:lottie-compose:6.7.1")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

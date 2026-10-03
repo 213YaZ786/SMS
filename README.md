@@ -21,8 +21,12 @@ A messaging app for Android. No account, no tracking, no ads.
 - Links that are not recognized are pointed out before they open, checked
   on the phone (and against a public list of dangerous sites, which can
   be turned off).
-- A few seconds to take a message back; hold Send to send it later;
-  swipe a conversation left to have it back later.
+- A few seconds to take a message back; send a message later; swipe a
+  conversation left to have it back later.
+- Effects on a message or across the screen (balloons, confetti,
+  fireworks and more), some brought by the words themselves; emoji sent
+  alone shown big and moving; bold, italic, underline and strikethrough;
+  any emoji as a reaction.
 - Parcel numbers and appointments found in messages, copied or added to
   the calendar in one tap; a vibration of their own for chosen people.
 - In a conversation: search, everything you sent each other (photos,
@@ -50,4 +54,5 @@ MIT. Icons from Google's Material Icons, Apache License 2.0. Picture
 messages use code from AOSP Messaging, Apache License 2.0. The encrypted
 chat runs chatmail core (github.com/chatmail/core), Mozilla Public
 License 2.0, downloaded unchanged at build time. Calls use WebRTC's
-Android library by webrtc-sdk, MIT License.
+Android library by webrtc-sdk, MIT License. Big emoji move with Google's Noto Animated Emoji, CC BY 4.0,
+played by Lottie (Airbnb), Apache License 2.0.

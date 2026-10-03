@@ -10,11 +10,16 @@ import android.provider.Telephony
  * Debug builds only: fills a conversation with many messages, to see how
  * the app holds up with years of them.
  * adb shell am broadcast -n com.sms.app.debug/com.sms.app.DebugBulkReceiver --es from +33611112222 --ei count 3000
+ * With --es body "…", one received message with that text; --es drop "5056,5057" deletes those rows.
  */
 class DebugBulkReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        intent.getStringExtra("drop")?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.forEach {
+            context.contentResolver.delete(android.content.ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, it), null, null)
+        }
         val from = intent.getStringExtra("from") ?: return
-        val count = intent.getIntExtra("count", 1000)
+        val body = intent.getStringExtra("body")
+        val count = intent.getIntExtra("count", if (body != null) 1 else 1000)
         val done = goAsync()
         Thread {
             try {
@@ -24,9 +29,9 @@ class DebugBulkReceiver : BroadcastReceiver() {
                     ContentValues().apply {
                         put(Telephony.Sms.THREAD_ID, thread)
                         put(Telephony.Sms.ADDRESS, from)
-                        put(Telephony.Sms.BODY, "Message $i, to see a long conversation")
+                        put(Telephony.Sms.BODY, body ?: "Message $i, to see a long conversation")
                         put(Telephony.Sms.DATE, now - (count - i) * 60_000L)
-                        put(Telephony.Sms.TYPE, if (i % 2 == 0) Telephony.Sms.MESSAGE_TYPE_INBOX else Telephony.Sms.MESSAGE_TYPE_SENT)
+                        put(Telephony.Sms.TYPE, if (body != null || i % 2 == 0) Telephony.Sms.MESSAGE_TYPE_INBOX else Telephony.Sms.MESSAGE_TYPE_SENT)
                         put(Telephony.Sms.READ, 1)
                     }
                 }

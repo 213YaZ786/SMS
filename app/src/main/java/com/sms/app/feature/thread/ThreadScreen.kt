@@ -706,6 +706,9 @@ private fun Bubble(
     val (said, carried) = remember(m.body) { com.sms.app.core.sms.Effects.read(m.body) }
     val bubbleEffect = (carried ?: sentEffect)?.takeIf { !it.screen }
     var replays by remember { mutableStateOf(0) }
+    // Only one to three emoji: big, without a bubble, moving once (then on a tap).
+    val big = remember(said, m.parts.isEmpty()) { if (m.parts.isEmpty()) com.sms.app.core.sms.BigEmoji.read(said) else null }
+    var emojiPlay by remember(m.uid) { mutableStateOf(if (big != null && EmojiPlayed.first(m.uid)) 1 else 0) }
     // Invisible ink: blurred until touched.
     var inked by remember(m.uid) { mutableStateOf(bubbleEffect == com.sms.app.core.sms.Effects.Effect.INK) }
     val screenEffect = (carried ?: sentEffect)?.takeIf { it.screen } ?: remember(said) { com.sms.app.core.sms.Effects.fromWords(said) }
@@ -889,10 +892,7 @@ private fun Bubble(
                 topStart = 22.dp, topEnd = 22.dp,
                 bottomStart = if (mine) 22.dp else 6.dp, bottomEnd = if (mine) 6.dp else 22.dp
             )
-            ZoneSurface(
-                shape = shape,
-                accent = mine,
-                modifier = Modifier
+            val held = Modifier
                     .onGloballyPositioned { bounds = it.boundsInWindow() }
                     .graphicsLayer { alpha = if (menuOpen) 0f else 1f }
                     .drawWithContent {
@@ -910,12 +910,16 @@ private fun Bubble(
                             )
                         }
                     }
-                    .clip(shape).combinedClickable(
+                    .clip(if (big != null) RoundedCornerShape(28.dp) else shape).combinedClickable(
                     onClick = {
                         if (inked) {
                             haptics.tick()
                             inked = false
                         } else if (m.box == MessageBox.FAILED) onRetry()
+                        else if (big != null) {
+                            haptics.tick()
+                            emojiPlay++
+                        }
                     },
                     // A double tap gives a heart, over the rich chat.
                     onDoubleClick = if (rich != null) ({
@@ -928,7 +932,8 @@ private fun Bubble(
                     },
                     onLongClickLabel = "More"
                 )
-            ) {
+            if (big != null) BigEmojiRow(big, emojiPlay, held.blur(if (inked) 14.dp else 0.dp))
+            else ZoneSurface(shape = shape, accent = mine, modifier = held) {
               Column {
                 // An edit changes the words in a soft blur, not at a stroke.
                 androidx.compose.animation.AnimatedContent(
@@ -972,7 +977,8 @@ private fun Bubble(
                 onDismiss = { menuOpen = false },
                 onMoreReactions = if (rich != null) ({ pickingEmoji = true }) else null
             ) {
-                ZoneSurface(shape = shape, accent = mine, shadowElevation = 8.dp) {
+                if (big != null) BigEmojiRow(big, 0)
+                else ZoneSurface(shape = shape, accent = mine, shadowElevation = 8.dp) {
                     Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                 }
             }
