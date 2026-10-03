@@ -48,21 +48,44 @@ class SpeechModel(private val context: Context, private val scope: CoroutineScop
     /** The user's choice, else the recommended one. */
     val pin: Pin get() = PINS.firstOrNull { it.name == settings.current.speechModel } ?: recommended
 
+    private val _system = MutableStateFlow(false)
+    /** The phone has its own on-device recognizer with its language installed: nothing to fetch. */
+    val system: StateFlow<Boolean> = _system.asStateFlow()
+
+    /** The phone's own recognizer is used: chosen, or nothing else chosen nor fetched. */
+    val usesSystem: Boolean
+        get() = _system.value && (settings.current.speechModel == SYSTEM || (settings.current.speechModel.isEmpty() && !File(dir, recommended.name).exists()))
+
     /** Another model chosen: fetched when asked, the other one goes once it is there. */
     fun choose(choice: Pin) {
-        if (choice == pin) return
         job?.cancel()
         settings.update { it.copy(speechModel = choice.name) }
-        _state.value = if (file.exists()) State.Ready else State.Missing
+        refresh()
+    }
+
+    /** The phone's own recognizer chosen. */
+    fun chooseSystem() {
+        job?.cancel()
+        settings.update { it.copy(speechModel = SYSTEM) }
+        refresh()
+    }
+
+    private fun refresh() {
+        _state.value = if (usesSystem || file.exists()) State.Ready else State.Missing
     }
 
     val file: File get() = File(dir, pin.name)
 
-    private val _state = MutableStateFlow<State>(if (file.exists()) State.Ready else State.Missing)
+    private val _state = MutableStateFlow<State>(if (File(context.filesDir, "speech/" + pin.name).exists()) State.Ready else State.Missing)
     val state: StateFlow<State> = _state.asStateFlow()
     private var job: Job? = null
 
     init {
+        // Whether the phone hears its language itself, asked once.
+        scope.launch {
+            _system.value = SystemSpeech(context).ready()
+            if (_state.value !is State.Fetching) refresh()
+        }
         // A model this version no longer knows (an update pinned another) and broken fetches go.
         scope.launch(Dispatchers.IO) { dir.listFiles()?.filter { f -> PINS.none { it.name == f.name } }?.forEach { it.delete() } }
     }
@@ -139,5 +162,6 @@ class SpeechModel(private val context: Context, private val scope: CoroutineScop
         val SMALL = Pin("ggml-small-q5_1.bin", "Small", "More accurate", 190_085_487, "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb")
         val BASE = Pin("ggml-base-q5_1.bin", "Base", "Quicker", 59_707_625, "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898")
         val PINS = listOf(SMALL, BASE)
+        const val SYSTEM = "system"
     }
 }

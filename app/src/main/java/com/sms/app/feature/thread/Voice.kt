@@ -311,33 +311,52 @@ internal fun SpeechModelDialog(model: com.sms.app.core.voice.SpeechModel, onDism
     )
 }
 
-/** The models side by side: name, size and what it is good at; the one for this phone marked. */
+/**
+ * The ways to write voice messages out: the phone's own recognizer when it
+ * already has the phone's language (nothing to fetch), and the two speech
+ * models side by side, name, size and what each is good at.
+ */
 @Composable
 internal fun ModelChoices(model: com.sms.app.core.voice.SpeechModel) {
     val haptics = rememberHaptics()
     val state by model.state.collectAsState()
+    val system by model.system.collectAsState()
     // Read again when the choice changes.
-    var chosen by remember { mutableStateOf(model.pin) }
-    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        com.sms.app.core.voice.SpeechModel.PINS.forEach { pin ->
-            val on = pin == chosen
-            val lift by androidx.compose.animation.core.animateFloatAsState(if (on) 1f else 0.96f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 500f), label = "pick")
-            com.sms.app.ui.component.FloatingPane(
-                shape = RoundedCornerShape(16.dp),
-                accent = on,
-                onClick = {
-                    if (state is com.sms.app.core.voice.SpeechModel.State.Fetching) return@FloatingPane
-                    haptics.tick()
-                    model.choose(pin)
-                    chosen = pin
-                },
-                modifier = Modifier.weight(1f).graphicsLayer { scaleX = lift; scaleY = lift }
-            ) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                    Text(pin.label, style = MaterialTheme.typography.titleSmall)
-                    Text("${pin.bytes / 1_000_000} MB · ${pin.quality.lowercase()}", style = MaterialTheme.typography.bodySmall)
-                    if (pin == model.recommended) Text("For this phone", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                }
+    var chosen by remember(system) { mutableStateOf(if (model.usesSystem) com.sms.app.core.voice.SpeechModel.SYSTEM else model.pin.name) }
+    @Composable
+    fun Choice(key: String, title: String, line: String, mark: String?, modifier: Modifier, onPick: () -> Unit) {
+        val on = key == chosen
+        val lift by androidx.compose.animation.core.animateFloatAsState(if (on) 1f else 0.96f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 500f), label = "pick")
+        com.sms.app.ui.component.FloatingPane(
+            shape = RoundedCornerShape(16.dp),
+            accent = on,
+            onClick = {
+                if (state is com.sms.app.core.voice.SpeechModel.State.Fetching) return@FloatingPane
+                haptics.tick()
+                onPick()
+                chosen = key
+            },
+            modifier = modifier.graphicsLayer { scaleX = lift; scaleY = lift }
+        ) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(line, style = MaterialTheme.typography.bodySmall)
+                mark?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+            }
+        }
+    }
+    Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+        if (system) {
+            val language = remember { java.util.Locale.getDefault().let { it.getDisplayLanguage(it).replaceFirstChar { c -> c.titlecase(it) } } }
+            Choice(com.sms.app.core.voice.SpeechModel.SYSTEM, "This phone's", "0 MB · $language only", "Already here", Modifier.fillMaxWidth()) { model.chooseSystem() }
+        }
+        Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            com.sms.app.core.voice.SpeechModel.PINS.forEach { pin ->
+                Choice(
+                    pin.name, pin.label, "${pin.bytes / 1_000_000} MB · ${pin.quality.lowercase()}",
+                    if (pin == model.recommended && !system) "For this phone" else null,
+                    Modifier.weight(1f)
+                ) { model.choose(pin) }
             }
         }
     }

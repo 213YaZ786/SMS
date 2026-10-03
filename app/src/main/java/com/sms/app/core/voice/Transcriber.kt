@@ -51,8 +51,10 @@ class Transcriber(private val context: Context, private val scope: CoroutineScop
     private var handle = 0L
     private var closer: Job? = null
 
-    /** Whether this phone can write voice messages out (64-bit ARM, the engine in the app). */
-    val available: Boolean get() = Whisper.loaded && Build.SUPPORTED_64_BIT_ABIS.contains("arm64-v8a")
+    private val system = SystemSpeech(context)
+
+    /** Whether this phone can write voice messages out: the engine in the app (64-bit ARM), or its own recognizer. */
+    val available: Boolean get() = (Whisper.loaded && Build.SUPPORTED_64_BIT_ABIS.contains("arm64-v8a")) || model.system.value
 
     /** Hears [uri] once, when the model is there and it was not heard yet. */
     suspend fun transcribe(uri: Uri) {
@@ -61,7 +63,13 @@ class Transcriber(private val context: Context, private val scope: CoroutineScop
         if (key in _texts.value || _states.value[key] == State.Working) return
         set(key, State.Working)
         val result = try {
-            one.withLock { withContext(Dispatchers.Default) { hear(uri) } }
+            one.withLock {
+                if (model.usesSystem) {
+                    val pcm = withContext(Dispatchers.Default) { runCatching { decode(uri) }.getOrNull() }
+                    val words = pcm?.let { if (it.isEmpty()) "" else system.hear(it) }
+                    words?.let { State.Done(sentence(it)) } ?: State.Failed
+                } else withContext(Dispatchers.Default) { hear(uri) }
+            }
         } catch (gone: kotlinx.coroutines.CancellationException) {
             // Left before it was heard: heard the next time it is shown.
             _states.value = _states.value - key

@@ -150,7 +150,7 @@ fun WelcomeScreen(onStart: () -> Unit) {
                     store.update { it.copy(transcribeVoice = on) }
                     if (!on && model is com.sms.app.core.voice.SpeechModel.State.Fetching) transcriber.model.cancel()
                 },
-                extra = if (settings.transcribeVoice && (model == com.sms.app.core.voice.SpeechModel.State.Missing || model == com.sms.app.core.voice.SpeechModel.State.Failed)) ({
+                extra = if (settings.transcribeVoice && model !is com.sms.app.core.voice.SpeechModel.State.Fetching) ({
                     com.sms.app.feature.thread.ModelChoices(transcriber.model)
                 }) else null
             )
