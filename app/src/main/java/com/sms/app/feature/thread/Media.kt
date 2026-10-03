@@ -118,7 +118,7 @@ fun MediaTile(part: MmsPart, mine: Boolean) {
 
 /** A picture on the whole screen, over a dark ground. */
 @Composable
-private fun PictureViewer(uri: Uri, onClose: () -> Unit) {
+internal fun PictureViewer(uri: Uri, onClose: () -> Unit) {
     val image by rememberPicture(uri, 2048)
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.92f)).clickable(onClick = onClose), contentAlignment = Alignment.Center) {
@@ -148,7 +148,7 @@ private fun decode(context: Context, uri: Uri, side: Int): ImageBitmap? = runCat
 }.getOrNull()
 
 /** A video or a sound opened in the app chosen for it: a copy shared for that one opening. */
-private fun openOutside(context: Context, part: MmsPart) {
+internal fun openOutside(context: Context, part: MmsPart) {
     runCatching {
         val dir = File(context.cacheDir, "shared").apply { mkdirs() }
         val file = File(dir, "media." + com.sms.app.core.mms.MediaPrivacy.extension(part.contentType))

@@ -239,43 +239,126 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
             scheduling = null
         })
     }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val calls = rememberCallChoices(to, linked != null, canCall)
+    val rows = remember(list) { rowsOf(list) }
+    // The conversation's tools: search, what was shared, silence, a reminder to reply.
+    var toolsOpen by remember { mutableStateOf(false) }
+    var toolsBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var at by remember { mutableStateOf(0) }
+    var sharedOpen by remember { mutableStateOf(false) }
+    var silenceOpen by remember { mutableStateOf(false) }
+    var remindOpen by remember { mutableStateOf(false) }
+    var encryptionOpen by remember { mutableStateOf(false) }
+    val settingsNow by store.settings.collectAsState()
+    val silencedUntil = thread?.let { t -> settingsNow.silenced[t]?.takeIf { it > System.currentTimeMillis() } }
+    // Searching reads further back than the screen does.
+    LaunchedEffect(searching) { if (searching && window < 5000) window = 5000 }
+    val matches = remember(rows, query) {
+        val q = fold(query.trim())
+        if (q.isEmpty()) emptyList() else rows.indices.filter { i -> (rows[i] as? Row.Bubble)?.message?.body?.let { fold(it).contains(q) } == true }.reversed()
+    }
+    LaunchedEffect(matches) { at = 0 }
+    LaunchedEffect(at, matches) {
+        val row = matches.getOrNull(at) ?: return@LaunchedEffect
+        val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
+        runCatching { listState.animateScrollToItem(before + rows.size - 1 - row) }
+    }
+    if (toolsOpen) PaletteMenu(
+        toolsBounds,
+        listOfNotNull(
+            calls.encrypted?.let { MessageAction(AppIcons.Lock, "Encrypted call") { it() } },
+            calls.video?.let { MessageAction(AppIcons.Videocam, "Video call") { it() } },
+            MessageAction(AppIcons.Search, "Search") { searching = true },
+            MessageAction(AppIcons.Collections, "Shared") { sharedOpen = true },
+            if (thread != null) MessageAction(if (silencedUntil != null) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silencedUntil != null) "Silenced" else "Silence") { silenceOpen = true } else null,
+            if (thread != null) MessageAction(AppIcons.Schedule, "Remind me") { remindOpen = true } else null
+        ),
+        onDismiss = { toolsOpen = false }
+    )
+    if (silenceOpen && thread != null) SilenceDialog(silencedUntil, onPick = { until ->
+        val t = thread ?: return@SilenceDialog
+        store.update { s -> s.copy(silenced = if (until == null) s.silenced - t else s.silenced.filterValues { it > System.currentTimeMillis() } + (t to until)) }
+        if (until != null) com.sms.app.core.sms.MessageNotifier(context).cancel(t)
+    }) { silenceOpen = false }
+    if (remindOpen && thread != null) com.sms.app.feature.conversations.TimeChoice(
+        "Remind me to reply",
+        explain = "The conversation leaves the list and comes back on top, with a notification, at the time you choose.",
+        onPick = { time ->
+            thread?.let { t -> com.sms.app.core.sms.Timed.later(context, store, t, time) }
+            remindOpen = false
+        },
+        onDismiss = { remindOpen = false }
+    )
+    if (encryptionOpen) EncryptionDialog(to) { encryptionOpen = false }
+    if (sharedOpen) {
+        // Everything the conversation holds, not only what the screen shows.
+        LaunchedEffect(Unit) { if (window < 5000) window = 5000 }
+        SharedPage(if (group) title else entry?.name ?: Numbers.format(context, to), list, stranger = { m -> index.find(T9.clean(m.address)) == null }) { sharedOpen = false }
+    }
     FloatingFrame(
         bottom = composerHeight + 8.dp,
         top = {
-            FloatingTop(
-                title = null,
-                leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) },
-                trailing = { if (canCall) CallButton(to, linked != null) },
-                center = {
-                    PersonPill(title, to, entry?.contactId, group, vanish = if (encrypted) vanish else null, onName = { name ->
-                        val t = thread ?: return@PersonPill
-                        store.update { s -> s.copy(groupNames = if (name.isBlank()) s.groupNames - t else s.groupNames + (t to name.trim())) }
-                        if (encrypted && name.isNotBlank()) scope.launch { chat.nameGroup(people, name.trim()) }
-                    }) { seconds ->
+            // Back, the person's face and name, and the calls one tap away on the right.
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FloatingAction(AppIcons.ArrowBack, "Back", onBack)
+                Spacer(Modifier.width(8.dp))
+                Box(Modifier.onGloballyPositioned { toolsBounds = it.boundsInWindow() }) { ToolsButton { toolsOpen = true } }
+                Box(Modifier.weight(1f).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+                    PersonPill(
+                        title, to, entry?.contactId, group, vanish = if (encrypted) vanish else null,
+                        under = if (encrypted) (if (vanish > 0) "Encrypted · vanish after ${vanishLabel(vanish)}" else "Encrypted chat") else null,
+                        face = if (group) null else (entry?.name ?: title) to entry?.photo,
+                        onUnder = if (encrypted && !group) ({ encryptionOpen = true }) else null,
+                        onName = { name ->
+                            val t = thread ?: return@PersonPill
+                            store.update { s -> s.copy(groupNames = if (name.isBlank()) s.groupNames - t else s.groupNames + (t to name.trim())) }
+                            if (encrypted && name.isNotBlank()) scope.launch { chat.nameGroup(people, name.trim()) }
+                        }
+                    ) { seconds ->
                         scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds }
                     }
                 }
-            )
-            androidx.compose.animation.AnimatedVisibility(visible = encrypted, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                FloatingPane(shape = CircleShape) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (vanish > 0) "Encrypted chat · vanish after ${vanishLabel(vanish)}" else "Encrypted chat", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
+                CallButtons(calls)
             }
+            androidx.compose.animation.AnimatedVisibility(visible = searching) {
+                SearchBar(query, { query = it }, matches.size, at, onOlder = { if (matches.isNotEmpty()) at = (at + 1) % matches.size }, onNewer = { if (matches.isNotEmpty()) at = (at - 1 + matches.size) % matches.size }, onClose = {
+                    searching = false
+                    query = ""
+                })
+            }
+          }
         },
         overlay = {
+          // Short answers to the last message, from the phone's own engine, over the field.
+          val newest = list.maxByOrNull { it.date }
+          var usedFor by remember { mutableStateOf<String?>(null) }
+          val service = to.any(Char::isLetter) || to.count(Char::isDigit) in 1..6
+          val replies by androidx.compose.runtime.produceState(emptyList<String>(), newest?.uid) {
+              value = if (newest == null || newest.box != MessageBox.RECEIVED || service) emptyList()
+              else withContext(Dispatchers.Default) { com.sms.app.core.sms.Replies.suggest(context, list.sortedBy { it.date }) }
+          }
+          Column(
+              horizontalAlignment = Alignment.CenterHorizontally,
+              modifier = Modifier
+                  .align(Alignment.BottomCenter)
+                  .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                  .padding(horizontal = LocalReadableInset.current)
+                  .onSizeChanged { composerHeight = with(density) { it.height.toDp() } }
+          ) {
+            ReplyChips(if (usedFor == newest?.uid) emptyList() else replies) { reply ->
+                haptics.tick()
+                usedFor = newest?.uid
+                restore = reply
+            }
             Composer(
                 initial = draft,
                 quote = quote,
                 onClearQuote = { quote = null },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
-                    .padding(horizontal = LocalReadableInset.current)
-                    .onSizeChanged { composerHeight = with(density) { it.height.toDp() } },
+                modifier = Modifier,
                 restore = restore,
                 onRestored = { restore = null },
                 onSchedule = { text, sub -> scheduling = text to sub },
@@ -307,13 +390,12 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     true
                 }
             )
+          }
         }
     ) { padding ->
         val inset = LocalReadableInset.current
-        val rows = remember(list) { rowsOf(list) }
         // The person's light behind the conversation: their photo, blurred, or a glow of the accent.
         HeroGlow(if (group) null else entry?.photo, height = padding.calculateTopPadding() + 320.dp)
-        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         // Near the oldest message shown, with more behind it: read the next page.
         val nearTop by remember { derivedStateOf { (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= listState.layoutInfo.totalItemsCount - 15 } }
         LaunchedEffect(nearTop, list.size) { if (nearTop && list.size >= window) window += Messages.PAGE }
@@ -385,7 +467,8 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                         onDeleteForAll = { id -> scope.launch { if (!chat.deleteForAll(id)) haptics.reject() } },
                         onPin = { id, on -> scope.launch { chat.pin(id, on) } },
                         chatId = chat.chatIdOf(row.message.mms, row.message.id).also { refs.size },
-                        stranger = row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null
+                        stranger = row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
+                        highlight = if (searching) query.trim().takeIf { it.isNotEmpty() } else null
                     ) }
                 }
             }
@@ -416,14 +499,12 @@ private fun rowsOf(list: List<Message>): List<Row> {
 }
 
 /**
- * Call at the top: with the encrypted chat, a palette of an encrypted
- * call, a video call or a phone call; without it, the phone call.
+ * The ways to call this person: the phone call (Dialer), and with the
+ * encrypted chat an encrypted call, or held, an encrypted video call.
  */
 @Composable
-private fun CallButton(phone: String, encrypted: Boolean) {
+private fun rememberCallChoices(phone: String, encrypted: Boolean, canCall: Boolean): CallChoices {
     val context = LocalContext.current
-    var open by remember { mutableStateOf(false) }
-    var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     // Dialer shows the encrypted calls: only offered when it is the phone app.
     val line = encrypted && remember { com.sms.app.core.call.CallLine.dialerShowsCalls(context) }
     fun encryptedCall(video: Boolean) {
@@ -441,23 +522,17 @@ private fun CallButton(phone: String, encrypted: Boolean) {
             .filter { androidx.core.content.ContextCompat.checkSelfPermission(context, it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
         if (needed.isEmpty()) encryptedCall(video) else askMedia.launch(needed.toTypedArray())
     }
-    Box(Modifier.onGloballyPositioned { bounds = it.boundsInWindow() }) {
-        FloatingAction(AppIcons.Call, "Call", { if (line) open = true else NumberActions.dial(context, phone) })
-    }
-    if (open) PaletteMenu(
-        bounds,
-        listOf(
-            MessageAction(AppIcons.Lock, "Encrypted call") { call(video = false) },
-            MessageAction(AppIcons.Videocam, "Video call") { call(video = true) },
-            MessageAction(AppIcons.Call, "Phone call") { NumberActions.dial(context, phone) }
-        ),
-        onDismiss = { open = false }
+    if (!canCall) return CallChoices(null, null, null)
+    return CallChoices(
+        phone = { NumberActions.dial(context, phone) },
+        encrypted = if (line) ({ call(video = false) }) else null,
+        video = if (line) ({ call(video = true) }) else null
     )
 }
 
 /** The name at the top: a tap offers the calls with them, their contact, blocking. */
 @Composable
-private fun PersonPill(title: String, address: String, contactId: Long?, group: Boolean, vanish: Int?, onName: (String) -> Unit = {}, onVanish: (Int) -> Unit) {
+private fun PersonPill(title: String, address: String, contactId: Long?, group: Boolean, vanish: Int?, under: String? = null, face: Pair<String?, String?>? = null, onUnder: (() -> Unit)? = null, onName: (String) -> Unit = {}, onVanish: (Int) -> Unit) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var menuOpen by remember { mutableStateOf(false) }
@@ -478,7 +553,19 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
             haptics.firm()
             menuOpen = true
         }) {
-            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
+          Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = if (face != null) 5.dp else 0.dp)) {
+            face?.let { (name, photo) -> com.sms.app.ui.component.ContactAvatar(name, photo, 34.dp) }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(start = if (face != null) 10.dp else 18.dp, end = 18.dp, top = if (under != null) 6.dp else 10.dp, bottom = if (under != null) 6.dp else 10.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                under?.let {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = if (onUnder != null) Modifier.clickable(onClickLabel = "Encryption", onClick = onUnder) else Modifier) {
+                        Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(11.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    }
+                }
+            }
+          }
         }
         val digits = !group && address.count(Char::isDigit) >= 3
         if (menuOpen) PaletteMenu(
@@ -541,7 +628,8 @@ private fun Bubble(
     onDeleteForAll: (Int) -> Unit,
     onPin: (Int, Boolean) -> Unit,
     chatId: Int?,
-    stranger: Boolean = false
+    stranger: Boolean = false,
+    highlight: String? = null
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -592,11 +680,12 @@ private fun Bubble(
     }
     var risky by remember { mutableStateOf<Pair<String, com.sms.app.core.link.LinkCheck.Verdict>?>(null) }
     risky?.let { (url, verdict) -> RiskyLinkDialog(url, verdict, onDismiss = { risky = null }) }
-    val text = remember(m.body, accent, checks) {
-        linked(m.body, accent, danger, checks) { url, verdict ->
+    val found = MaterialTheme.colorScheme.tertiary
+    val text = remember(m.body, accent, checks, highlight) {
+        marked(linked(m.body, accent, danger, checks) { url, verdict ->
             haptics.reject()
             risky = url to verdict
-        }
+        }, highlight, found)
     }
     // A message that just came in drops into place, a ring of glass spreading from it.
     val drop = remember { Animatable(if (fresh) 0f else 1f) }
@@ -927,15 +1016,36 @@ private fun VanishDialog(current: Int, onPick: (Int) -> Unit, onDismiss: () -> U
     )
 }
 
-private fun copy(context: android.content.Context, label: String, text: String, sensitive: Boolean = false) {
+internal fun copy(context: android.content.Context, label: String, text: String, sensitive: Boolean = false) {
     val clip = ClipData.newPlainText(label, text)
     // A code stays out of the clipboard's preview and history where Android offers it.
     if (sensitive) clip.description.extras = android.os.PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
     context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
 }
 
+/** Text folded for a search: lower case, without accents. */
+private fun fold(text: String): String =
+    java.text.Normalizer.normalize(text.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
+
+/** [text] with every place [words] are found lit in [color], accents and case aside. */
+private fun marked(text: AnnotatedString, words: String?, color: androidx.compose.ui.graphics.Color): AnnotatedString {
+    if (words.isNullOrBlank()) return text
+    val folded = fold(text.text)
+    val q = fold(words)
+    // Folding keeps one character for each: positions in the folded text are those of the text.
+    if (folded.length != text.text.length) return text
+    return buildAnnotatedString {
+        append(text)
+        var from = folded.indexOf(q)
+        while (from >= 0 && q.isNotEmpty()) {
+            addStyle(SpanStyle(background = color.copy(alpha = 0.35f)), from, from + q.length)
+            from = folded.indexOf(q, from + q.length)
+        }
+    }
+}
+
 /** The web links of [body], as they will open: with a scheme, http(s) only. */
-private fun links(body: String): List<String> {
+internal fun links(body: String): List<String> {
     val matcher = android.util.Patterns.WEB_URL.matcher(body)
     val found = mutableListOf<String>()
     while (matcher.find()) linkOf(matcher.group())?.let { found += it }
@@ -1044,14 +1154,14 @@ private fun SuspiciousCapsule(several: Boolean, dangerous: Boolean, onClick: () 
 
 /** The tone of a link that was not recognized: a warm red, a caution rather than an alarm. */
 @Composable
-private fun cautionColor(): Color = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.error, Color(0xFFE8890C), 0.4f)
+internal fun cautionColor(): Color = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.error, Color(0xFFE8890C), 0.4f)
 
 /**
  * A link not recognized, tapped: where it goes, and to open it only when
  * the sender is trusted; Cancel first, opening it is a choice made on purpose.
  */
 @Composable
-private fun RiskyLinkDialog(url: String, verdict: com.sms.app.core.link.LinkCheck.Verdict, onDismiss: () -> Unit) {
+internal fun RiskyLinkDialog(url: String, verdict: com.sms.app.core.link.LinkCheck.Verdict, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val host = remember(url) { runCatching { java.net.URI(url).host }.getOrNull() ?: url }
     val listed = verdict.risk == com.sms.app.core.link.LinkCheck.Risk.LISTED
@@ -1157,4 +1267,45 @@ private fun SignatureDialog(address: String, onDismiss: () -> Unit) {
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
     )
+}
+
+/**
+ * Short answers offered over the field, side by side and onto a second
+ * line when they need it, each popping in a moment after the one before;
+ * a tap puts it in the field, sending stays the user's.
+ */
+@Composable
+private fun ReplyChips(replies: List<String>, onPick: (String) -> Unit) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = replies.isNotEmpty(),
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(expandFrom = Alignment.Bottom),
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically(shrinkTowards = Alignment.Bottom)
+    ) {
+        var shown by remember { mutableStateOf(replies) }
+        if (replies.isNotEmpty()) shown = replies
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
+        ) {
+            shown.forEachIndexed { i, reply ->
+                val pop = remember(reply) { Animatable(0f) }
+                LaunchedEffect(reply) {
+                    kotlinx.coroutines.delay(70L * i)
+                    pop.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 500f))
+                }
+                FloatingPane(
+                    shape = CircleShape,
+                    onClick = { onPick(reply) },
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = 0.7f + 0.3f * pop.value
+                        scaleY = 0.7f + 0.3f * pop.value
+                        alpha = pop.value.coerceIn(0f, 1f)
+                    }
+                ) {
+                    Text(reply, style = MaterialTheme.typography.labelLarge, maxLines = 1, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+                }
+            }
+        }
+    }
 }

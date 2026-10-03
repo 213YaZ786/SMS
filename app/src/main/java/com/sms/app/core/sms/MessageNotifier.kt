@@ -37,7 +37,7 @@ class MessageNotifier(private val context: Context) {
     /** The unread messages of [threadId], or nothing when all were read. */
     fun show(threadId: Long) {
         val unread = unread(threadId)
-        if (unread.isEmpty()) {
+        if (unread.isEmpty() || silenced(threadId)) {
             cancel(threadId)
             return
         }
@@ -118,6 +118,11 @@ class MessageNotifier(private val context: Context) {
 
     fun cancel(threadId: Long) = notifications.cancel(threadId.toInt())
 
+    /** The user silenced this conversation for now. */
+    private fun silenced(threadId: Long): Boolean = runCatching {
+        (org.koin.core.context.GlobalContext.get().get<com.sms.app.data.settings.SettingsStore>().current.silenced[threadId] ?: 0L) > System.currentTimeMillis()
+    }.getOrDefault(false)
+
     /** A conversation set aside comes back: shown again, unread or not. */
     fun reminder(threadId: Long) {
         if (unread(threadId).isNotEmpty()) {
@@ -145,6 +150,7 @@ class MessageNotifier(private val context: Context) {
     /** A message that came over the rich chat, shown in its number's conversation. */
     fun showRich(phone: String, text: String) {
         val thread = runCatching { Telephony.Threads.getOrCreateThreadId(context, phone) }.getOrNull() ?: return
+        if (silenced(thread)) return
         val name = ContactLookup.nameOf(context, phone) ?: Numbers.format(context, phone)
         val sender = Person.Builder().setName(name).setKey(phone).build()
         val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())

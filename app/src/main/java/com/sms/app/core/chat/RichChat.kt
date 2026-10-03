@@ -330,6 +330,18 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     /** The proven chat of [phone], or null: then SMS. */
     fun linkFor(phone: String): ChatLink? = _links.value[key(phone)]?.takeIf { it.proven && it.chatId > 0 }
 
+    /**
+     * How the chat with [phone] is protected, as the engine tells it: both
+     * keys' fingerprints, to compare on the two phones, and the relays.
+     */
+    suspend fun encryptionInfo(phone: String): EncryptionInfo? {
+        val link = linkFor(phone) ?: return null
+        return runCatching {
+            val contact = engine.call("get_chat_contacts", account, link.chatId).jsonArray.map { it.jsonPrimitive.int }.first { it != SELF }
+            EncryptionInfo.parse(engine.call("get_contact_encryption_info", account, contact).jsonPrimitive.content)
+        }.getOrNull()
+    }
+
     /** Every member proven: the group goes over the encrypted chat. */
     fun groupReady(phones: List<String>): Boolean = phones.size > 1 && phones.all { linkFor(it) != null }
 
@@ -763,3 +775,30 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 }
 
 private fun kotlinx.serialization.json.JsonPrimitive.boolean(): Boolean = booleanOrNull ?: false
+
+/** What the engine says of a chat's encryption, without its random addresses. */
+data class EncryptionInfo(val encrypted: Boolean, val mine: String?, val theirs: String?, val relays: List<String>) {
+    companion object {
+        fun parse(text: String): EncryptionInfo {
+            val lines = text.lines().map { it.trim() }
+            val fingerprints = mutableListOf<Pair<Boolean, String>>()
+            var i = 0
+            while (i < lines.size) {
+                val line = lines[i]
+                if (line.removeSuffix(":").endsWith(")") && line.contains("(") && i + 1 < lines.size && lines[i + 1].matches(Regex("[0-9A-F ]{4,}"))) {
+                    val print = lines.drop(i + 1).takeWhile { it.matches(Regex("[0-9A-F ]{4,}")) }.joinToString(" ")
+                    fingerprints += line.startsWith("Me ") to print
+                }
+                i++
+            }
+            val relays = lines.dropWhile { it != "Relays:" }.drop(1).takeWhile { it.isNotEmpty() }
+                .map { it.substringAfter('@') }.distinct()
+            return EncryptionInfo(
+                encrypted = text.contains("end-to-end encrypted", ignoreCase = true),
+                mine = fingerprints.firstOrNull { it.first }?.second,
+                theirs = fingerprints.firstOrNull { !it.first }?.second,
+                relays = relays
+            )
+        }
+    }
+}

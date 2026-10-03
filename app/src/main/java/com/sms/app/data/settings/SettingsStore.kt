@@ -59,7 +59,9 @@ data class Settings(
     /** Names given to group conversations, by thread id. */
     val groupNames: Map<Long, String> = emptyMap(),
     /** Links are also looked up in a public list of dangerous sites, fetched once a day. */
-    val checkLinks: Boolean = true
+    val checkLinks: Boolean = true,
+    /** Conversations without notifications, by thread id, until when (Long.MAX_VALUE: until turned back on). */
+    val silenced: Map<Long, Long> = emptyMap()
 )
 
 /**
