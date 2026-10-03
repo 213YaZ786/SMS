@@ -24,8 +24,8 @@ android {
         applicationId = "com.sms.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 18
-        versionName = "0.10.3"
+        versionCode = 19
+        versionName = "0.10.4"
         // The package SMS moves to, handed its files over (core/handover).
         manifestPlaceholders["successor"] = "com.yaz.sms"
         // Voice messages written out on the phone: whisper.cpp, for 64-bit ARM phones.
