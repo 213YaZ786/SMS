@@ -109,6 +109,15 @@ private fun SmsNavHost(navController: NavHostController) {
         }
     }
 
+    // A chat invite from outside: the question, then the new conversation.
+    val invite by requests.invite.collectAsState()
+    invite?.let { link ->
+        com.yaz.sms.feature.compose.JoinQuestion(link, onDismiss = { requests.invite.value = null }) { address ->
+            requests.invite.value = null
+            requests.open(com.yaz.sms.core.sms.OpenRequest(null, address, null))
+        }
+    }
+
     NavHost(
         navController = navController,
         startDestination = Routes.MAIN,

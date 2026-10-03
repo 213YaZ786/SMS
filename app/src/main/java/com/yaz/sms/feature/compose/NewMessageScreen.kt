@@ -78,6 +78,13 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
     val found = remember(people, query) { People.search(people, query) }
     val typed = query.filter { it.isDigit() || it == '+' }.takeIf { it.count(Char::isDigit) >= 3 && query.none(Char::isLetter) }
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp
+    val chat: com.yaz.sms.core.chat.RichChat = koinInject()
+    val chatOn = chat.enabled
+    var inviting by remember { mutableStateOf(false) }
+    if (inviting) InviteDialog(onDismiss = { inviting = false }) { address ->
+        inviting = false
+        onPick(address)
+    }
 
     FloatingFrame(
         bottom = bottom,
@@ -117,6 +124,10 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Someone with no number: an encrypted chat started by a code or a link.
+            if (!group && query.isBlank() && chatOn) item(key = "nonumber") {
+                Line(null, null, null, "Someone without a number", "By a code or a link, encrypted", false) { inviting = true }
+            }
             if (typed != null) {
                 item(key = "typed") { Line(null, null, null, if (group) "Add $typed" else "Send to $typed", null, false) { pick(typed) } }
             }

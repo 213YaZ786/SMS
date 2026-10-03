@@ -47,6 +47,8 @@ object Lists {
     fun isService(c: Conversation): Boolean {
         if (c.group) return false
         val address = c.address.trim()
+        // A person met without a number, by their chat address: a person, not a service.
+        if ('@' in address) return false
         if (address.any(Char::isLetter)) return true
         val digits = address.count(Char::isDigit)
         return digits in 3..6

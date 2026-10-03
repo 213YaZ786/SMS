@@ -40,7 +40,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
-/** A phone number known to have SMS too, and its encrypted chat. */
+/**
+ * A phone number known to have SMS too, and its encrypted chat; or a person
+ * with no number, met by an invite link or code: then [phone] is their chat
+ * address, which is also the address of their conversation.
+ */
 @Serializable
 data class ChatLink(
     val phone: String,
@@ -51,7 +55,9 @@ data class ChatLink(
     /** The chat proved to be the person holding the number. */
     val proven: Boolean = false,
     /** When the invite was last sent, not to ask again and again. */
-    val askedAt: Long = 0
+    val askedAt: Long = 0,
+    /** For a person met without a number (an invite link or code): the name they go by. */
+    val name: String = ""
 )
 
 /** A person's card as the chat brought it: their chosen name, their photo's file, their status. */
@@ -122,6 +128,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private val proofs = java.util.concurrent.ConcurrentHashMap<Int, ByteArray>()
     /** Invites received in person, by the chat they open: the number they bind once the keys are exchanged. */
     private val inPerson = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    // Chats joined by an invite link or code, with no number: chat id to when.
+    private val noNumber = java.util.concurrent.ConcurrentHashMap<Int, Long>()
 
     private val _links = MutableStateFlow(load())
     val links: StateFlow<Map<String, ChatLink>> = _links.asStateFlow()
@@ -404,6 +412,25 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
      * A group someone else made: known when each of its other members is a
      * proven number, so its messages join that group's conversation.
      */
+    /**
+     * A chat of one person whose keys were just checked by an invite (theirs
+     * joined by us, or ours joined by them), with no number bound: kept under
+     * their chat address with the name they chose. Called only at the end of
+     * such a handshake, never for someone merely writing. Their address.
+     */
+    private suspend fun bindNoNumber(chat: Int, contactId: Int?): String? = runCatching {
+        val id = contactId ?: engine.call("get_chat_contacts", account, chat).jsonArray.map { it.jsonPrimitive.int }.single { it != SELF }
+        val contact = engine.call("get_contact", account, id).jsonObject
+        val address = contact["address"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
+        val name = contact["displayName"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() && it != address }.orEmpty()
+        // Kept under the address the conversation was opened with (a person with
+        // several relays has several addresses): one conversation per person.
+        val kept = _links.value.values.firstOrNull { '@' in it.phone && it.chatId == chat }?.phone ?: address
+        _links.value.values.filter { '@' in it.phone && it.chatId == chat && it.phone != kept }.forEach { drop(it.phone) }
+        save(kept) { (it ?: ChatLink(kept)).copy(address = address, chatId = chat, proven = true, myNonce = "", name = name.ifBlank { it?.name.orEmpty() }) }
+        kept
+    }.getOrNull()
+
     private suspend fun adopt(chat: Int): ChatGroup? = runCatching {
         val contacts = engine.call("get_chat_contacts", account, chat).jsonArray.map { it.jsonPrimitive.int }.filter { it != SELF }
         val phones = contacts.map { id ->
@@ -459,6 +486,27 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     }
 
     /**
+     * An invite link or code from someone, with no number involved: joined,
+     * and once the keys are exchanged (and checked: the link carries the
+     * key's fingerprint) the person has a conversation of their own, under
+     * their chat address. Their address, or null when it cannot be joined.
+     */
+    suspend fun joinByLink(link: String): String? {
+        if (!enabled) return null
+        // Rebuilt from its checked parts: nothing else in the link reaches the engine.
+        val hello = Hello.fromLink(link.trim(), ByteArray(Hello.NONCE_BYTES)) ?: return null
+        if (!start()) return null
+        val chat = runCatching { engine.call("secure_join", account, hello.link()).jsonPrimitive.int }.getOrNull() ?: return null
+        noNumber[chat] = System.currentTimeMillis()
+        // A conversation at once, so the user can write while the keys are exchanged.
+        save(hello.address) { (it ?: ChatLink(hello.address)).copy(address = hello.address, chatId = chat, proven = it?.proven == true) }
+        return hello.address
+    }
+
+    /** The name a person without a number goes by, or null. */
+    fun nameFor(address: String): String? = if ('@' !in address) null else _links.value[key(address)]?.name?.takeIf { it.isNotBlank() }
+
+    /**
      * An invite received in person: the phones touched and the user saved the
      * card in the Contacts app. Joined, and [phone] bound to that chat once the
      * keys are exchanged, proven as by an SMS. A number proven to someone else
@@ -487,6 +535,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                     val chat = runCatching { engine.call("get_chat_id_by_contact_id", account, contact).jsonPrimitive.intOrNull }.getOrNull()
                     val nonce = chat?.let { proofs.remove(it) }
                     if (nonce != null) runCatching { engine.call("misc_send_text_message", account, chat, Hello.proofText(nonce)) }
+                    // Joined by a link with no number: the keys are checked, the chat theirs.
+                    if (progress >= 1000 && chat != null && noNumber.remove(chat) != null) bindNoNumber(chat, contact)
                     // Met in person: the number is theirs, and the Contacts app may say so.
                     val phone = if (progress >= 1000) chat?.let { inPerson.remove(it) } else null
                     if (phone != null && chat != null) {
@@ -495,6 +545,20 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                             save(phone) { (it ?: ChatLink(phone)).copy(address = address, chatId = chat, proven = true, myNonce = "") }
                             withContext(Dispatchers.IO) { ContactsCards.verified(context, phone, true) }
                         }
+                    }
+                }
+            }
+            // Someone joined our invite (our code or link, no number): the keys are checked.
+            "SecurejoinInviterProgress" -> {
+                val progress = event.data["progress"]?.jsonPrimitive?.intOrNull ?: 0
+                val contact = event.data["contactId"]?.jsonPrimitive?.intOrNull
+                if (progress >= 1000 && contact != null) {
+                    val chat = runCatching { engine.call("get_chat_id_by_contact_id", account, contact).jsonPrimitive.intOrNull }.getOrNull()
+                    // Not when a number's proof by SMS is under way for this chat: that one binds the number.
+                    // A number's proof follows its join within seconds: kept by address only if none came.
+                    if (chat != null) scope.launch {
+                        kotlinx.coroutines.delay(15_000)
+                        if (_links.value.values.none { it.chatId == chat && it.proven }) { bindNoNumber(chat, contact); _changes.value++ }
                     }
                 }
             }
@@ -569,8 +633,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         if (message["isInfo"]?.jsonPrimitive?.booleanOrNull == true) return
         val file = message["file"]?.jsonPrimitive?.contentOrNull
         val mime = message["fileMime"]?.jsonPrimitive?.contentOrNull ?: "application/octet-stream"
-        val link = _links.value.values.firstOrNull { it.proven && it.chatId == chat }
-        val stored = if (link != null) withContext(Dispatchers.IO) {
+        // A number bound to the chat wins over the same person kept by their address.
+        val link = _links.value.values.filter { it.proven && it.chatId == chat }.minByOrNull { if ('@' in it.phone) 1 else 0 }
+        val stored = (if (link != null) withContext(Dispatchers.IO) {
             if (file != null) {
                 val data = File(file).takeIf { it.canRead() } ?: return@withContext null
                 MmsStore.saveReceivedParts(context, link.phone, text, mime, data)?.let { RichRef(true, it.second, chat = chat) to it.first }
@@ -587,7 +652,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                 val data = file?.let { File(it).takeIf { f -> f.canRead() } }
                 MmsStore.saveReceivedParts(context, sender, text, if (data != null) mime else null, data, others)?.let { RichRef(true, it.second, chat = chat) to it.first }
             }
-        } ?: return
+        }) ?: return
         saveRef(msgId, stored.first)
         // Kept in Android's store now, the media need not stay twice on the phone.
         if (file != null) runCatching { File(file).delete() }
@@ -807,7 +872,16 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     private fun save(phone: String, change: (ChatLink?) -> ChatLink) {
         val k = key(phone)
-        val updated = _links.value + (k to change(_links.value[k]).copy(phone = phone))
+        val link = change(_links.value[k]).copy(phone = phone)
+        // A number proven for a chat takes the place of the same person kept without one.
+        val others = if ('@' !in phone && link.proven) _links.value.filterValues { '@' !in it.phone || it.chatId != link.chatId } else _links.value
+        val updated = others + (k to link)
+        _links.value = updated
+        runCatching { file.writeTextAtomically(json.encodeToString(updated)) }
+    }
+
+    private fun drop(phone: String) {
+        val updated = _links.value - key(phone)
         _links.value = updated
         runCatching { file.writeTextAtomically(json.encodeToString(updated)) }
     }
@@ -843,7 +917,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private fun load(): Map<String, ChatLink> =
         runCatching { json.decodeFromString<Map<String, ChatLink>>(file.readText()) }.getOrDefault(emptyMap())
 
-    private fun key(phone: String) = T9.clean(phone).removePrefix("+").takeLast(9)
+    /** A number by its last nine digits; a person without a number by their chat address. */
+    private fun key(phone: String) = if ('@' in phone) phone.trim().lowercase() else T9.clean(phone).removePrefix("+").takeLast(9)
 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 

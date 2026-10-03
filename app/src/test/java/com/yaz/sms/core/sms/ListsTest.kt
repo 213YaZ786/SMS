@@ -42,6 +42,7 @@ class ListsTest {
         assertEquals(true, Lists.isService(c(1, 1, address = "AMAZON")))
         assertEquals(true, Lists.isService(c(2, 1, address = "38015")))
         assertEquals(false, Lists.isService(c(3, 1, address = "+33612345678")))
+        assertEquals(false, Lists.isService(c(4, 1, address = "abc123@relay.example")))
     }
 
     @Test

@@ -74,6 +74,11 @@ class MainActivity : ComponentActivity() {
                     requests.open(OpenRequest(null, to.joinToString(","), null))
                 }
             }
+            // A chat invite (its code read by the camera, or the link tapped): the user is asked first.
+            Intent.ACTION_VIEW -> {
+                val link = intent.dataString.orEmpty()
+                if (com.yaz.sms.feature.compose.looksLikeInvite(link)) requests.invite.value = link
+            }
             Intent.ACTION_SENDTO, Intent.ACTION_SEND -> {
                 val to = OpenRequests.addressesOf(intent.data?.schemeSpecificPart)
                 val text = OpenRequests.textOf(intent.getStringExtra("sms_body") ?: intent.getCharSequenceExtra(Intent.EXTRA_TEXT))

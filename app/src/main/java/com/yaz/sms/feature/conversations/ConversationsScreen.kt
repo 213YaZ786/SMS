@@ -115,6 +115,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
 
     fun nameOf(c: Conversation): String? =
         if (c.group) settings.groupNames[c.threadId] ?: c.addresses.joinToString(", ") { a -> index.find(T9.clean(a))?.name?.substringBefore(' ') ?: Numbers.format(context, a) }
+        // Someone with no number goes by the name they chose in the chat.
+        else if ('@' in c.address) chat.nameFor(c.address) ?: c.address.substringBefore('@')
         else index.find(T9.clean(c.address))?.name
     // Deleted by a swipe, waiting its few seconds to be taken back.
     var deleting by remember { mutableStateOf<Conversation?>(null) }

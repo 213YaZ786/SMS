@@ -97,6 +97,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <!-- A chat invite link (also what the camera reads from a code): asked first, never joined unasked. -->
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="i.delta.chat" />
+            </intent-filter>
             <!-- Writing to someone, asked by another app: it only fills the
                  message, the user sends. Android requires these of an SMS app. -->
             <!-- The Contacts app's "verified" mark: a number's conversation, on its keys. Shows only. -->

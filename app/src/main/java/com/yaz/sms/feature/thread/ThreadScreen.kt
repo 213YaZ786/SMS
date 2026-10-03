@@ -216,6 +216,7 @@ private fun ThreadContent(
     val entry = remember(index, to) { index.find(T9.clean(to)) }
     val prefs by koinInject<SettingsStore>().settings.collectAsState()
     val title = if (group) thread?.let { prefs.groupNames[it] } ?: people.joinToString(", ") { index.find(T9.clean(it))?.name?.substringBefore(' ') ?: Numbers.format(context, it) }
+    else if ('@' in to) chat.nameFor(to) ?: to.substringBefore('@')
     else entry?.name ?: Numbers.format(context, to)
     val canCall = !group && to.count(Char::isDigit) >= 3
     // With one number: the rich chat when it has SMS too, else SMS.
@@ -277,6 +278,14 @@ private fun ThreadContent(
             // else a group or a picture as a picture message, the rest as SMS.
             // The effect travels over the encrypted chat; an SMS stays plain (and cheap).
             if (encrypted && chat.send(people, p.effect?.let { com.yaz.sms.core.sms.Effects.mark(p.text, it) } ?: p.text, attachments, p.quoted)) return@launch
+            // Someone with no number has the chat only: never an SMS to an address.
+            if (people.any { '@' in it }) {
+                withContext(Dispatchers.Main) {
+                    restore = p.text
+                    android.widget.Toast.makeText(context, "Not sent yet: the keys are still being exchanged. Try again in a moment.", android.widget.Toast.LENGTH_LONG).show()
+                }
+                return@launch
+            }
             val text = p.quoted?.let { "«${excerpt(it)}»\n${p.text}" } ?: p.text
             if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, p.sub)
             else SmsSender.send(context, to, text, p.sub)
