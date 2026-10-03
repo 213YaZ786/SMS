@@ -3,8 +3,6 @@ package com.yaz.sms.feature.thread
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
@@ -19,18 +17,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntRect
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.window.PopupProperties
 import com.yaz.sms.ui.component.FloatingPane
 import com.yaz.sms.ui.component.rememberHaptics
 import com.yaz.sms.ui.icon.AppIcons
@@ -50,10 +40,9 @@ enum class Drop(val icon: ImageVector, val label: String) {
 private val ButtonSize = 52.dp
 
 /**
- * The + of the composer: a tap opens, above the message bar, rows of large
- * tiles (photos, camera, file, contact, place, poll), each its icon and its
- * name; a tap on one picks it. [open] tells the composer to veil its field
- * while the panel is out.
+ * The + of the composer: a tap shows, above it, what can go with a message
+ * ([AttachTiles], drawn by the composer); a tap again puts them away.
+ * [open] tells the composer to veil its field while they are out.
  */
 @Composable
 fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop.entries.filter { it != Drop.POLL }, onPick: (Drop) -> Unit) {
@@ -80,45 +69,28 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop
                 )
             }
         }
-        if (open) {
-            val lift = with(density) { (ButtonSize + 12.dp).roundToPx() }
-            val margin = with(density) { 12.dp.roundToPx() }
-            Popup(
-                popupPositionProvider = remember(lift, margin) { AbovePlace(lift, margin) },
-                onDismissRequest = { onOpen(false) },
-                properties = PopupProperties(focusable = false, dismissOnClickOutside = true)
-            ) {
-                // Rows of tiles, three to a row: an icon and its name, large enough to hit.
-                val appear = remember { Animatable(0f) }
-                LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.7f, stiffness = 500f)) }
-                androidx.compose.material3.Surface(
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shadowElevation = 8.dp,
-                    modifier = Modifier.widthIn(max = 420.dp).graphicsLayer {
-                        val k = appear.value
-                        alpha = k.coerceIn(0f, 1f)
-                        translationY = (1f - k) * 40f
-                        scaleX = 0.92f + 0.08f * k
-                        scaleY = 0.92f + 0.08f * k
-                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
-                    }
-                ) {
-                    androidx.compose.foundation.layout.Column(
-                        Modifier.padding(10.dp),
-                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)
-                    ) {
-                        drops.chunked(3).forEachIndexed { row, line ->
-                            androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
-                                line.forEachIndexed { col, drop ->
-                                    Tile(drop, order = row * 3 + col) {
-                                        haptics.firm()
-                                        onOpen(false)
-                                        onPick(drop)
-                                    }
-                                }
-                            }
-                        }
+    }
+}
+
+/**
+ * What the + offers, over the conversation: standalone round buttons of
+ * glass, each with its name under it, in rows above the +, popping in one
+ * after the other. Drawn in the composer (not a popup) so the glass bends
+ * what lies under it.
+ */
+@Composable
+fun AttachTiles(drops: List<Drop>, onPick: (Drop) -> Unit) {
+    val haptics = rememberHaptics()
+    androidx.compose.foundation.layout.Column(
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
+        modifier = Modifier.padding(bottom = 10.dp)
+    ) {
+        drops.chunked(4).forEachIndexed { row, line ->
+            androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp)) {
+                line.forEachIndexed { col, drop ->
+                    Tile(drop, order = row * 4 + col) {
+                        haptics.firm()
+                        onPick(drop)
                     }
                 }
             }
@@ -126,38 +98,31 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop
     }
 }
 
-/** A tile of the panel: the icon on a round, its name under it; pops in a little after the one before. */
+/** One of them: a round of glass with the icon, its name under it; pops in a little after the one before. */
 @Composable
 private fun Tile(drop: Drop, order: Int, onClick: () -> Unit) {
-    val pop = remember { Animatable(0.6f) }
+    val pop = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
-        delay(30L * order)
+        delay(35L * order)
         pop.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 500f))
     }
     androidx.compose.foundation.layout.Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .size(width = 104.dp, height = 96.dp)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(22.dp))
-            .clickable(onClickLabel = drop.label, onClick = onClick)
-            .padding(top = 10.dp)
-            .graphicsLayer { scaleX = pop.value; scaleY = pop.value }
-    ) {
-        Box(
-            Modifier.size(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(drop.icon, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        modifier = Modifier.widthIn(min = 64.dp).graphicsLayer {
+            scaleX = 0.5f + 0.5f * pop.value
+            scaleY = 0.5f + 0.5f * pop.value
+            alpha = pop.value.coerceIn(0f, 1f)
+            translationY = (1f - pop.value) * 30f
         }
-        Text(drop.label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp))
+    ) {
+        FloatingPane(shape = CircleShape, onClick = onClick, modifier = Modifier.size(58.dp)) {
+            Box(Modifier.size(58.dp), contentAlignment = Alignment.Center) {
+                Icon(drop.icon, contentDescription = drop.label, tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+        // The name on a small pane of its own, readable over any message.
+        FloatingPane(shape = CircleShape, modifier = Modifier.padding(top = 4.dp)) {
+            Text(drop.label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+        }
     }
-}
-
-/** The panel's place: its lower left corner above the +, kept on screen. */
-private class AbovePlace(val lift: Int, val margin: Int) : PopupPositionProvider {
-    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) =
-        IntOffset(
-            anchorBounds.left.coerceIn(margin, (windowSize.width - popupContentSize.width - margin).coerceAtLeast(margin)),
-            (anchorBounds.bottom - lift - popupContentSize.height).coerceAtLeast(margin)
-        )
 }

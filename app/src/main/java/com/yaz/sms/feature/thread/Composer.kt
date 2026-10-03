@@ -166,6 +166,8 @@ fun Composer(
     // The effect picked from the + before writing, and its chooser.
     var armed by remember { mutableStateOf<com.yaz.sms.core.sms.Effects.Effect?>(null) }
     var choosingEffect by remember { mutableStateOf(false) }
+    // What a pick of the + does, set where the launchers are known.
+    val pickDrop = remember { mutableStateOf<((Drop) -> Unit)?>(null) }
     var slide by remember { mutableStateOf(0f) }
     var rise by remember { mutableStateOf(0f) }
     val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -278,6 +280,19 @@ fun Composer(
                 }
             }
         }
+        val drops = Drop.entries.filter { (it != Drop.POLL || onPoll != null) && (it != Drop.EFFECTS || onSendEffect != null) }
+        // What the + offers, above the bar, on the + side: round buttons of glass.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = arcOpen && take == null,
+            enter = fadeIn(),
+            exit = fadeOut() + androidx.compose.animation.shrinkVertically(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            AttachTiles(drops) { drop ->
+                arcOpen = false
+                pickDrop.value?.invoke(drop)
+            }
+        }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
             val recording = take
             if (recording != null && recording.locked) {
@@ -291,7 +306,8 @@ fun Composer(
                         Icon(AppIcons.Delete, contentDescription = "Discard the recording", tint = MaterialTheme.colorScheme.error)
                     }
                 }
-            } else if (recording == null) AttachArc(open = arcOpen, onOpen = { arcOpen = it }, drops = Drop.entries.filter { (it != Drop.POLL || onPoll != null) && (it != Drop.EFFECTS || onSendEffect != null) }) { drop ->
+            } else if (recording == null) {
+                pickDrop.value = { drop ->
                 runCatching {
                     when (drop) {
                         // The effects: at once with the words written, else chosen for the next message.
@@ -315,6 +331,8 @@ fun Composer(
                             else askPlace.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
                     }
                 }
+            }
+                AttachArc(open = arcOpen, onOpen = { arcOpen = it }, drops = drops) { }
             }
             if (sims.size > 1 && recording == null) {
                 FloatingPane(shape = CircleShape, onClick = {
