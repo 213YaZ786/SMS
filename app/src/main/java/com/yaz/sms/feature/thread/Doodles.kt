@@ -5,15 +5,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.graphics.vector.toPath
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.unit.dp
 import com.yaz.sms.ui.icon.AppIcons
 import kotlin.random.Random
@@ -28,9 +26,12 @@ internal const val DOODLE = "doodle"
  */
 @Composable
 internal fun DoodleGround(ink: Color, modifier: Modifier = Modifier.fillMaxSize(), cell: Float = 64f) {
-    val vectors = remember { DOODLES + listOf(AppIcons.Star, AppIcons.PhotoCamera, AppIcons.Place, AppIcons.Mic, AppIcons.Call, AppIcons.Send, AppIcons.Schedule, AppIcons.AutoAwesome, AppIcons.Headset) }
-    val painters = vectors.map { rememberVectorPainter(it) }
-    val filter = remember(ink) { ColorFilter.tint(ink) }
+    // Drawn as paths, each at its own size: a vector painter drawn at many
+    // sizes in one frame reuses its first picture and cuts the larger ones.
+    val shapes = remember {
+        (DOODLES + listOf(AppIcons.Star, AppIcons.PhotoCamera, AppIcons.Place, AppIcons.Mic, AppIcons.Call, AppIcons.Send, AppIcons.Schedule, AppIcons.AutoAwesome, AppIcons.Headset))
+            .map { pathOf(it) }
+    }
     Canvas(modifier) {
         val step = cell.dp.toPx()
         val random = Random(7)
@@ -39,14 +40,16 @@ internal fun DoodleGround(ink: Color, modifier: Modifier = Modifier.fillMaxSize(
         while (y < size.height + step) {
             var x = if (row % 2 == 0) -step / 2 else 0f
             while (x < size.width + step) {
-                val p = painters[random.nextInt(painters.size)]
+                val shape = shapes[random.nextInt(shapes.size)]
                 val s = (20 + random.nextInt(10)).dp.toPx()
                 val jx = (random.nextFloat() - 0.5f) * step * 0.35f
                 val jy = (random.nextFloat() - 0.5f) * step * 0.35f
                 val turn = (random.nextFloat() - 0.5f) * 50f
                 translate(x + jx, y + jy) {
                     rotate(turn, pivot = androidx.compose.ui.geometry.Offset(s / 2, s / 2)) {
-                        with(p) { draw(Size(s, s), colorFilter = filter) }
+                        scale(s / 24f, pivot = androidx.compose.ui.geometry.Offset.Zero) {
+                            drawPath(shape, ink)
+                        }
                     }
                 }
                 x += step
@@ -55,6 +58,19 @@ internal fun DoodleGround(ink: Color, modifier: Modifier = Modifier.fillMaxSize(
             row++
         }
     }
+}
+
+/** An icon's outline as one path, in its 24 by 24 frame. */
+private fun pathOf(vector: ImageVector): androidx.compose.ui.graphics.Path {
+    val out = androidx.compose.ui.graphics.Path()
+    fun walk(group: androidx.compose.ui.graphics.vector.VectorGroup) {
+        for (node in group) when (node) {
+            is androidx.compose.ui.graphics.vector.VectorPath -> out.addPath(node.pathData.toPath().apply { fillType = node.pathFillType })
+            is androidx.compose.ui.graphics.vector.VectorGroup -> walk(node)
+        }
+    }
+    walk(vector.root)
+    return out
 }
 
 private fun icon(name: String, path: String) = ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)
