@@ -149,13 +149,16 @@ fun PersonPage(
                     // What can be done with them, side by side and onto a second line.
                     item {
                         // Lines as even as can be: 6 = 3 + 3, 5 = 3 + 2.
-                        val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onBackground).size + 2
+                        // Someone not saved yet: adding them comes first, at hand.
+                        val unsaved = !group && address.count(Char::isDigit) >= 3 && contactId == null
+                        val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onBackground).size + 2 + (if (unsaved) 1 else 0)
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                             maxItemsInEachRow = if (count <= 4) count else (count + 1) / 2,
                             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
                         ) {
+                            if (unsaved) Tile(AppIcons.PersonAdd, "Add contact", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary) { NumberActions.addContact(context, address) }
                             calls.phone?.let { Tile(AppIcons.Call, "Call", CallGreen, Color.White, it) }
                             calls.encrypted?.let { Tile(AppIcons.Lock, "Encrypted call", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, it) }
                             calls.video?.let { Tile(AppIcons.Videocam, "Video call", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, it) }
@@ -202,7 +205,6 @@ fun PersonPage(
                             if (digits && NumberActions.canShowCalls(context)) Row(AppIcons.Recents, "Calls with them") { NumberActions.showCalls(context, address) }
                             // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
                             if (contactId != null && contactId > 0) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
-                            else if (digits && contactId == null) Row(AppIcons.PersonAdd, "Add to contacts") { NumberActions.addContact(context, address) }
                             if (!group) Row(AppIcons.Copy, "Copy number") { NumberActions.copy(context, address) }
                             // Kept in the contact by the Contacts app when it is on the phone; here otherwise.
                             if (!group) Row(AppIcons.Vibration, "Vibration") {
