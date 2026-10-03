@@ -330,6 +330,11 @@ private fun ThreadContent(
     val settingsNow by store.settings.collectAsState()
     val silencedUntil = thread?.let { t -> settingsNow.silenced[t]?.takeIf { it > System.currentTimeMillis() } }
     LaunchedEffect(thread) { onThread(thread) }
+    var pollOpen by remember { mutableStateOf(false) }
+    if (pollOpen) PollDialog(onSend = { question, options ->
+        pollOpen = false
+        queue(Pending(System.nanoTime(), com.sms.app.core.sms.Polls.write(question, options), android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID, emptyList(), null))
+    }) { pollOpen = false }
     var backgroundOpen by remember { mutableStateOf(false) }
     if (backgroundOpen && thread != null && appLook != null) BackgroundSheet(
         current = settingsNow.backgrounds[thread],
@@ -480,6 +485,7 @@ private fun ThreadContent(
                     if (e != null && typed.isNotBlank() && typed != e.second) scope.launch { if (!chat.edit(e.first, typed)) haptics.reject() }
                 },
                 onEffects = { text, sub -> effecting = text to sub },
+                onPoll = if (encrypted) ({ pollOpen = true }) else null,
                 onSend = { typed, sub, attachments ->
                     if (people.isEmpty()) return@Composer false
                     queue(Pending(System.nanoTime(), typed, sub, attachments, quote))
@@ -547,6 +553,7 @@ private fun ThreadContent(
                         fresh = row.message.box == MessageBox.RECEIVED && row.message.uid in fresh,
                         rich = chat.refOf(row.message.mms, row.message.id).also { refs.size },
                         onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },
+                        onPollShown = { scope.launch { chat.recount(row.message.mms, row.message.id) } },
                         sender = if (group && row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null,
                         onRetry = {
                             if (!row.message.mms) {
@@ -731,7 +738,8 @@ private fun Bubble(
     stranger: Boolean = false,
     highlight: String? = null,
     sentEffect: com.sms.app.core.sms.Effects.Effect? = null,
-    onReplay: (com.sms.app.core.sms.Effects.Effect, String) -> Unit = { _, _ -> }
+    onReplay: (com.sms.app.core.sms.Effects.Effect, String) -> Unit = { _, _ -> },
+    onPollShown: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -745,6 +753,9 @@ private fun Bubble(
     var replays by remember { mutableStateOf(0) }
     // Only one to three emoji: big, without a bubble, moving once (then on a tap).
     val big = remember(said, m.parts.isEmpty()) { if (m.parts.isEmpty()) com.sms.app.core.sms.BigEmoji.read(said) else null }
+    // A poll, over the encrypted chat where votes travel as reactions.
+    val poll = remember(said, rich != null) { if (rich != null && m.parts.isEmpty()) com.sms.app.core.sms.Polls.read(said) else null }
+    LaunchedEffect(poll != null) { if (poll != null) onPollShown() }
     var emojiPlay by remember(m.uid) { mutableStateOf(if (big != null && EmojiPlayed.first(m.uid)) 1 else 0) }
     // Invisible ink: blurred until touched.
     var inked by remember(m.uid) { mutableStateOf(bubbleEffect == com.sms.app.core.sms.Effects.Effect.INK) }
@@ -930,6 +941,7 @@ private fun Bubble(
                 bottomStart = if (mine) 22.dp else 6.dp, bottomEnd = if (mine) 6.dp else 22.dp
             )
             val held = Modifier
+                    .then(if (poll != null) Modifier.fillMaxWidth() else Modifier)
                     .onGloballyPositioned { bounds = it.boundsInWindow() }
                     .graphicsLayer { alpha = if (menuOpen) 0f else 1f }
                     .drawWithContent {
@@ -975,8 +987,9 @@ private fun Bubble(
             if (big != null) BigEmojiRow(big, emojiPlay, if (inked) held.blur(14.dp, androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded) else held)
             else ZoneSurface(shape = shape, accent = mine, modifier = held) {
               Column {
+                if (poll != null && rich != null) PollCard(poll, rich.counts, rich.myReactions, onVote = onReact)
                 // An edit changes the words in a soft blur, not at a stroke.
-                androidx.compose.animation.AnimatedContent(
+                else androidx.compose.animation.AnimatedContent(
                     text,
                     transitionSpec = {
                         androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(420, delayMillis = 120)) togetherWith
@@ -1031,9 +1044,11 @@ private fun Bubble(
                 risky = url to verdict
             }
         }
-        if (!rich?.reactions.isNullOrEmpty()) {
+        // A poll's votes are in its card, not here.
+        val shownReactions = rich?.reactions.orEmpty().filter { poll == null || com.sms.app.core.sms.Polls.choiceOf(it) < 0 }
+        if (shownReactions.isNotEmpty()) {
             FloatingPane(shape = CircleShape, modifier = Modifier.padding(top = 2.dp)) {
-                Text(rich!!.reactions.joinToString(" "), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+                Text(shownReactions.joinToString(" "), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
             }
         }
         // Pinned for both sides, or changed after it was sent.

@@ -78,6 +78,8 @@ fun Composer(
     onSchedule: ((String, Int) -> Unit)? = null,
     /** Held, Send offers the effects (and sending later): the text and SIM go there. */
     onEffects: ((String, Int) -> Unit)? = null,
+    /** Over the encrypted chat: the + also offers a poll. */
+    onPoll: (() -> Unit)? = null,
     editing: String? = null,
     onCancelEdit: () -> Unit = {},
     onEdit: (String) -> Unit = {},
@@ -238,7 +240,7 @@ fun Composer(
                         Icon(AppIcons.Delete, contentDescription = "Discard the recording", tint = MaterialTheme.colorScheme.error)
                     }
                 }
-            } else if (recording == null) AttachArc(open = arcOpen, onOpen = { arcOpen = it }) { drop ->
+            } else if (recording == null) AttachArc(open = arcOpen, onOpen = { arcOpen = it }, drops = Drop.entries.filter { it != Drop.POLL || onPoll != null }) { drop ->
                 runCatching {
                     when (drop) {
                         Drop.PHOTOS -> pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
@@ -251,6 +253,7 @@ fun Composer(
                         }
                         Drop.FILE -> file.launch(arrayOf("*/*"))
                         Drop.CONTACT -> person.launch(null)
+                        Drop.POLL -> onPoll?.invoke()
                     }
                 }
             }

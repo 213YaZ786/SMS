@@ -49,15 +49,17 @@ enum class Drop(val icon: ImageVector, val label: String) {
     PHOTOS(AppIcons.Image, "Photos"),
     CAMERA(AppIcons.PhotoCamera, "Camera"),
     FILE(AppIcons.AttachFile, "File"),
-    CONTACT(AppIcons.ContactPage, "Contact")
+    CONTACT(AppIcons.ContactPage, "Contact"),
+    POLL(AppIcons.Poll, "Poll")
 }
 
 private val ButtonSize = 52.dp
 private val DropSize = 52.dp
-private val Radius = 104.dp
+/** How far the drops roll: further when there are five, so they never touch. */
+private fun radiusFor(count: Int) = if (count > 4) 140.dp else 104.dp
 
 /** Where each drop settles: a quarter of a circle around the +, from straight up to its right. */
-private val Angles = listOf(90.0, 60.0, 30.0, 0.0)
+private fun angles(count: Int) = List(count) { i -> 90.0 - i * 90.0 / (count - 1).coerceAtLeast(1) }
 
 /**
  * The + of the composer, in drops of mercury: a tap splits it into four
@@ -67,16 +69,18 @@ private val Angles = listOf(90.0, 60.0, 30.0, 0.0)
  * [open] tells the composer to veil its field while they are out.
  */
 @Composable
-fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, onPick: (Drop) -> Unit) {
+fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop.entries.filter { it != Drop.POLL }, onPick: (Drop) -> Unit) {
     val haptics = rememberHaptics()
     val density = LocalDensity.current
-    val radius = with(density) { Radius.toPx() }
+    val arcRadius = radiusFor(drops.size)
+    val arcAngles = angles(drops.size)
+    val radius = with(density) { arcRadius.toPx() }
     val reach = with(density) { (DropSize / 2 + 8.dp).toPx() }
     var hover by remember { mutableIntStateOf(-1) }
     val turn by animateFloatAsState(if (open) 45f else 0f, spring(dampingRatio = 0.5f, stiffness = 500f), label = "turn")
 
     fun dropAt(from: Offset): Int {
-        Angles.forEachIndexed { i, a ->
+        arcAngles.forEachIndexed { i, a ->
             val r = Math.toRadians(a)
             val centre = Offset((radius * cos(r)).toFloat(), (-radius * sin(r)).toFloat())
             if (hypot((from - centre).x, (from - centre).y) < reach) return i
@@ -87,7 +91,7 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, onPick: (Drop) -> Unit) 
     Box {
         FloatingPane(
             shape = CircleShape,
-            modifier = Modifier.size(ButtonSize).pointerInput(Unit) {
+            modifier = Modifier.size(ButtonSize).pointerInput(drops) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     val centre = Offset(size.width / 2f, size.height / 2f)
@@ -122,7 +126,7 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, onPick: (Drop) -> Unit) 
                         if (picked >= 0) {
                             haptics.firm()
                             onOpen(false)
-                            onPick(Drop.entries[picked])
+                            onPick(drops[picked])
                         } else if (opened) {
                             onOpen(false)
                         }
@@ -143,7 +147,7 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, onPick: (Drop) -> Unit) 
             }
         }
         if (open) {
-            val pad = with(density) { (Radius + DropSize).roundToPx() }
+            val pad = with(density) { (arcRadius + DropSize).roundToPx() }
             Popup(
                 popupPositionProvider = remember(pad) { ArcPlace(pad) },
                 onDismissRequest = { onOpen(false) },
@@ -152,8 +156,8 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, onPick: (Drop) -> Unit) 
                 // The popup's box: its corner at the +'s centre, the drops around it.
                 val side = with(density) { (pad * 2).toDp() }
                 Box(Modifier.size(side)) {
-                    Drop.entries.forEachIndexed { i, drop ->
-                        MercuryDrop(drop, i, Angles[i], hovered = hover == i, centre = pad) {
+                    drops.forEachIndexed { i, drop ->
+                        MercuryDrop(drop, i, arcAngles[i], arcRadius, hovered = hover == i, centre = pad) {
                             haptics.firm()
                             onOpen(false)
                             onPick(drop)
@@ -167,7 +171,7 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, onPick: (Drop) -> Unit) 
 
 /** One drop: rolls out of the + along its ray, spinning into place, a little after the one before. */
 @Composable
-private fun MercuryDrop(drop: Drop, order: Int, angle: Double, hovered: Boolean, centre: Int, onClick: () -> Unit) {
+private fun MercuryDrop(drop: Drop, order: Int, angle: Double, arcRadius: androidx.compose.ui.unit.Dp, hovered: Boolean, centre: Int, onClick: () -> Unit) {
     val density = LocalDensity.current
     val out = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
@@ -176,7 +180,7 @@ private fun MercuryDrop(drop: Drop, order: Int, angle: Double, hovered: Boolean,
     }
     val swell by animateFloatAsState(if (hovered) 1.3f else 1f, spring(dampingRatio = 0.5f, stiffness = 600f), label = "swell")
     val r = Math.toRadians(angle)
-    val radius = with(density) { Radius.toPx() }
+    val radius = with(density) { arcRadius.toPx() }
     val half = with(density) { (DropSize / 2).roundToPx() }
     Box(
         Modifier.offset {

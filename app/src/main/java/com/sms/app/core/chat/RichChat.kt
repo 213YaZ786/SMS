@@ -93,7 +93,10 @@ data class RichRef(
     val chat: Int = 0,
     /** When it vanishes, in milliseconds, and how long it was given; 0 when it stays. */
     val vanishAt: Long = 0,
-    val vanishFor: Int = 0
+    val vanishFor: Int = 0,
+    /** How many gave each reaction, and the user's own: a poll's votes. */
+    val counts: Map<String, Int> = emptyMap(),
+    val myReactions: List<String> = emptyList()
 )
 
 /**
@@ -474,13 +477,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                 val timer = event.data["timer"]?.jsonPrimitive?.intOrNull
                 if (chat != null && timer != null) timers[chat] = timer
             }
-            "ReactionsChanged", "IncomingReaction" -> if (msgId != null) _refs.value[msgId]?.let { ref ->
-                val emojis = runCatching {
-                    engine.call("get_message_reactions", account, msgId).jsonObject["reactions"]?.jsonArray
-                        ?.mapNotNull { (it as? JsonObject)?.get("emoji")?.jsonPrimitive?.contentOrNull }
-                }.getOrNull().orEmpty()
-                saveRef(msgId, ref.copy(reactions = emojis))
-            }
+            "ReactionsChanged", "IncomingReaction" -> if (msgId != null) readReactions(msgId)
         }
         _changes.value++
     }
@@ -608,7 +605,28 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     suspend fun react(messageId: Long, emoji: String?) {
         if (!start()) return
         runCatching { engine.call("send_reaction", account, messageId.toInt(), listOfNotNull(emoji)) }
+        // The user's own reaction counts at once, a vote included.
+        readReactions(messageId.toInt())
         _changes.value++
+    }
+
+    /** A poll shown: its votes read again from the engine, which keeps them whatever happened here. */
+    suspend fun recount(mms: Boolean, id: Long) {
+        val msgId = byRow[mms to id] ?: return
+        if (!start()) return
+        readReactions(msgId)
+        _changes.value++
+    }
+
+    /** The reactions on [msgId] as the engine has them now: which, how many, and the user's own. */
+    private suspend fun readReactions(msgId: Int) {
+        val ref = _refs.value[msgId] ?: return
+        val all = runCatching { engine.call("get_message_reactions", account, msgId).jsonObject["reactions"]?.jsonArray }
+            .getOrNull()?.mapNotNull { it as? JsonObject }.orEmpty()
+        val emojis = all.mapNotNull { it["emoji"]?.jsonPrimitive?.contentOrNull }
+        val counts = all.mapNotNull { r -> r["emoji"]?.jsonPrimitive?.contentOrNull?.let { it to (r["count"]?.jsonPrimitive?.intOrNull ?: 1) } }.toMap()
+        val mine = all.filter { it["isFromSelf"]?.jsonPrimitive?.booleanOrNull == true }.mapNotNull { it["emoji"]?.jsonPrimitive?.contentOrNull }
+        saveRef(msgId, ref.copy(reactions = emojis, counts = counts, myReactions = mine))
     }
 
     /** A group's name, for all its members when it goes over the encrypted chat. */
