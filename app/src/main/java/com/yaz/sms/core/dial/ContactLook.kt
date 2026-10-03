@@ -9,6 +9,7 @@ import android.net.Uri
 import android.provider.ContactsContract
 import androidx.core.content.ContextCompat
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -29,7 +30,9 @@ object ContactLook {
      * SMS's signature names, null for the phone's; [bypass] their calls ring
      * through Do not disturb and silent; [tone] the sound of their messages
      * (a media or app resource address only); [letters], [font] and [emoji]
-     * their monogram when they have no photo.
+     * their monogram when they have no photo; [zoom], [x], [y] and [style]
+     * their poster, the photo full screen on a call: zoomed in, the point
+     * (x, y) of the photo at the screen's centre, the name in that style.
      */
     data class Look(
         val color: Int?,
@@ -38,7 +41,11 @@ object ContactLook {
         val tone: String? = null,
         val letters: String? = null,
         val font: String? = null,
-        val emoji: String? = null
+        val emoji: String? = null,
+        val zoom: Float = 1f,
+        val x: Float = 0.5f,
+        val y: Float = 0.4f,
+        val style: String = "classic"
     )
 
     /** The Contacts app, release first. */
@@ -101,7 +108,11 @@ object ContactLook {
                 tone = tone,
                 letters = text("letters")?.take(2),
                 font = text("font")?.takeIf { it in setOf("classic", "rounded", "serif", "mono", "bold") },
-                emoji = text("emoji")?.take(16)
+                emoji = text("emoji")?.take(16),
+                zoom = (o["zoom"]?.jsonPrimitive?.floatOrNull ?: 1f).coerceIn(1f, 4f),
+                x = (o["x"]?.jsonPrimitive?.floatOrNull ?: 0.5f).coerceIn(0f, 1f),
+                y = (o["y"]?.jsonPrimitive?.floatOrNull ?: 0.4f).coerceIn(0f, 1f),
+                style = text("style")?.takeIf { it in setOf("classic", "bold", "light", "serif", "round") } ?: "classic"
             )
         }.getOrNull()
     }

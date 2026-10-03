@@ -21,6 +21,18 @@ class ContactLookTest {
     }
 
     @Test
+    fun readsThePoster() {
+        val look = ContactLook.parse("""{"zoom":2.5,"x":0.69,"y":0.5,"style":"bold"}""")!!
+        assertEquals(2.5f, look.zoom, 0.001f)
+        assertEquals(0.69f, look.x, 0.001f)
+        assertEquals("bold", look.style)
+        val plain = ContactLook.parse("""{"zoom":9,"style":"comic"}""")!!
+        assertEquals(4f, plain.zoom, 0.001f)
+        assertEquals(0.4f, plain.y, 0.001f)
+        assertEquals("classic", plain.style)
+    }
+
+    @Test
     fun missingOrStrangeFieldsAreLeftOut() {
         val look = ContactLook.parse("""{"color":0,"tone":"file:///sdcard/x.mp3","font":"comic","new":42}""")!!
         assertNull(look.color)
