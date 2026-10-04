@@ -80,8 +80,8 @@ class ChatService : Service(), KoinComponent {
         /** The connection's channel: no dot on the app's icon, no sound, nothing that looks like a message. */
         fun channel(context: Context) {
             val manager = context.getSystemService(NotificationManager::class.java)
-            // Silent, as Android raises a foreground service's notification to anyway: then only the
-            // user's own Minimize brings it lower, and the guide can tell it was done.
+            // Silent, as Android raises a foreground service's notification to anyway: the user can
+            // turn the channel off (the guide's Hide it), the service keeps running.
             manager.createNotificationChannel(NotificationChannel(CHANNEL, "Encrypted chat connection", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
             for (old in listOf("connection", "chat_link", "chat_hidden")) runCatching { manager.deleteNotificationChannel(old) }
         }
