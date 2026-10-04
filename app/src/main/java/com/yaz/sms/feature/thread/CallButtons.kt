@@ -85,11 +85,21 @@ fun GlassCallButton(icon: ImageVector, label: String, color: Color, onTap: () ->
 }
 
 /**
- * The call at the top right: the green phone call, which opens Dialer
- * with the number ready, its Call a second tap on purpose against a slip.
- * The encrypted calls are in the conversation's tools.
+ * The calls at the top right: with the encrypted chat, the encrypted call
+ * (the handset with a padlock, in the accent; held, a video call), then
+ * the green phone call, which opens Dialer with the number ready, its Call
+ * a second tap on purpose against a slip.
  */
 @Composable
 fun CallButtons(choices: CallChoices) {
-    choices.phone?.let { phone -> GlassCallButton(AppIcons.Call, "Call", CallGreen, phone, diameter = 44.dp) }
+    androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+        choices.encrypted?.let { call ->
+            GlassCallButton(
+                AppIcons.CallLocked, "Encrypted call", androidx.compose.material3.MaterialTheme.colorScheme.primary, call,
+                iconTint = androidx.compose.material3.MaterialTheme.colorScheme.onPrimary,
+                holdLabel = "Encrypted video call", onHold = choices.video, diameter = 44.dp
+            )
+        }
+        choices.phone?.let { phone -> GlassCallButton(AppIcons.Call, "Call", CallGreen, phone, diameter = 44.dp) }
+    }
 }

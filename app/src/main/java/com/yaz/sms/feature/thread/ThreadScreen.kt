@@ -450,10 +450,13 @@ private fun ThreadContent(
             // Back, the person's face and name, and the calls one tap away on the right.
           Column(horizontalAlignment = Alignment.CenterHorizontally) {
             // Back, the person's face and name at the centre (their page a tap away), the green call.
-            Box(Modifier.fillMaxWidth().padding(start = 16.dp, end = 20.dp, top = 8.dp, bottom = 4.dp)) {
-                // All three on one centre line: the name's pill between back and call.
-                Box(Modifier.align(Alignment.CenterStart)) { FloatingAction(AppIcons.ArrowBack, "Back", onBack) }
-                Box(Modifier.align(Alignment.Center).padding(horizontal = 60.dp)) {
+            // All on one line: the name's pill at the centre of the room between back and the calls.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 20.dp, top = 8.dp, bottom = 4.dp)
+            ) {
+                FloatingAction(AppIcons.ArrowBack, "Back", onBack)
+                Box(Modifier.weight(1f).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
                     NameBlock(
                         name = title,
                         photo = if (group) null else entry?.photo,
@@ -462,7 +465,7 @@ private fun ThreadContent(
                         look = if (group) null else entry?.look
                     )
                 }
-                Box(Modifier.align(Alignment.CenterEnd)) { CallButtons(calls) }
+                CallButtons(calls)
             }
 
             androidx.compose.animation.AnimatedVisibility(visible = searching) {
