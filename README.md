@@ -49,7 +49,7 @@ Android 12 or newer.
 
 Your messages stay on your phone. The connections: a check for a new
 version on GitHub; the encrypted chat through chatmail relays (the
-fastest one, with backups), which carry only end-to-end encrypted
+fastest one, with one backup), which carry only end-to-end encrypted
 messages; the public list of dangerous sites (URLhaus), once a day; the
 speech model (Hugging Face), once, only when you ask. Each can be turned
 off in Settings.
