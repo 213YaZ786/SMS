@@ -179,11 +179,17 @@ private fun Chip(label: String, chosen: Boolean, onClick: () -> Unit) {
 @Composable
 internal fun PictureCell(part: MmsPart, modifier: Modifier) {
     var large by remember { mutableStateOf(false) }
+    var video by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val image by rememberPicture(part.uri, 360)
+    val kind by rememberKind(part.uri)
     Box(
         modifier.aspectRatio(1f).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable {
-            if (ContentType.isImageType(part.contentType)) large = true else openOutside(context, part)
+            when {
+                ContentType.isImageType(part.contentType) && kind == com.yaz.sms.core.security.MediaCheck.Kind.IMAGE -> large = true
+                ContentType.isVideoType(part.contentType) && kind == com.yaz.sms.core.security.MediaCheck.Kind.VIDEO -> video = true
+                else -> openOutside(context, part)
+            }
         },
         contentAlignment = Alignment.Center
     ) {
@@ -192,6 +198,7 @@ internal fun PictureCell(part: MmsPart, modifier: Modifier) {
         else Icon(if (ContentType.isVideoType(part.contentType)) AppIcons.Play else AppIcons.Image, contentDescription = null)
     }
     if (large) PictureViewer(part.uri, onClose = { large = false })
+    if (video) VideoViewer(part.uri, onClose = { video = false })
 }
 
 /** One thing shared, on a line of glass: what it is, when, and what a tap does. */

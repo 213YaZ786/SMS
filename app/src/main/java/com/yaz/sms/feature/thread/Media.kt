@@ -1,8 +1,16 @@
 package com.yaz.sms.feature.thread
 
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import com.yaz.sms.ui.component.SafePlayer
+import com.yaz.sms.ui.component.GlassVideo
+import com.yaz.sms.ui.component.DarkGround
+import com.yaz.sms.core.security.SafeImages
+import com.yaz.sms.core.security.MediaCheck
 import android.content.Context
 import android.content.Intent
-import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -51,14 +59,24 @@ import kotlinx.coroutines.withContext
 
 /**
  * A picture, video or sound of a message. A picture shows itself and
- * opens large in a tap; the others open in the app chosen for them.
+ * opens large in a tap, a film plays in the app's own player, a sound in
+ * its line; another file opens in the app chosen for it. What a part
+ * really is comes from its first bytes, not from the type it was sent
+ * with. From an unknown number ([held]) nothing is read before a tap.
  */
 @Composable
-fun MediaTile(part: MmsPart, mine: Boolean) {
+fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var large by remember { mutableStateOf(false) }
-    if (ContentType.isImageType(part.contentType)) {
+    var video by remember { mutableStateOf(false) }
+    var shown by remember(part.uri) { mutableStateOf(!held) }
+    val kind by rememberKind(part.uri)
+    val image = ContentType.isImageType(part.contentType) && kind != MediaCheck.Kind.OTHER
+    val sound = ContentType.isAudioType(part.contentType) && kind != MediaCheck.Kind.OTHER
+    if (!shown && (image || sound)) {
+        HeldTile(if (image) "Photo from an unknown number, tap to show" else "Sound from an unknown number, tap to load") { shown = true }
+    } else if (image) {
         val image by rememberPicture(part.uri, 720)
         val shown = image
         Box(
@@ -79,7 +97,7 @@ fun MediaTile(part: MmsPart, mine: Boolean) {
             }
         }
         if (large) PictureViewer(part.uri, onClose = { large = false })
-    } else if (ContentType.isAudioType(part.contentType)) {
+    } else if (sound) {
         VoiceTile(part, mine)
     } else {
         ZoneSurface(
@@ -87,7 +105,7 @@ fun MediaTile(part: MmsPart, mine: Boolean) {
             accent = mine,
             modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable {
                 haptics.tick()
-                openOutside(context, part)
+                if (ContentType.isVideoType(part.contentType) && kind == MediaCheck.Kind.VIDEO) video = true else openOutside(context, part)
             }
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -113,6 +131,7 @@ fun MediaTile(part: MmsPart, mine: Boolean) {
                 Text(person ?: part.name ?: mediaWord(part.contentType), style = MaterialTheme.typography.bodyLarge)
             }
         }
+        if (video) VideoViewer(part.uri, onClose = { video = false })
     }
 }
 
@@ -128,24 +147,73 @@ internal fun PictureViewer(uri: Uri, onClose: () -> Unit) {
     }
 }
 
-/** A picture read in the background, no larger than about [side] pixels. */
+/**
+ * A picture read in the background, no larger than about [side] pixels,
+ * decoded in the isolated decoder: what a message carries is anyone's file.
+ */
 @Composable
 fun rememberPicture(uri: Uri, side: Int): State<ImageBitmap?> {
     val context = LocalContext.current
     return produceState<ImageBitmap?>(null, uri, side) {
-        value = withContext(Dispatchers.IO) { decode(context, uri, side) }
+        value = SafeImages.decode(context, uri, side)?.asImageBitmap()
     }
 }
 
-private fun decode(context: Context, uri: Uri, side: Int): ImageBitmap? = runCatching {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-    var sample = 1
-    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= side) sample *= 2
-    context.contentResolver.openInputStream(uri)?.use {
-        BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
-    }?.asImageBitmap()
-}.getOrNull()
+/** What a part really is, read from its first bytes; null while it is read. */
+@Composable
+fun rememberKind(uri: Uri): State<MediaCheck.Kind?> {
+    val context = LocalContext.current
+    return produceState<MediaCheck.Kind?>(null, uri) {
+        value = withContext(Dispatchers.IO) { MediaCheck.kind(context, uri) }
+    }
+}
+
+/**
+ * A film on the whole screen, in the app's own player: never handed to
+ * another app, read by Media3 limited to the formats of messages.
+ */
+@Composable
+internal fun VideoViewer(uri: Uri, onClose: () -> Unit) {
+    val context = LocalContext.current
+    var muted by remember { mutableStateOf(false) }
+    val player = remember(uri) {
+        SafePlayer.build(context).apply {
+            setMediaItem(androidx.media3.common.MediaItem.fromUri(uri))
+            prepare()
+            playWhenReady = true
+        }
+    }
+    DisposableEffect(player) { onDispose { player.release() } }
+    LaunchedEffect(player, muted) { player.volume = if (muted) 0f else 1f }
+    LifecycleResumeEffect(player) { onPauseOrDispose { player.pause() } }
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        DarkGround {
+            Box(Modifier.fillMaxSize()) {
+                GlassVideo(player = player, muted = muted, onMutedChange = { muted = it })
+                Box(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp)) { FloatingAction(AppIcons.Close, "Close", onClose) }
+            }
+        }
+    }
+}
+
+/** What a part from an unknown number waits behind: a tap, before anything reads it. */
+@Composable
+private fun HeldTile(label: String, onShow: () -> Unit) {
+    val haptics = rememberHaptics()
+    ZoneSurface(
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable {
+            haptics.tick()
+            onShow()
+        }
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Icon(AppIcons.Image, contentDescription = null)
+            Spacer(Modifier.width(10.dp))
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
 
 /** A video or a sound opened in the app chosen for it: a copy shared for that one opening. */
 internal fun openOutside(context: Context, part: MmsPart) {

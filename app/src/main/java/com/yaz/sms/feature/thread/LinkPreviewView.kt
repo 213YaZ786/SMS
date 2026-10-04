@@ -55,6 +55,7 @@ import kotlinx.coroutines.launch
  */
 @Composable
 internal fun LinkPreviewCapsule(url: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val clean = remember(url) { LinkCleaner.clean(url) }
     var preview by remember(clean) { mutableStateOf(LinkPreview.cached(clean)) }
     var loading by remember(clean) { mutableStateOf(false) }
@@ -83,7 +84,7 @@ internal fun LinkPreviewCapsule(url: String) {
                     haptics.tick()
                     loading = true
                     scope.launch {
-                        val got = LinkPreview.fetch(clean)
+                        val got = LinkPreview.fetch(context, clean)
                         loading = false
                         if (got == null) {
                             failed = true

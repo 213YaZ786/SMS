@@ -14,6 +14,9 @@ class SmsApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // The isolated picture decoder is a process of this app with no
+        // rights at all: nothing of the app starts there.
+        if (android.os.Process.isIsolated()) return
         // The Contacts app's private names, asked when a number has none in Android's contacts.
         com.yaz.sms.core.dial.PrivateNames.init(this)
         startKoin {

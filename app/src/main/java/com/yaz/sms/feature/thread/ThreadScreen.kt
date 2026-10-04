@@ -897,7 +897,7 @@ private fun Bubble(
             Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 12.dp, bottom = 2.dp))
         }
         m.parts.forEach { part ->
-            MediaTile(part, mine)
+            MediaTile(part, mine, held = stranger && !mine)
             Spacer(Modifier.height(4.dp))
         }
         val scope = rememberCoroutineScope()

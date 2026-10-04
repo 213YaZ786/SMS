@@ -73,7 +73,7 @@ object Cards {
             // A number proved over the chat: Contacts may say so on the person's page.
             if (link.phone !in verified && ContactsCards.verified(context, link.phone, true)) verified = verified + link.phone
             if (card.name.isBlank() && card.photo == null) continue
-            val photo = card.photo?.let { shrink(File(it)) }
+            val photo = card.photo?.let { shrink(context, File(it)) }
             val look = card.status.takeIf { it.startsWith(LOOK) }?.removePrefix(LOOK)?.takeIf { ContactLook.parse(it) != null }
             val hash = hash(card.name, photo?.let { hash(it) }.orEmpty(), look.orEmpty())
             if (theirs[link.phone] == hash) continue
@@ -104,10 +104,11 @@ object Cards {
     }.getOrNull()
 
     /** A photo at 720 pixels at most, as a JPEG under 400 kB. */
-    private fun shrink(file: File): ByteArray? = runCatching {
+    private suspend fun shrink(context: Context, file: File): ByteArray? {
         if (!file.canRead()) return null
-        BitmapFactory.decodeFile(file.path)?.let(::jpeg)
-    }.getOrNull()
+        // Someone else's photo: decoded in the isolated decoder.
+        return runCatching { file.inputStream().use { com.yaz.sms.core.security.SafeImages.decode(context, it, 720) } }.getOrNull()?.let(::jpeg)
+    }
 
     private fun jpeg(bitmap: Bitmap): ByteArray? {
         val scale = 720f / max(bitmap.width, bitmap.height)

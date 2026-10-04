@@ -184,21 +184,15 @@ internal fun pictureFile(context: Context, thread: Long) = java.io.File(context.
  * A photo as a conversation's background: kept small (1440 pixels at most)
  * in [save], and its main colours for the glass, read 40 pixels across.
  */
-private fun photoLight(context: Context, uri: Uri, save: java.io.File): String? = runCatching {
-    val picture = ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
-        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-        val scale = (1440f / max(info.size.width, info.size.height)).coerceAtMost(1f)
-        decoder.setTargetSize(max(1, (info.size.width * scale).toInt()), max(1, (info.size.height * scale).toInt()))
-    }
+private suspend fun photoLight(context: Context, uri: Uri, save: java.io.File): String? = runCatching {
+    // A photo chosen on the phone may be any file: decoded in the isolated decoder.
+    val picture = com.yaz.sms.core.security.SafeImages.decode(context, uri, 1440) ?: return@runCatching null
     save.parentFile?.mkdirs()
     // Only the pixels: no place, camera or date comes along.
     save.outputStream().use { picture.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) }
+    val small = max(picture.width, picture.height).let { side -> 40f / side }
+    val bitmap = android.graphics.Bitmap.createScaledBitmap(picture, max(1, (picture.width * small).toInt()), max(1, (picture.height * small).toInt()), true)
     picture.recycle()
-    val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
-        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-        val scale = 40f / max(info.size.width, info.size.height)
-        decoder.setTargetSize(max(1, (info.size.width * scale).toInt()), max(1, (info.size.height * scale).toInt()))
-    }
     val pixels = IntArray(bitmap.width * bitmap.height)
     bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
     val lights = PhotoLight.of(pixels, bitmap.width, bitmap.height)

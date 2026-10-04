@@ -24,7 +24,7 @@ object LinkPreview {
 
     fun cached(url: String): Preview? = cache.get(url)
 
-    suspend fun fetch(url: String): Preview? = withContext(Dispatchers.IO) {
+    suspend fun fetch(context: android.content.Context, url: String): Preview? = withContext(Dispatchers.IO) {
         cache.get(url)?.let { return@withContext it }
         val (page, at) = get(url, 512 * 1024, html = true) ?: return@withContext null
         val html = String(page, charsetOf(page))
@@ -37,7 +37,8 @@ object LinkPreview {
             ?.let { runCatching { URL(at, clean(it)) }.getOrNull() }
             ?.takeIf { it.protocol == "https" }
             ?.let { get(it.toString(), 2 * 1024 * 1024, html = false)?.first }
-            ?.let(::decode)
+            // A page's picture is anyone's file: decoded in the isolated decoder.
+            ?.let { com.yaz.sms.core.security.SafeImages.decode(context, it, 720) }
         Preview(url, title, site, description, picture).also { cache.put(url, it) }
     }
 
@@ -106,14 +107,4 @@ object LinkPreview {
     /** Entities and spaces of a page's text, as read. */
     internal fun clean(text: String): String =
         android.text.Html.fromHtml(text, android.text.Html.FROM_HTML_MODE_LEGACY).toString().replace(Regex("\\s+"), " ").trim()
-
-    /** A picture at 720 pixels at most, decoded at that size. */
-    private fun decode(bytes: ByteArray): Bitmap? = runCatching {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 720) sample *= 2
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-    }.getOrNull()
 }

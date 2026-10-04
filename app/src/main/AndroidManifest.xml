@@ -73,6 +73,7 @@
     </queries>
 
     <application
+        android:memtagMode="sync"
         android:name=".SmsApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -266,5 +267,13 @@
             android:authorities="${applicationId}.people"
             android:exported="true"
             android:permission="${applicationId}.permission.PEOPLE" />
+        <!-- Pictures from outside decoded in a process of their own,
+             with no permission, no files and no network. -->
+        <service
+            android:name=".core.security.DecoderService"
+            android:exported="false"
+            android:isolatedProcess="true"
+            android:process=":decoder" />
+
     </application>
 </manifest>

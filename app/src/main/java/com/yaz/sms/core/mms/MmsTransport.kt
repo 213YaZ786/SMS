@@ -6,7 +6,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.ImageDecoder
 import android.net.Uri
 import android.provider.Telephony
 import android.telephony.CarrierConfigManager
@@ -164,13 +163,14 @@ object MmsTransport {
 
     /** A picture made small enough for the carrier: smaller sides, then lower quality, as needed. */
     private fun shrinkImage(context: Context, uri: Uri, budget: Int): ByteArray? = runCatching {
+        // A picture chosen on the phone may be any file: decoded once, in the
+        // isolated decoder, then made smaller here from plain pixels. Sending
+        // already runs off the main thread.
+        val full = kotlinx.coroutines.runBlocking { com.yaz.sms.core.security.SafeImages.decode(context, uri, 1600) } ?: return@runCatching null
         var side = 1600
         while (side >= 320) {
-            val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
-                val scale = side.toFloat() / maxOf(info.size.width, info.size.height)
-                if (scale < 1f) decoder.setTargetSize((info.size.width * scale).toInt(), (info.size.height * scale).toInt())
-                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            }
+            val scale = side.toFloat() / maxOf(full.width, full.height)
+            val bitmap = if (scale < 1f) Bitmap.createScaledBitmap(full, (full.width * scale).toInt().coerceAtLeast(1), (full.height * scale).toInt().coerceAtLeast(1), true) else full
             for (quality in intArrayOf(85, 70, 55, 40)) {
                 val out = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
