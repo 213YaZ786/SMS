@@ -117,6 +117,11 @@ class ChatConnection(private val context: Context) : Connection(), KoinComponent
         }
     }
 
+    /** A screen effect chosen on Dialer's screen, for the other side. */
+    override fun onCallEvent(event: String?, extras: android.os.Bundle?) {
+        if (event == CallLine.EVENT_EFFECT) CallLine.sendEffect(extras?.getString(CallLine.EXTRA_EFFECT))
+    }
+
     /** Mute and the sound's way, as Dialer's screen sets them through Telecom. */
     @Deprecated("Telecom still calls it on every Android this app runs on")
     override fun onCallAudioStateChanged(state: CallAudioState?) {

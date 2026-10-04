@@ -1,4 +1,4 @@
-package com.yaz.sms.feature.thread
+package com.yaz.sms.ui.effects
 
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.graphicsLayer
@@ -30,26 +30,28 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.yaz.sms.core.sms.Effects.Effect
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
+/** The effects played over a whole screen: a conversation's, a video call's. */
+enum class ScreenKind { FIREWORKS, CONFETTI, BALLOONS, LOVE, LASERS, STARS, CELEBRATION, ECHO, SPOTLIGHT }
+
 /**
- * A screen effect over the conversation, once: fireworks, confetti,
+ * A screen effect over the conversation or the call, once: fireworks, confetti,
  * balloons, a heart, lasers, a shooting star, a celebration, the words'
  * echo or a spotlight on the message at [origin]. Its pieces are glass:
  * see-through tones of the wallpaper's palette with a point of light on
  * each. [onDone] when it has played.
  */
 @Composable
-fun ScreenEffect(effect: Effect, words: String, origin: Offset?, onDone: () -> Unit) {
+fun ScreenEffect(effect: ScreenKind, words: String, origin: Offset?, onDone: () -> Unit) {
     val time = remember(effect, words) { Animatable(0f) }
     val length = when (effect) {
-        Effect.FIREWORKS -> 3600
-        Effect.LASERS -> 3200
-        Effect.BALLOONS, Effect.ECHO -> 3400
+        ScreenKind.FIREWORKS -> 3600
+        ScreenKind.LASERS -> 3200
+        ScreenKind.BALLOONS, ScreenKind.ECHO -> 3400
         else -> 2800
     }
     LaunchedEffect(effect, words) {
@@ -66,21 +68,23 @@ fun ScreenEffect(effect: Effect, words: String, origin: Offset?, onDone: () -> U
     val pieces = remember(effect, words) { List(220) { floatArrayOf(seed.nextFloat(), seed.nextFloat(), seed.nextFloat(), seed.nextFloat(), seed.nextFloat()) } }
     val textColor = scheme.onSurface
     // The festive ones play Google's animated emoji (Noto, CC BY 4.0) across
-    // the screen, the drawn shapes kept as a light layer under them.
+    // the screen, the drawn shapes kept as a light layer under them. The app
+    // keeps them in assets/emoji (1f38a, 1f388, 1f389, 2764_fe0f, 2728 .json)
+    // and depends on com.airbnb.android:lottie-compose.
     lottieOf(effect)?.let { name -> LottieShower(name, effect, words, time.value, pieces) }
     Canvas(Modifier.fillMaxSize()) {
         val t = time.value
         val fade = if (t > 0.85f) (1f - t) / 0.15f else 1f
         when (effect) {
-            Effect.CONFETTI -> confetti(t, fade, pieces, palette)
-            Effect.BALLOONS -> balloons(t, pieces, palette)
-            Effect.FIREWORKS -> fireworks(t, fade, pieces, palette)
-            Effect.LOVE -> love(t, fade, origin)
-            Effect.LASERS -> lasers(t, fade, palette)
-            Effect.STARS -> stars(t, fade, pieces)
-            Effect.CELEBRATION -> celebration(t, fade, pieces)
-            Effect.SPOTLIGHT -> spotlight(t, origin)
-            Effect.ECHO -> {
+            ScreenKind.CONFETTI -> confetti(t, fade, pieces, palette)
+            ScreenKind.BALLOONS -> balloons(t, pieces, palette)
+            ScreenKind.FIREWORKS -> fireworks(t, fade, pieces, palette)
+            ScreenKind.LOVE -> love(t, fade, origin)
+            ScreenKind.LASERS -> lasers(t, fade, palette)
+            ScreenKind.STARS -> stars(t, fade, pieces)
+            ScreenKind.CELEBRATION -> celebration(t, fade, pieces)
+            ScreenKind.SPOTLIGHT -> spotlight(t, origin)
+            ScreenKind.ECHO -> {
                 val layout = measurer.measure(words.take(40), TextStyle(fontSize = 18.sp, color = textColor))
                 pieces.take(26).forEachIndexed { i, p ->
                     val appear = (t * 1.6f - p[2] * 0.6f).coerceIn(0f, 1f)
@@ -268,12 +272,12 @@ private fun DrawScope.spotlight(t: Float, origin: Offset?) {
 }
 
 /** The animated emoji of a screen effect, or null when it is drawn only. */
-private fun lottieOf(effect: Effect): String? = when (effect) {
-    Effect.CONFETTI -> "1f38a"
-    Effect.BALLOONS -> "1f388"
-    Effect.CELEBRATION -> "1f389"
-    Effect.LOVE -> "2764_fe0f"
-    Effect.STARS -> "2728"
+private fun lottieOf(effect: ScreenKind): String? = when (effect) {
+    ScreenKind.CONFETTI -> "1f38a"
+    ScreenKind.BALLOONS -> "1f388"
+    ScreenKind.CELEBRATION -> "1f389"
+    ScreenKind.LOVE -> "2764_fe0f"
+    ScreenKind.STARS -> "2728"
     else -> null
 }
 
@@ -283,9 +287,9 @@ private fun lottieOf(effect: Effect): String? = when (effect) {
  * party poppers go off along the sides; each plays its own animation.
  */
 @Composable
-private fun LottieShower(name: String, effect: Effect, words: String, t: Float, pieces: List<FloatArray>) {
+private fun LottieShower(name: String, effect: ScreenKind, words: String, t: Float, pieces: List<FloatArray>) {
     val composition by com.airbnb.lottie.compose.rememberLottieComposition(com.airbnb.lottie.compose.LottieCompositionSpec.Asset("emoji/$name.json"))
-    val count = when (effect) { Effect.BALLOONS -> 9; Effect.LOVE -> 8; Effect.STARS -> 10; else -> 6 }
+    val count = when (effect) { ScreenKind.BALLOONS -> 9; ScreenKind.LOVE -> 8; ScreenKind.STARS -> 10; else -> 6 }
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         val w = maxWidth
         val h = maxHeight
@@ -295,7 +299,7 @@ private fun LottieShower(name: String, effect: Effect, words: String, t: Float, 
             val local = ((t - start) / 0.55f).coerceIn(0f, 1f)
             if (local <= 0f || local >= 1f) return@repeat
             val size = w * (0.22f + p[3] * 0.16f)
-            val rising = effect == Effect.BALLOONS || effect == Effect.LOVE
+            val rising = effect == ScreenKind.BALLOONS || effect == ScreenKind.LOVE
             val x = (w - size) * p[0]
             val y = if (rising) h * (1.05f - local * (1.15f + p[1] * 0.2f)) else (h * 0.65f) * p[1]
             val alpha = when {

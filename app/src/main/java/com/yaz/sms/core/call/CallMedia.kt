@@ -51,7 +51,9 @@ class CallMedia(
     val video: Boolean,
     private val onState: (String) -> Unit,
     /** The size of each picture as it comes, so Dialer frames it without stretching it. */
-    private val onSize: (remote: Boolean, width: Int, height: Int) -> Unit = { _, _, _ -> }
+    private val onSize: (remote: Boolean, width: Int, height: Int) -> Unit = { _, _, _ -> },
+    /** A screen effect the other side sent (its name). */
+    private val onEffect: (String) -> Unit = {}
 ) {
 
     private val factory: PeerConnectionFactory
@@ -59,6 +61,7 @@ class CallMedia(
     private val pc: PeerConnection
     private val track: AudioTrack
     private val gathered = CompletableDeferred<Unit>()
+    private var effects: DataChannel? = null
 
     // Video: one GL context for the codecs and the two pictures Dialer lends.
     private val egl: EglBase? = if (video) EglBase.create() else null
@@ -91,6 +94,23 @@ class CallMedia(
         val source = factory.createAudioSource(MediaConstraints())
         track = factory.createAudioTrack("voice", source)
         pc.addTrack(track, listOf("call"))
+        // Screen effects sent during the call: a channel of their own, made the same way on both
+        // sides before the offer and the answer, encrypted with the call (DTLS).
+        effects = pc.createDataChannel("effects", DataChannel.Init().apply {
+            negotiated = true
+            id = 0
+        })?.also { channel ->
+            channel.registerObserver(object : DataChannel.Observer {
+                override fun onBufferedAmountChange(previous: Long) = Unit
+                override fun onStateChange() = Unit
+                override fun onMessage(buffer: DataChannel.Buffer) {
+                    val data = buffer.data
+                    if (buffer.binary || data.remaining() !in 1..32) return
+                    val bytes = ByteArray(data.remaining()).also { data.get(it) }
+                    onEffect(String(bytes, Charsets.US_ASCII))
+                }
+            })
+        }
         if (video) {
             val vs = factory.createVideoSource(false).also { videoSource = it }
             localTrack = factory.createVideoTrack("camera", vs).also {
@@ -187,11 +207,20 @@ class CallMedia(
         track.setEnabled(!on)
     }
 
+    /** A screen effect to the other side, by its name. */
+    fun sendEffect(name: String) {
+        val channel = effects ?: return
+        if (channel.state() != DataChannel.State.OPEN) return
+        runCatching { channel.send(DataChannel.Buffer(java.nio.ByteBuffer.wrap(name.toByteArray(Charsets.US_ASCII)), false)) }
+    }
+
     fun close() {
         camera(null)
         runCatching { cameraHelper?.dispose() }
         remoteView.release()
         localView.release()
+        effects?.let { runCatching { it.unregisterObserver(); it.close(); it.dispose() } }
+        effects = null
         runCatching { pc.dispose() }
         runCatching { factory.dispose() }
         runCatching { audio.release() }

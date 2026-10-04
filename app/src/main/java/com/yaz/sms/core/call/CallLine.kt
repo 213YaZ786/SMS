@@ -55,7 +55,7 @@ object CallLine : KoinComponent {
         keep(context)
         scope.launch {
             runCatching {
-                val line = CallMedia(context, chat.iceServers(), call.video, ::onState, ::onSize).also { media = it }
+                val line = CallMedia(context, chat.iceServers(), call.video, ::onState, ::onSize, ::onEffect).also { media = it }
                 val id = chat.placeCall(call.phone, line.offer(), call.video) ?: error("not sent")
                 CallBook.update { it.copy(msgId = id) }
             }.onFailure { CallBook.connection?.finish(DisconnectCause.ERROR) }
@@ -72,7 +72,7 @@ object CallLine : KoinComponent {
         CallBook.update { it.copy(phase = Phase.CONNECTING) }
         scope.launch {
             runCatching {
-                val line = CallMedia(context, chat.iceServers(), call.video, ::onState, ::onSize).also { media = it }
+                val line = CallMedia(context, chat.iceServers(), call.video, ::onState, ::onSize, ::onEffect).also { media = it }
                 check(chat.acceptCall(id, line.answer(offer)))
             }.onFailure { CallBook.connection?.hangUp(DisconnectCause.ERROR) }
         }
@@ -86,6 +86,30 @@ object CallLine : KoinComponent {
     fun camera(id: String?) = runCatching { media?.camera(id) }
     fun showRemote(surface: android.view.Surface?) = runCatching { media?.showRemote(surface) }
     fun showLocal(surface: android.view.Surface?) = runCatching { media?.showLocal(surface) }
+
+    /**
+     * A screen effect chosen on Dialer's screen goes to the other side; one
+     * from the other side goes to Dialer's screen. Only the effects Dialer
+     * plays, and at most one every 1.5 s from the other side.
+     */
+    fun sendEffect(name: String?) {
+        if (name in EFFECTS) media?.sendEffect(name!!)
+    }
+
+    @Volatile private var lastEffect = 0L
+
+    private fun onEffect(name: String) {
+        if (name !in EFFECTS) return
+        val now = System.currentTimeMillis()
+        if (now - lastEffect < 1500) return
+        lastEffect = now
+        CallBook.connection?.sendConnectionEvent(EVENT_EFFECT, android.os.Bundle().apply { putString(EXTRA_EFFECT, name) })
+    }
+
+    /** Between Dialer and this line, through Telecom (YAZ.md). */
+    const val EVENT_EFFECT = "com.yaz.call.EFFECT"
+    const val EXTRA_EFFECT = "effect"
+    private val EFFECTS = setOf("FIREWORKS", "CONFETTI", "BALLOONS", "LOVE", "LASERS", "STARS", "CELEBRATION")
 
     /** Over, whoever ended it. */
     fun close(context: Context) {

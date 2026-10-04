@@ -534,7 +534,7 @@ private fun ThreadContent(
             )
           }
           // A screen effect over everything, letting touches through.
-          playing?.let { (e, w, o) -> ScreenEffect(e, w, o) { playing = null } }
+          playing?.let { (e, w, o) -> com.yaz.sms.ui.effects.ScreenEffect(com.yaz.sms.ui.effects.ScreenKind.valueOf(e.name), w, o) { playing = null } }
         }
     ) { padding ->
         val inset = LocalReadableInset.current
