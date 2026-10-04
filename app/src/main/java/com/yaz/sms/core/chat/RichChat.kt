@@ -228,7 +228,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             }
             engine.call("start_io", account)
             _ready.value = true
-            scope.launch { tend() }
+            scope.launch {
+                trimRelays()
+                tend()
+            }
             scope.launch { prune() }
             _status.value = "Connected"
         }.onFailure { error ->
@@ -291,6 +294,32 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             }
         }
         _changes.value++
+    }
+
+    /**
+     * Two relays at most: the one the profile sends through and one backup.
+     * Every message comes to each relay of the profile and the engine keeps
+     * a connection open to each, renewed every five minutes: more relays are
+     * more of the phone's radio woken for the same messages. The engine's
+     * own additions (up to three) are turned off; removed relays are told to
+     * the contacts by the engine, who then stop writing there.
+     */
+    private suspend fun trimRelays() = withContext(Dispatchers.IO) {
+        tending.withLock {
+            runCatching { engine.call("set_config", account, "autorelay", "0") }
+            val transports = runCatching {
+                engine.call("list_transports", account).jsonArray.mapNotNull { (it as? JsonObject)?.get("addr")?.jsonPrimitive?.contentOrNull }
+            }.getOrDefault(emptyList())
+            if (transports.size <= MAX_RELAYS) return@withLock
+            val sending = runCatching { engine.call("get_config", account, "configured_addr").jsonPrimitive.contentOrNull }.getOrNull()
+            // The backup kept: the one answering fastest now, else the first listed.
+            val backups = transports.filter { it != sending }
+            val times = coroutineScope { backups.map { addr -> async { addr to Relays.answerTime(addr.substringAfter('@')) } }.map { it.await() } }
+            val keep = setOfNotNull(sending ?: transports.first()) +
+                (times.filter { it.second != null }.minByOrNull { it.second!! }?.first ?: backups.first())
+            transports.filter { it !in keep }.forEach { addr -> runCatching { engine.call("delete_transport", account, addr) } }
+            _changes.value++
+        }
     }
 
     private val health = HealthFile(File(context.filesDir, "relay-health.json"), json)
@@ -930,6 +959,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         private const val DEFAULT_GROUP_NAME = "SMS"
         /** The engine's id for the user themselves among a chat's contacts. */
         private const val SELF = 1
+        /** The relays a profile keeps: the sending one and one backup. */
+        private const val MAX_RELAYS = 2
         /** A number without SMS is asked again only a month later. */
         private const val ASK_AGAIN_MS = 30L * 24 * 60 * 60 * 1000
         /** The engine's events that change what a screen shows. */
