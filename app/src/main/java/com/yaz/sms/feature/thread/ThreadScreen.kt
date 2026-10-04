@@ -465,7 +465,7 @@ private fun ThreadContent(
                         look = if (group) null else entry?.look
                     )
                 }
-                CallButtons(calls)
+                CallButtons(calls, onAddContact = if (!group && entry == null && to.count(Char::isDigit) >= 3) ({ NumberActions.addContact(context, to) }) else null)
             }
 
             androidx.compose.animation.AnimatedVisibility(visible = searching) {

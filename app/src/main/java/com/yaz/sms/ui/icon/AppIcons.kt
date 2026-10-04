@@ -77,6 +77,14 @@ object AppIcons {
     /** A warning: a link that may be a scam. */
     val Warning: ImageVector by lazy { build("Warning", "M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z") }
 
+    /** A conversation's calls and contact, folded (Material Icons "grid_view", Apache-2.0). */
+    val GridView: ImageVector by lazy {
+        build(
+            "GridView",
+            "M3 3v8h8V3H3zm6 6H5V5h4v4zm-6 4v8h8v-8H3zm6 6H5v-4h4v4zm4-16v8h8V3h-8zm6 6h-4V5h4v4zm-6 4v8h8v-8h-8zm6 6h-4v-4h4v4z"
+        )
+    }
+
     /** An encrypted call: the handset with a padlock (Material Icons "phone_locked", Apache-2.0). */
     val CallLocked: ImageVector by lazy {
         build(

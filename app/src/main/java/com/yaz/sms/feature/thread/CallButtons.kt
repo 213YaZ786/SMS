@@ -12,6 +12,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,21 +87,81 @@ fun GlassCallButton(icon: ImageVector, label: String, color: Color, onTap: () ->
 }
 
 /**
- * The calls at the top right: with the encrypted chat, the encrypted call
- * (the handset with a padlock, in the accent; held, a video call), then
- * the green phone call, which opens Dialer with the number ready, its Call
- * a second tap on purpose against a slip.
+ * The conversation's ways to reach the person, folded at the top right
+ * under one button of four squares: unfolded downwards, the phone call
+ * (Dialer's dialpad, its Call a second tap against a slip), with the
+ * encrypted chat the encrypted call and the video call, and Add contact
+ * for a number not yet saved. The rest stays on the person's page.
  */
 @Composable
-fun CallButtons(choices: CallChoices) {
-    androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
-        choices.encrypted?.let { call ->
-            GlassCallButton(
-                AppIcons.CallLocked, "Encrypted call", androidx.compose.material3.MaterialTheme.colorScheme.primary, call,
-                iconTint = androidx.compose.material3.MaterialTheme.colorScheme.onPrimary,
-                holdLabel = "Encrypted video call", onHold = choices.video, diameter = 44.dp
-            )
+fun CallButtons(choices: CallChoices, onAddContact: (() -> Unit)? = null) {
+    val actions = buildList {
+        choices.phone?.let { add(Reach(AppIcons.Call, "Call", CallGreen, Color.White, it)) }
+        choices.encrypted?.let { add(Reach(AppIcons.CallLocked, "Encrypted call", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, it)) }
+        choices.video?.let { add(Reach(AppIcons.Videocam, "Video call", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, it)) }
+        onAddContact?.let { add(Reach(AppIcons.PersonAdd, "Add contact", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer, it)) }
+    }
+    if (actions.isEmpty()) return
+    var open by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    Box {
+        com.yaz.sms.ui.component.FloatingAction(if (open) AppIcons.Close else AppIcons.GridView, if (open) "Close" else "Calls and contact", { open = !open })
+        if (open) {
+            val margin = with(androidx.compose.ui.platform.LocalDensity.current) { 10.dp.roundToPx() }
+            androidx.compose.ui.window.Popup(
+                popupPositionProvider = remember { Below(margin) },
+                onDismissRequest = { open = false },
+                properties = androidx.compose.ui.window.PopupProperties(focusable = true)
+            ) {
+                androidx.compose.foundation.layout.Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
+                ) {
+                    actions.forEachIndexed { i, reach ->
+                        Drop(i) {
+                            GlassCallButton(reach.icon, reach.label, reach.color, {
+                                open = false
+                                reach.onTap()
+                            }, iconTint = reach.tint, diameter = 48.dp)
+                        }
+                    }
+                }
+            }
         }
-        choices.phone?.let { phone -> GlassCallButton(AppIcons.Call, "Call", CallGreen, phone, diameter = 44.dp) }
+    }
+}
+
+private class Reach(val icon: ImageVector, val label: String, val color: Color, val tint: Color, val onTap: () -> Unit)
+
+/** Falls into place from the button, a little after the one above it. */
+@Composable
+private fun Drop(order: Int, content: @Composable () -> Unit) {
+    val fall = remember { Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(order * 45L)
+        fall.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 420f))
+    }
+    Box(Modifier.graphicsLayer {
+        val p = fall.value
+        alpha = p.coerceIn(0f, 1f)
+        val sc = 0.6f + 0.4f * p
+        scaleX = sc
+        scaleY = sc
+        translationY = (1f - p) * -20.dp.toPx()
+    }) { content() }
+}
+
+/** Under its anchor, centred on it, kept on screen. */
+private class Below(val margin: Int) : androidx.compose.ui.window.PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: androidx.compose.ui.unit.IntRect,
+        windowSize: androidx.compose.ui.unit.IntSize,
+        layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+        popupContentSize: androidx.compose.ui.unit.IntSize
+    ): androidx.compose.ui.unit.IntOffset {
+        val x = anchorBounds.center.x - popupContentSize.width / 2
+        return androidx.compose.ui.unit.IntOffset(
+            x.coerceIn(margin, (windowSize.width - popupContentSize.width - margin).coerceAtLeast(margin)),
+            anchorBounds.bottom + margin
+        )
     }
 }
