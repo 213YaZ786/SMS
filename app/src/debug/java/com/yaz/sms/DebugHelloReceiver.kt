@@ -20,6 +20,14 @@ import org.koin.core.component.inject
 class DebugHelloReceiver : BroadcastReceiver(), KoinComponent {
     private val chat: RichChat by inject()
     override fun onReceive(context: Context, intent: Intent) {
+        // --ez out true: this phone's invite link into files/invite.txt (run-as), to join it from another emulator.
+        if (intent.getBooleanExtra("out", false)) {
+            val done = goAsync()
+            CoroutineScope(Dispatchers.IO).launch {
+                try { chat.inviteLink()?.let { java.io.File(context.filesDir, "invite.txt").writeText(it) } } finally { done.finish() }
+            }
+            return
+        }
         val from = intent.getStringExtra("from") ?: return
         intent.getStringExtra("link")?.let { link ->
             val done = goAsync()
