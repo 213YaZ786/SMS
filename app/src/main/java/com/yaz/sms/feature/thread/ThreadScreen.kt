@@ -38,6 +38,8 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.exclude
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -176,8 +178,9 @@ private fun ThreadContent(
     val messages: Messages = koinInject()
     val book: PhoneBook = koinInject()
     val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { if (book.canRead()) book.refresh() }
     val contacts by book.entries.collectAsState()
+    // Read once, then kept up to date by the book itself: not again at each conversation opened.
+    LaunchedEffect(Unit) { if (book.canRead() && contacts.isEmpty()) book.refresh() }
     val changes by messages.changes.collectAsState()
     val chat: RichChat = koinInject()
     val chatChanges by chat.changes.collectAsState()
@@ -432,8 +435,10 @@ private fun ThreadContent(
         LaunchedEffect(Unit) { if (window < 5000) window = 5000 }
         SharedPage(if (group) title else entry?.name ?: Numbers.format(context, to), list, stranger = { m -> index.find(T9.clean(m.address)) == null }) { sharedOpen = false }
     }
+    // The keyboard lifts the conversation with the field, the message being answered kept in sight.
+    val keyboard = WindowInsets.ime.exclude(WindowInsets.navigationBars).asPaddingValues().calculateBottomPadding()
     FloatingFrame(
-        bottom = composerHeight + 8.dp,
+        bottom = composerHeight + 8.dp + keyboard,
         top = {
             // Back, the person's face and name, and the calls one tap away on the right.
           Column(horizontalAlignment = Alignment.CenterHorizontally) {

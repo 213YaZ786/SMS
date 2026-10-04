@@ -71,7 +71,9 @@ class Engine(private val context: Context, private val scope: CoroutineScope) {
         Thread { read(started.inputStream.bufferedReader()) }.apply { isDaemon = true }.start()
         pump = scope.launch(Dispatchers.IO) {
             while (isActive && running) {
-                val event = runCatching { call("get_next_event") }.getOrNull() as? JsonObject ?: continue
+                val event = runCatching { call("get_next_event") }.getOrNull() as? JsonObject
+                // A failed call is retried after a pause, never in a loop that holds a core.
+                if (event == null) { kotlinx.coroutines.delay(2000); continue }
                 val payload = event["event"] as? JsonObject ?: continue
                 val kind = payload["kind"]?.jsonPrimitive?.content ?: continue
                 _events.tryEmit(ChatEvent(event["contextId"]?.jsonPrimitive?.int ?: 0, kind, payload))

@@ -134,29 +134,35 @@ object MmsStore {
     }
 
     /** The text of a message and its other parts, the presentation (SMIL) left out. */
-    fun parts(context: Context, id: Long): Pair<String, List<MmsPart>> {
-        val text = StringBuilder()
-        val media = ArrayList<MmsPart>()
-        runCatching {
-            context.contentResolver.query(
-                Uri.parse("content://mms/part"),
-                arrayOf(Telephony.Mms.Part._ID, Telephony.Mms.Part.CONTENT_TYPE, Telephony.Mms.Part.TEXT, Telephony.Mms.Part.NAME, Telephony.Mms.Part.FILENAME),
-                "${Telephony.Mms.Part.MSG_ID} = ?", arrayOf(id.toString()), null
-            )?.use { c ->
-                while (c.moveToNext()) {
-                    val type = c.getString(1).orEmpty().lowercase()
-                    when {
-                        type == ContentType.TEXT_PLAIN -> {
-                            val t = c.getString(2).orEmpty()
-                            if (t.isNotBlank()) text.append(if (text.isEmpty()) t else "\n$t")
+    fun parts(context: Context, id: Long): Pair<String, List<MmsPart>> = parts(context, listOf(id))[id] ?: ("" to emptyList())
+
+    /** The same for many messages, read in one query per few hundred: a conversation of photos opens at once. */
+    fun parts(context: Context, ids: Collection<Long>): Map<Long, Pair<String, List<MmsPart>>> {
+        val text = HashMap<Long, StringBuilder>()
+        val media = HashMap<Long, ArrayList<MmsPart>>()
+        ids.distinct().chunked(500).forEach { chunk ->
+            runCatching {
+                context.contentResolver.query(
+                    Uri.parse("content://mms/part"),
+                    arrayOf(Telephony.Mms.Part._ID, Telephony.Mms.Part.CONTENT_TYPE, Telephony.Mms.Part.TEXT, Telephony.Mms.Part.NAME, Telephony.Mms.Part.FILENAME, Telephony.Mms.Part.MSG_ID),
+                    "${Telephony.Mms.Part.MSG_ID} IN (${chunk.joinToString(",") { "?" }})", chunk.map { it.toString() }.toTypedArray(), Telephony.Mms.Part._ID
+                )?.use { c ->
+                    while (c.moveToNext()) {
+                        val mid = c.getLong(5)
+                        val type = c.getString(1).orEmpty().lowercase()
+                        when {
+                            type == ContentType.TEXT_PLAIN -> {
+                                val t = c.getString(2).orEmpty()
+                                if (t.isNotBlank()) text.getOrPut(mid) { StringBuilder() }.let { if (it.isEmpty()) it.append(t) else it.append('\n').append(t) }
+                            }
+                            type == ContentType.APP_SMIL || type.startsWith("application/smil") -> Unit
+                            else -> media.getOrPut(mid) { ArrayList() } += MmsPart(Uri.parse("content://mms/part/${c.getLong(0)}"), type, c.getString(3) ?: c.getString(4))
                         }
-                        type == ContentType.APP_SMIL || type.startsWith("application/smil") -> Unit
-                        else -> media += MmsPart(Uri.parse("content://mms/part/${c.getLong(0)}"), type, c.getString(3) ?: c.getString(4))
                     }
                 }
             }
         }
-        return text.toString() to media
+        return ids.associateWith { (text[it]?.toString().orEmpty()) to (media[it] ?: emptyList()) }
     }
 
     /** Who sent a received message. */

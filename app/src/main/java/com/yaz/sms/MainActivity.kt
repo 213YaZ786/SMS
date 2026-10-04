@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Only on a real launch: a recreated activity already took it.
         if (savedInstanceState == null) receive(intent)
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) { com.yaz.sms.core.sms.Tapbacks.warm() }
         setContent {
             AppSurface { SmsApp() }
         }

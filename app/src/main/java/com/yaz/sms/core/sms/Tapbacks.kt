@@ -25,6 +25,9 @@ internal object Tapbacks {
 
     private val patterns: List<Pattern> by lazy { FORMS.mapNotNull(::compile) }
 
+    /** Compiled ahead, off the main thread: the first conversation opened no longer waits for them. */
+    fun warm() { patterns.size }
+
     /** Quick look before the patterns: a reaction quotes something, or names a picture in a few words. */
     fun mayBe(body: String): Boolean = body.length in 4..2000 && (body.length <= SHORT || body.any { it in QUOTES })
 

@@ -610,7 +610,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             }
             "ReactionsChanged", "IncomingReaction" -> if (msgId != null) readReactions(msgId)
         }
-        _changes.value++
+        // Only what a screen shows: the engine's own logs and connections redrew every open conversation.
+        if (event.kind in SHOWN) _changes.value++
     }
 
     /**
@@ -931,6 +932,12 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         private const val SELF = 1
         /** A number without SMS is asked again only a month later. */
         private const val ASK_AGAIN_MS = 30L * 24 * 60 * 60 * 1000
+        /** The engine's events that change what a screen shows. */
+        private val SHOWN = setOf(
+            "IncomingMsg", "MsgDelivered", "MsgFailed", "MsgRead", "MsgsChanged", "MsgDeleted",
+            "ReactionsChanged", "IncomingReaction", "ChatModified", "ChatEphemeralTimerModified",
+            "SecurejoinJoinerProgress", "SecurejoinInviterProgress", "TransportsModified"
+        )
     }
 }
 
