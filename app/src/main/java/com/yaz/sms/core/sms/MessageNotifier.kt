@@ -122,6 +122,31 @@ class MessageNotifier(private val context: Context) {
 
     fun cancel(threadId: Long) = notifications.cancel(threadId.toInt())
 
+    /**
+     * Read in its bubble: the notification stays, as the bubble lives only
+     * with it, but leaves the shade and makes no sound again.
+     */
+    fun settle(threadId: Long) {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val active = manager.activeNotifications.firstOrNull { it.id == threadId.toInt() && it.packageName == context.packageName } ?: return
+        val bubble = active.notification.bubbleMetadata ?: return
+        if (bubble.isNotificationSuppressed) return
+        val intent = bubble.intent ?: return
+        val icon = bubble.icon ?: return
+        runCatching {
+            val note = Notification.Builder.recoverBuilder(context, active.notification)
+                .setOnlyAlertOnce(true)
+                .setBubbleMetadata(
+                    Notification.BubbleMetadata.Builder(intent, icon)
+                        .setDesiredHeight(bubble.desiredHeight)
+                        .setSuppressNotification(true)
+                        .build()
+                )
+                .build()
+            manager.notify(threadId.toInt(), note)
+        }
+    }
+
     /** The user silenced this conversation for now. */
     private fun silenced(threadId: Long): Boolean = runCatching {
         (org.koin.core.context.GlobalContext.get().get<com.yaz.sms.data.settings.SettingsStore>().current.silenced[threadId] ?: 0L) > System.currentTimeMillis()

@@ -15,7 +15,7 @@ class BubbleActivity : ComponentActivity() {
         val address = intent.getStringExtra(MainActivity.EXTRA_ADDRESS).orEmpty()
         setContent {
             AppSurface {
-                ReadableScroll { ThreadScreen(threadId = thread, address = address, draft = "", onBack = { finish() }) }
+                ReadableScroll { ThreadScreen(threadId = thread, address = address, draft = "", onBack = { finish() }, bubble = true) }
             }
         }
     }

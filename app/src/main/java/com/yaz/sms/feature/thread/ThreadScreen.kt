@@ -132,7 +132,7 @@ import org.koin.compose.koinInject
  * glass. Opening it marks it read.
  */
 @Composable
-fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> Unit) {
+fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> Unit, bubble: Boolean = false) {
     // The conversation's own background: the light all its glass lies on.
     val store: SettingsStore = koinInject()
     val settings by store.settings.collectAsState()
@@ -157,7 +157,7 @@ fun ThreadScreen(threadId: Long?, address: String, draft: String, onBack: () -> 
                     }
                 }
             }
-            ThreadContent(threadId, address, draft, onBack, base, picture, doodles = chosen == DOODLE, onThread = { shownThread = it })
+            ThreadContent(threadId, address, draft, onBack, base, picture, doodles = chosen == DOODLE, bubble = bubble, onThread = { shownThread = it })
             SceneWash(look)
         }
     }
@@ -172,6 +172,7 @@ private fun ThreadContent(
     appLook: com.yaz.sms.ui.glass.GlassLook?,
     picture: androidx.compose.ui.graphics.ImageBitmap?,
     doodles: Boolean,
+    bubble: Boolean,
     onThread: (Long?) -> Unit
 ) {
     val context = LocalContext.current
@@ -182,6 +183,7 @@ private fun ThreadContent(
     // Read once, then kept up to date by the book itself: not again at each conversation opened.
     LaunchedEffect(Unit) { if (book.canRead() && contacts.isEmpty()) book.refresh() }
     val changes by messages.changes.collectAsState()
+    LaunchedEffect(Unit) { messages.watch() }
     val chat: RichChat = koinInject()
     val chatChanges by chat.changes.collectAsState()
     val links by chat.links.collectAsState()
@@ -212,7 +214,8 @@ private fun ThreadContent(
         list = messages.thread(t, window)
         if (!shown) return@LaunchedEffect
         if (list.any { it.box == MessageBox.RECEIVED && !it.read }) messages.markRead(t)
-        MessageNotifier(context).cancel(t)
+        // In its bubble the notification holds the bubble: it is only quieted.
+        if (bubble) MessageNotifier(context).settle(t) else MessageNotifier(context).cancel(t)
     }
     val index = remember(contacts, com.yaz.sms.core.dial.PrivateNames.version.intValue) { PhoneIndex(contacts) }
     val to = people.firstOrNull().orEmpty()
@@ -339,6 +342,10 @@ private fun ThreadContent(
         val from = list
         rows = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { rowsOf(from) }
         rowsOfList = from
+    }
+    // A message added at the bottom while reading there comes into sight, not under the field.
+    LaunchedEffect(rows.lastOrNull()?.key, waiting.size) {
+        if (listState.firstVisibleItemIndex <= 2) listState.animateScrollToItem(0)
     }
     // The person's page, opened from their face: the calls, the tools, what was shared.
     var personOpen by remember { mutableStateOf(false) }

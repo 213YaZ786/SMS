@@ -102,11 +102,15 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
 
     fun refresh() {
         if (!canRead()) return
-        if (!watching) {
-            runCatching { context.contentResolver.registerContentObserver(Uri.parse("content://mms-sms/"), true, observer) }
-            watching = true
-        }
+        watch()
         scope.launch { load() }
+    }
+
+    /** Follows the store, for a conversation opened alone (a bubble) to see what comes and goes. */
+    fun watch() {
+        if (watching || !canRead()) return
+        runCatching { context.contentResolver.registerContentObserver(Uri.parse("content://mms-sms/"), true, observer) }
+        watching = true
     }
 
     private suspend fun load() {
