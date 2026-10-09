@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -194,6 +195,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private val _status = MutableStateFlow("Off")
     val status: StateFlow<String> = _status.asStateFlow()
 
+    private val _outgoing = MutableStateFlow<Set<Int>>(emptySet())
+    /** Messages handed to the engine and not yet sent or failed. */
+    val outgoing: StateFlow<Set<Int>> = _outgoing.asStateFlow()
+
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
@@ -215,6 +220,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     /** The profile on the relay made and connected; false when off or unreachable. */
     suspend fun start(): Boolean = lock.withLock {
         if (!enabled) return false
+        // Started off screen (a reply from a notification, an invite): it stops again once done.
+        ChatLife.settle()
         if (_ready.value && engine.running) return true
         _status.value = "Connecting"
         runCatching {
@@ -492,6 +499,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     /** An invite from [from]: joined, and its nonce sent back over the chat as proof. */
     suspend fun onHello(from: String, hello: Hello) {
         if (!enabled || !start()) return
+        // The key exchange takes a few round trips over the relay.
+        ChatLife.hold(2 * 60 * 1000L)
         val chat = runCatching { engine.call("secure_join", account, hello.link()).jsonPrimitive.int }.getOrNull() ?: return
         // The proof waits until the keys are exchanged: relays take only encrypted mail.
         proofs[chat] = hello.nonce
@@ -591,12 +600,15 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                     }
                 }
             }
-            "MsgDelivered" -> if (msgId != null) _refs.value[msgId]?.let {
-                mark(it, failed = false)
-                // Sent, its media is in Android's store: the engine's copy goes.
-                if (it.mms) runCatching { engine.call("get_message", account, msgId).jsonObject["file"]?.jsonPrimitive?.contentOrNull?.let { f -> File(f).delete() } }
+            "MsgDelivered", "MsgFailed" -> if (msgId != null) {
+                _outgoing.update { it - msgId }
+                val ref = _refs.value[msgId]
+                if (ref != null) {
+                    mark(ref, failed = event.kind == "MsgFailed")
+                    // Sent, its media is in Android's store: the engine's copy goes.
+                    if (ref.mms && event.kind == "MsgDelivered") runCatching { engine.call("get_message", account, msgId).jsonObject["file"]?.jsonPrimitive?.contentOrNull?.let { f -> File(f).delete() } }
+                }
             }
-            "MsgFailed" -> if (msgId != null) _refs.value[msgId]?.let { mark(it, failed = true) }
             "MsgRead" -> if (msgId != null) _refs.value[msgId]?.let { saveRef(msgId, it.copy(seen = true)) }
             // Edited or pinned on the other side, or a vanishing message gone.
             "MsgsChanged" -> if (msgId != null) _refs.value[msgId]?.let { refresh(msgId, it) }
@@ -710,6 +722,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         return runCatching {
             if (attachments.isEmpty()) {
                 val id = engine.call("send_msg", account, chatId, mapOf("text" to text, "quotedText" to quote)).jsonPrimitive.int
+                _outgoing.update { it + id }
                 if (phones.size == 1) {
                     SmsStore.saveSending(context, phone, text)?.let { saveRef(id, withExpiry(id, RichRef(false, it, mine = true, chat = chatId))) }
                 } else {
@@ -731,6 +744,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                         "send_msg", account, chatId,
                         mapOf("text" to caption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (i == 0) quote else null)
                     ).jsonPrimitive.int
+                    _outgoing.update { it + id }
                     MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy)?.let { saveRef(id, withExpiry(id, RichRef(true, it, mine = true, chat = chatId))) }
                     // The engine keeps its own copy.
                     copy.parentFile?.deleteRecursively()

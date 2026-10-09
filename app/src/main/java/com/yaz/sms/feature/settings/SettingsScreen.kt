@@ -98,11 +98,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     checked = settings.richChat,
                     onChange = { on ->
                         viewModel.setRichChat(on)
-                        if (on) com.yaz.sms.core.chat.ChatService.startIfWanted(context, viewModel.store)
-                        else {
-                            com.yaz.sms.core.chat.ChatService.stop(context)
-                            chat.stop()
-                        }
+                        if (on) com.yaz.sms.core.chat.ChatLife.wake() else chat.stop()
                     }
                 )
                 val changes by chat.changes.collectAsState()
@@ -121,19 +117,6 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                         else -> relays[0] + " · backups: " + relays.drop(1).joinToString(", ")
                     },
                     onClick = { dialog = OpenDialog.RELAY }
-                )
-                // Android asks for a notification while the chat stays connected; it can be hidden.
-                if (settings.richChat) SettingRow(
-                    title = "Hide the connection notification",
-                    summary = "The chat keeps receiving; only the notification goes",
-                    onClick = {
-                        open(
-                            context,
-                            Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
-                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
-                                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, com.yaz.sms.core.chat.ChatService.CHANNEL)
-                        )
-                    }
                 )
             }
 

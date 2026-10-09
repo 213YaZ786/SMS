@@ -118,19 +118,13 @@ fun WelcomeScreen(onStart: () -> Unit) {
             onAction = {}
         )
         Spacer(Modifier.height(16.dp))
-        val chatFolded = remember(checks) {
-            context.getSystemService(android.app.NotificationManager::class.java)
-                .getNotificationChannel(com.yaz.sms.core.chat.ChatService.CHANNEL)?.let { it.importance == android.app.NotificationManager.IMPORTANCE_NONE } == true
-        }
         WelcomeZone(
             icon = AppIcons.Lock,
             title = "Encrypted chat",
-            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay. Android shows a notification while it stays connected: turned off, it goes, and the chat keeps receiving.",
-            // Read again on coming back from Android's page.
-            done = !settings.richChat || chatFolded,
-            action = "Hide it",
-            onAction = { com.yaz.sms.core.chat.ChatService.hideNotice(context) },
-            extra = if (settings.richChat && !chatFolded) ({ HideDemo(Modifier.padding(top = 4.dp)) }) else null,
+            message = "With people who use SMS too: end-to-end encrypted, read receipts, reactions, photos in full quality, over the internet through a chatmail relay. Its messages arrive while SMS is open: nothing runs with the app closed.",
+            done = true,
+            action = null,
+            onAction = {},
             toggle = settings.richChat,
             onToggle = { on -> store.update { it.copy(richChat = on) } }
         )

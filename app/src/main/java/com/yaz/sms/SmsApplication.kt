@@ -24,6 +24,7 @@ class SmsApplication : Application() {
             androidContext(this@SmsApplication)
             modules(appModule)
         }
+        com.yaz.sms.core.chat.ChatLife.init(this)
         // What was only passing through (photos cleaned before sending, a shot
         // just taken, files opened in another app) does not pile up over the years.
         Thread {

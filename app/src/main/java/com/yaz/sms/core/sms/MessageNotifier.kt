@@ -43,7 +43,9 @@ class MessageNotifier(private val context: Context) {
         }
         val address = unread.last().first
         val name = ContactLookup.nameOf(context, address) ?: Numbers.format(context, address)
-        val sender = Person.Builder().setName(name).setKey(address).build()
+        // Their face on the conversation, its shortcut and its bubble.
+        val face = Faces.of(context, address, name)
+        val sender = Person.Builder().setName(name).setKey(address).setIcon(face).build()
         val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
         unread.forEach { (_, body, date) -> style.addMessage(Markup.plain(Effects.plain(SmsReactions.plain(body))), date, sender) }
         val code = Codes.find(unread.last().second)
@@ -79,7 +81,7 @@ class MessageNotifier(private val context: Context) {
                     .setShortLabel(name)
                     .setLongLived(true)
                     .setPerson(sender)
-                    .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(context, R.mipmap.ic_launcher))
+                    .setIcon(face)
                     .setIntent(
                         Intent(context, MainActivity::class.java).setAction(MainActivity.ACTION_THREAD)
                             .putExtra(MainActivity.EXTRA_THREAD, threadId).putExtra(MainActivity.EXTRA_ADDRESS, address)
@@ -95,7 +97,7 @@ class MessageNotifier(private val context: Context) {
                             .putExtra(MainActivity.EXTRA_THREAD, threadId).putExtra(MainActivity.EXTRA_ADDRESS, address),
                         PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
                     ),
-                    androidx.core.graphics.drawable.IconCompat.createWithResource(context, R.mipmap.ic_launcher)
+                    face
                 ).setDesiredHeight(640).build()
             )
         }
@@ -157,7 +159,7 @@ class MessageNotifier(private val context: Context) {
         val thread = runCatching { Telephony.Threads.getOrCreateThreadId(context, phone) }.getOrNull() ?: return
         if (silenced(thread)) return
         val name = ContactLookup.nameOf(context, phone) ?: Numbers.format(context, phone)
-        val sender = Person.Builder().setName(name).setKey(phone).build()
+        val sender = Person.Builder().setName(name).setKey(phone).setIcon(Faces.of(context, phone, name)).build()
         val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
             .addMessage(Markup.plain(Effects.plain(text)), System.currentTimeMillis(), sender)
         val builder = NotificationCompat.Builder(context, CHANNEL)

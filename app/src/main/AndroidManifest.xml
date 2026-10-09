@@ -45,11 +45,8 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <!-- A short buzz when a message arrives, as the phone is set. -->
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- The rich chat stays connected while the app is closed, so messages
-         arrive at once without a push service, and again after a restart. -->
+    <!-- An encrypted call keeps its line while it goes on. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Where the phone is, once, when the user taps Place in the composer; never in the background. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -204,22 +201,6 @@
             </intent-filter>
         </receiver>
 
-        <!-- The rich chat's connection while the app is closed. -->
-        <service
-            android:name=".core.chat.ChatService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keeps the end-to-end encrypted chat with other users connected, to receive messages without a push service." />
-        </service>
-        <receiver
-            android:name=".core.chat.BootReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
 
         <!-- Sent and delivered reports, and the actions of the notifications. -->
         <receiver

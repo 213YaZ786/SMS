@@ -7,7 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
-import com.yaz.sms.core.chat.ChatService
 import com.yaz.sms.core.sms.OpenRequest
 import com.yaz.sms.core.sms.OpenRequests
 import com.yaz.sms.data.settings.SettingsStore
@@ -49,7 +48,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        ChatService.startIfWanted(this, settings)
         // Cards shared over the chat: the user's out, the others' to the Contacts app (when SMS opens, never on a timer).
         lifecycleScope.launch { com.yaz.sms.core.chat.Cards.sync(this@MainActivity, org.koin.java.KoinJavaComponent.get(com.yaz.sms.core.chat.RichChat::class.java), settings) }
     }
