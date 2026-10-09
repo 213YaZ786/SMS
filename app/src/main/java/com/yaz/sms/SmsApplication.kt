@@ -33,12 +33,26 @@ class SmsApplication : Application() {
                 java.io.File(cacheDir, dir).walkBottomUp().filter { it.lastModified() < dayAgo && it.name != dir }.forEach { it.delete() }
             }
         }.apply { isDaemon = true }.start()
-        // The public list of dangerous sites follows its setting: fetched when on, deleted when off.
+        // The public list of dangerous sites follows its setting: fetched when on, deleted when off,
+        // once SMS shows, never when Android only wakes it for a message.
         val settings: com.yaz.sms.data.settings.SettingsStore = org.koin.java.KoinJavaComponent.get(com.yaz.sms.data.settings.SettingsStore::class.java)
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
-            settings.settings.map { it.checkLinks }.distinctUntilChanged().collect { on ->
-                if (on) com.yaz.sms.core.link.BadHosts.refresh(this@SmsApplication) else com.yaz.sms.core.link.BadHosts.forget(this@SmsApplication)
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            private var watching = false
+            override fun onActivityStarted(activity: android.app.Activity) {
+                if (watching) return
+                watching = true
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
+                    settings.settings.map { it.checkLinks }.distinctUntilChanged().collect { on ->
+                        if (on) com.yaz.sms.core.link.BadHosts.refresh(this@SmsApplication) else com.yaz.sms.core.link.BadHosts.forget(this@SmsApplication)
+                    }
+                }
             }
-        }
+            override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) = Unit
+            override fun onActivityResumed(activity: android.app.Activity) = Unit
+            override fun onActivityPaused(activity: android.app.Activity) = Unit
+            override fun onActivityStopped(activity: android.app.Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
+            override fun onActivityDestroyed(activity: android.app.Activity) = Unit
+        })
     }
 }
