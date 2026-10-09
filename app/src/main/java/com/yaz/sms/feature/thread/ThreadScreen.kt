@@ -234,6 +234,10 @@ private fun ThreadContent(
 
     val density = LocalDensity.current
     var composerHeight by remember { mutableStateOf(0.dp) }
+    // Where the composer (and the + options) begins and where the list ends, in the window:
+    // the last message keeps the same gap above it, received or sent, options open or not.
+    var composerTop by remember { mutableStateOf(Float.NaN) }
+    var listBottom by remember { mutableStateOf(Float.NaN) }
     // A message swiped to answer it: shown over the field, sent quoted.
     var quote by remember { mutableStateOf<String?>(null) }
     // One of the user's own chat messages being changed: its chat id and text.
@@ -492,6 +496,7 @@ private fun ThreadContent(
                   .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                   .padding(horizontal = LocalReadableInset.current)
                   .onSizeChanged { composerHeight = with(density) { it.height.toDp() } }
+                  .onGloballyPositioned { composerTop = it.boundsInWindow().top }
           ) {
             // Reading further up: the way back to the newest, and how many came in meanwhile.
             val away by remember { derivedStateOf { listState.firstVisibleItemIndex > 1 } }
@@ -557,8 +562,12 @@ private fun ThreadContent(
         LazyColumn(
             state = listState,
             reverseLayout = true,
-            modifier = Modifier.fillMaxSize().padding(horizontal = inset),
-            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 14.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = inset).onGloballyPositioned { listBottom = it.boundsInWindow().bottom },
+            contentPadding = PaddingValues(
+                start = 12.dp, end = 12.dp, top = padding.calculateTopPadding() + 8.dp,
+                bottom = if (composerTop.isNaN() || listBottom.isNaN()) padding.calculateBottomPadding() + 16.dp
+                else with(density) { (listBottom - composerTop).coerceAtLeast(0f).toDp() } + 16.dp
+            ),
             // A short conversation sits by the composer, as a long one does.
             verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom)
         ) {

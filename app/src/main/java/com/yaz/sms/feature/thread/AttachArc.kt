@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -81,14 +82,20 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop
 @Composable
 fun AttachTiles(drops: List<Drop>, onPick: (Drop) -> Unit) {
     val haptics = rememberHaptics()
+    // Rows as even as the count allows (7: 4 and 3, 6: 3 and 3), each spread over the whole width.
+    val rows = (drops.size + 3) / 4
+    val perRow = if (rows == 0) 1 else (drops.size + rows - 1) / rows
     androidx.compose.foundation.layout.Column(
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
-        modifier = Modifier.padding(bottom = 10.dp)
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
     ) {
-        drops.chunked(4).forEachIndexed { row, line ->
-            androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp)) {
+        drops.chunked(perRow).forEachIndexed { row, line ->
+            androidx.compose.foundation.layout.Row(
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 line.forEachIndexed { col, drop ->
-                    Tile(drop, order = row * 4 + col) {
+                    Tile(drop, order = row * perRow + col) {
                         haptics.firm()
                         onPick(drop)
                     }
