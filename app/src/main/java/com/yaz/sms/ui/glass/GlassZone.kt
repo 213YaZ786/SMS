@@ -125,12 +125,12 @@ internal fun setHalos(shader: RuntimeShader, look: GlassLook, window: Size) {
 
 /**
  * The rim without shaders: a soft light on the top edge that fades down
- * the flanks, a fainter one below; never a white line.
+ * the flanks, a faint shade below; never a white line.
  */
 internal fun rimBrush(look: GlassLook, height: Float): Brush {
-    val strong = Color.White.copy(alpha = if (look.dark) 0.20f else 0.35f)
+    val strong = Color.White.copy(alpha = if (look.dark) 0.16f else 0.24f)
     val faint = Color.White.copy(alpha = 0.03f)
-    return Brush.verticalGradient(0f to strong, 0.35f to faint, 0.7f to faint, 1f to strong.copy(alpha = strong.alpha * 0.5f), endY = height)
+    return Brush.verticalGradient(0f to strong, 0.35f to faint, 1f to Color.Black.copy(alpha = 0.04f), endY = height)
 }
 
 internal const val HALOS = 4
@@ -146,16 +146,17 @@ internal const val GLASS_COMMON = """
                           sdb(q + float2(0.0, e), b, r) - sdb(q - float2(0.0, e), b, r));
         return normalize(n + 1e-6);
     }
-    // The light caught by the edge fades in over a few pixels all around,
-    // barely there on the flanks and strongest on top, so the rim reads as
-    // glass and never as a white line.
+    // Light and shade come in from the edge over a dozen pixels, never a
+    // line: light from above fading down, a soft shade in the lower part,
+    // the flanks barely touched, by day and by night.
     float rimLight(float depth, float2 n, float dpr, float dark) {
-        float rim = smoothstep(3.2 * dpr, 0.0, depth);
-        rim = rim * rim;
-        float lit = 0.10 + 0.55 * pow(max(dot(n, float2(-0.25, -0.97)), 0.0), 2.0)
-                  + 0.25 * pow(max(dot(n, float2(0.2, 0.98)), 0.0), 3.0);
-        float glow = 0.04 * smoothstep(14.0 * dpr, 0.0, depth) * max(-n.y, 0.0);
-        return rim * lit * (dark > 0.5 ? 0.26 : 0.42) + glow;
+        float band = 1.0 - smoothstep(0.0, 12.0 * dpr, depth);
+        band = band * band;
+        float up = pow(max(-n.y, 0.0), 1.6);
+        float down = pow(max(n.y, 0.0), 1.6);
+        float light = band * (0.20 + 0.80 * up) * (dark > 0.5 ? 0.16 : 0.18);
+        float shade = band * down * (dark > 0.5 ? 0.07 : 0.06);
+        return light - shade;
     }
 """
 

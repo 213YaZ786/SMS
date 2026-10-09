@@ -69,7 +69,16 @@ internal fun LinkPreviewCapsule(url: String) {
         label = "preview"
     ) { shown ->
         if (shown == null) {
-            if (failed) return@AnimatedContent
+            if (failed) {
+                // Said, not hidden: the link stays in the message above.
+                Text(
+                    "No preview",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp)
+                )
+                return@AnimatedContent
+            }
             val pop = remember { Animatable(0.6f) }
             LaunchedEffect(Unit) { pop.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 500f)) }
             FloatingPane(

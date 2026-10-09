@@ -1,5 +1,12 @@
 package com.yaz.sms.feature.thread
 
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -135,14 +142,67 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false) {
     }
 }
 
-/** A picture on the whole screen, over a dark ground. */
+/**
+ * A picture on the whole screen, over a dark ground: pinch or double tap to
+ * zoom, pan while zoomed; at rest, drawn down (or up) it follows the finger
+ * and closes past a threshold.
+ */
 @Composable
 internal fun PictureViewer(uri: Uri, onClose: () -> Unit) {
     val image by rememberPicture(uri, 2048)
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.92f)).clickable(onClick = onClose), contentAlignment = Alignment.Center) {
-            image?.let { Image(it, contentDescription = "Photo", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
-            Box(Modifier.align(Alignment.TopStart).padding(16.dp)) { FloatingAction(AppIcons.Close, "Close", onClose) }
+    val haptics = com.yaz.sms.ui.component.rememberHaptics()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val drag = remember { androidx.compose.animation.core.Animatable(0f) }
+    val appear = remember { androidx.compose.animation.core.Animatable(0.9f) }
+    var zoomed by remember { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { appear.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.7f, stiffness = 500f)) }
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+            val height = constraints.maxHeight.toFloat()
+            val gone = (kotlin.math.abs(drag.value) / (height * 0.5f)).coerceIn(0f, 1f)
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.92f * (1f - gone)))
+                    .pointerInput(zoomed) {
+                        if (zoomed) return@pointerInput
+                        detectVerticalDragGestures(
+                            onDragEnd = {
+                                scope.launch {
+                                    if (kotlin.math.abs(drag.value) > height * 0.18f) {
+                                        haptics.tick()
+                                        drag.animateTo(kotlin.math.sign(drag.value) * height, androidx.compose.animation.core.tween(180))
+                                        onClose()
+                                    } else {
+                                        drag.animateTo(0f, androidx.compose.animation.core.spring(dampingRatio = 0.7f, stiffness = 500f))
+                                    }
+                                }
+                            },
+                            onDragCancel = { scope.launch { drag.animateTo(0f) } }
+                        ) { change, dy ->
+                            change.consume()
+                            scope.launch { drag.snapTo(drag.value + dy) }
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                image?.let { picture ->
+                    com.yaz.sms.ui.component.Zoomable(
+                        modifier = Modifier.graphicsLayer {
+                            translationY = drag.value
+                            val s = appear.value * (1f - 0.15f * gone)
+                            scaleX = s
+                            scaleY = s
+                        },
+                        onZoomChanged = { zoomed = it }
+                    ) {
+                        Image(picture, contentDescription = "Photo", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                    }
+                }
+                Box(Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(16.dp)) {
+                    FloatingAction(AppIcons.Close, "Close", onClose)
+                }
+            }
         }
     }
 }

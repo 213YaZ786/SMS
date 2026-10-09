@@ -12,7 +12,7 @@ import java.net.URL
 /**
  * What a link leads to, fetched by this phone only when the user taps
  * Preview: the page's title, site and picture as the page declares them
- * (Open Graph, else its title). Over https only, without cookies, a page
+ * (Open Graph, else its title), asked as messaging apps ask. Over https only, without cookies, a page
  * read up to 512 kB and a picture up to 2 MB; kept in memory while the app
  * runs, never written.
  */
@@ -26,24 +26,29 @@ object LinkPreview {
 
     suspend fun fetch(context: android.content.Context, url: String): Preview? = withContext(Dispatchers.IO) {
         cache.get(url)?.let { return@withContext it }
-        val (page, at) = get(url, 512 * 1024, html = true) ?: return@withContext null
+        val (page, at, refused) = get(url, 512 * 1024, html = true) ?: return@withContext null
         val html = String(page, charsetOf(page))
         val meta = metaTags(html)
-        val title = (meta["og:title"] ?: meta["twitter:title"] ?: titleTag(html))?.let(::clean)?.take(200)
+        // A site that turns readers away may still give its preview to messaging apps.
+        val declared = meta["og:title"] ?: meta["twitter:title"]
+        val title = (declared ?: titleTag(html).takeIf { !refused })?.let(::clean)?.take(200)
             ?: return@withContext null
         val site = meta["og:site_name"]?.let(::clean)?.take(60) ?: at.host.removePrefix("www.")
         val description = (meta["og:description"] ?: meta["description"])?.let(::clean)?.take(300)
         val picture = (meta["og:image"] ?: meta["og:image:url"] ?: meta["twitter:image"])
             ?.let { runCatching { URL(at, clean(it)) }.getOrNull() }
             ?.takeIf { it.protocol == "https" }
-            ?.let { get(it.toString(), 2 * 1024 * 1024, html = false)?.first }
+            ?.let { get(it.toString(), 2 * 1024 * 1024, html = false)?.takeIf { !it.third }?.first }
             // A page's picture is anyone's file: decoded in the isolated decoder.
             ?.let { com.yaz.sms.core.security.SafeImages.decode(context, it, 720) }
         Preview(url, title, site, description, picture).also { cache.put(url, it) }
     }
 
-    /** One https page, three redirects at most and each to https; the bytes and where they came from. */
-    private fun get(url: String, limit: Int, html: Boolean): Pair<ByteArray, URL>? = runCatching {
+    /**
+     * One https page, three redirects at most and each to https; the bytes,
+     * where they came from, and whether the site refused (403) yet sent a page.
+     */
+    private fun get(url: String, limit: Int, html: Boolean): Triple<ByteArray, URL, Boolean>? = runCatching {
         var at = URL(url)
         repeat(4) {
             if (at.protocol != "https" || !public(at.host)) return null
@@ -52,17 +57,23 @@ object LinkPreview {
                 readTimeout = 10_000
                 instanceFollowRedirects = false
                 useCaches = false
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) LinkPreview")
-                setRequestProperty("Accept", if (html) "text/html" else "image/*")
+                // As messaging apps ask (Signal's own name): sites answer it with
+                // their preview, where a generic one gets a "browser not supported" page.
+                setRequestProperty("User-Agent", "WhatsApp/2")
+                setRequestProperty("Accept", if (html) "text/html,application/xhtml+xml,*/*;q=0.8" else "image/*")
+                setRequestProperty("Accept-Language", java.util.Locale.getDefault().toLanguageTag() + ",en;q=0.5")
             }
             try {
                 when (connection.responseCode) {
                     in 300..399 -> at = URL(at, connection.getHeaderField("Location") ?: return null)
-                    200 -> {
+                    200, 403 -> {
+                        val refused = connection.responseCode == 403
+                        if (refused && !html) return null
                         val type = connection.contentType.orEmpty()
                         if (html && !type.contains("html")) return null
                         if (!html && !type.startsWith("image/")) return null
-                        return connection.inputStream.use { it.readAtMost(limit) } to at
+                        val stream = if (refused) connection.errorStream ?: return null else connection.inputStream
+                        return Triple(stream.use { it.readAtMost(limit) }, at, refused)
                     }
                     else -> return null
                 }

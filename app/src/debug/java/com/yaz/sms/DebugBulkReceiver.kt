@@ -11,6 +11,7 @@ import android.provider.Telephony
  * the app holds up with years of them.
  * adb shell am broadcast -n com.yaz.sms.debug/com.yaz.sms.DebugBulkReceiver --es from +33611112222 --ei count 3000
  * With --es body "…", one received message with that text; --es drop "5056,5057" deletes those rows.
+ * With --es picture files/x.jpg (a file in the app's own folder), one received picture message.
  */
 class DebugBulkReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -18,6 +19,12 @@ class DebugBulkReceiver : BroadcastReceiver() {
             context.contentResolver.delete(android.content.ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, it), null, null)
         }
         val from = intent.getStringExtra("from") ?: return
+        intent.getStringExtra("picture")?.let { name ->
+            val file = java.io.File(context.dataDir, name)
+            val saved = com.yaz.sms.core.mms.MmsStore.saveReceivedParts(context, from, intent.getStringExtra("body").orEmpty(), "image/jpeg", file)
+            android.util.Log.d("DebugBulk", "picture message $saved")
+            return
+        }
         val body = intent.getStringExtra("body")
         val count = intent.getIntExtra("count", if (body != null) 1 else 1000)
         val done = goAsync()

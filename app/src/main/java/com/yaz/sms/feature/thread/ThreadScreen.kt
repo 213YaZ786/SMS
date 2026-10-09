@@ -1,5 +1,6 @@
 package com.yaz.sms.feature.thread
 
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -201,7 +202,8 @@ private fun ThreadContent(
         val t = thread
         if (t != null) messages.addressesOf(t).takeIf { it.isNotEmpty() }?.let { people = it }
     }
-    var list by remember { mutableStateOf<List<Message>>(emptyList()) }
+    // A conversation opened before shows at once as it was left, then is read again.
+    var list by remember { mutableStateOf(threadId?.let { opened.get(it)?.first } ?: emptyList()) }
     // Read only while the conversation is really in front: in the
     // background its new messages stay unread and notified.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
@@ -209,10 +211,27 @@ private fun ThreadContent(
     val shown = inFront.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     // The newest messages first; going back in the conversation reads more.
     var window by remember { mutableIntStateOf(Messages.PAGE) }
-    LaunchedEffect(thread, changes, chatChanges, shown, window) {
+    val kept = remember { threadId?.let { opened.get(it) } }
+    var rows by remember { mutableStateOf(kept?.second ?: emptyList()) }
+    // The messages the rows on screen were made from.
+    var rowsOfList by remember { mutableStateOf(kept?.first) }
+    // The encrypted chat's events concern this conversation only when it goes over the chat.
+    val overChat = remember(links, people) { people.size > 1 || people.any { '@' in it || chat.linkFor(it) != null } }
+    val chatKey = if (overChat) chatChanges else 0
+    LaunchedEffect(thread, changes, chatKey, window) {
         val t = thread ?: return@LaunchedEffect
+        // Opened for the first time: the newest few first, on screen at once, then the page.
+        if (list.isEmpty() && window == Messages.PAGE) {
+            val first = messages.thread(t, FIRST)
+            list = first
+            // On screen before the page is read: its rows are made first.
+            if (first.isNotEmpty()) androidx.compose.runtime.snapshotFlow { rowsOfList }.first { it === first }
+        }
         list = messages.thread(t, window)
-        if (!shown) return@LaunchedEffect
+    }
+    LaunchedEffect(thread, list, shown) {
+        val t = thread ?: return@LaunchedEffect
+        if (!shown || list.isEmpty()) return@LaunchedEffect
         if (list.any { it.box == MessageBox.RECEIVED && !it.read }) messages.markRead(t)
         // In its bubble the notification holds the bubble: it is only quieted.
         if (bubble) MessageNotifier(context).settle(t) else MessageNotifier(context).cancel(t)
@@ -339,13 +358,12 @@ private fun ThreadContent(
     val calls = rememberCallChoices(to, linked != null, canCall)
     // Off the main thread: folding reactions and days over a long thread
     // would hold the first frame; the rows on screen stay until the new ones are ready.
-    var rows by remember { mutableStateOf<List<Row>>(emptyList()) }
-    // The messages the rows on screen were made from.
-    var rowsOfList by remember { mutableStateOf<List<Message>?>(null) }
     LaunchedEffect(list) {
         val from = list
+        if (from === rowsOfList) return@LaunchedEffect
         rows = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { rowsOf(from) }
         rowsOfList = from
+        thread?.let { opened.put(it, from to rows) }
     }
     // A message added at the bottom while reading there comes into sight, not under the field.
     LaunchedEffect(rows.lastOrNull()?.key, waiting.size) {
@@ -657,6 +675,12 @@ private sealed class Row(val key: String) {
     // An SMS and a picture message may hold the same number: the kind is part of the key.
     class Bubble(val message: Message, val last: Boolean, val smsReactions: List<String> = emptyList(), val smsMine: List<String> = emptyList()) : Row("m/${message.uid}")
 }
+
+/** The conversations opened lately, as they were shown: reopened, one shows at once. */
+private val opened = android.util.LruCache<Long, Pair<List<Message>, List<Row>>>(8)
+
+/** How many messages a conversation opened for the first time shows before its first page. */
+private const val FIRST = 40
 
 private fun rowsOf(all: List<Message>): List<Row> {
     // Reactions that came as SMS sit under their message, not as messages of their own.
