@@ -37,6 +37,13 @@ class SalesCallsTest {
     }
 
     @Test
+    fun aBlankNetworkFallsBackToTheSim() {
+        assertTrue(SalesCalls.isSalesCall("0948491234", SalesCalls.firstCountry("", "fr", "US")))
+        assertTrue(SalesCalls.isSalesCall("0162123456", SalesCalls.firstCountry(null, null, "FR")))
+        assertFalse(SalesCalls.isSalesCall("0162123456", SalesCalls.firstCountry("", "", "")))
+    }
+
+    @Test
     fun indiaPromotionalSeriesIs140() {
         assertTrue(SalesCalls.isSalesCall("+91 140 123 4567", null))
         assertTrue(SalesCalls.isSalesCall("1401234567", "in"))

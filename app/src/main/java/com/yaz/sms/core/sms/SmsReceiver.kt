@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
 import android.telephony.SubscriptionManager
-import android.telephony.TelephonyManager
 import com.yaz.sms.core.dial.ContactLookup
 import com.yaz.sms.core.dial.SalesCalls
 import com.yaz.sms.data.settings.SettingsStore
@@ -52,7 +51,7 @@ class SmsReceiver : BroadcastReceiver(), KoinComponent {
                     }
                 )
                 // Sales senders the user chose to keep quiet: kept, not shown.
-                val country = app.getSystemService(TelephonyManager::class.java)?.networkCountryIso
+                val country = SalesCalls.country(app, subscription = sub)
                 val quiet = settings.current.quietSales && SalesCalls.isSalesCall(address, country) && !ContactLookup.isContact(app, address)
                 if (!quiet) MessageNotifier(app).show(thread)
             } finally {

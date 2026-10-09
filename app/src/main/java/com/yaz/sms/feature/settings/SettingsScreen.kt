@@ -142,11 +142,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     onClick = { open(context, Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)) }
                 )
                 // Only where the country keeps ranges for sales.
-                val country = remember {
-                    val phone = context.getSystemService(android.telephony.TelephonyManager::class.java)
-                    listOf(phone?.networkCountryIso, phone?.simCountryIso, java.util.Locale.getDefault().country)
-                        .firstOrNull { !it.isNullOrBlank() }?.lowercase()
-                }
+                val country = remember { SalesCalls.country(context) }
                 if (country in SalesCalls.countries) {
                     SwitchRow(
                         title = "Quiet sales messages",
