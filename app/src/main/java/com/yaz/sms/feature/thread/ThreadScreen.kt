@@ -507,6 +507,25 @@ private fun ThreadContent(
               value = if (newest == null || newest.box != MessageBox.RECEIVED || service) emptyList()
               else withContext(Dispatchers.Default) { com.yaz.sms.core.sms.Replies.suggest(context, list.sortedBy { it.date }) }
           }
+          // Reading further up: the way back to the newest, and how many came in meanwhile.
+          // It floats over the conversation, above the composer, as AOSP Messaging's notice
+          // does: appearing or going, it never moves the messages.
+          val away by remember { derivedStateOf { listState.firstVisibleItemIndex > 1 } }
+          var seenAt by remember { mutableStateOf(0L) }
+          LaunchedEffect(away) { if (away) seenAt = list.maxOfOrNull { it.date } ?: 0L }
+          val newCount = if (away) list.count { it.box == MessageBox.RECEIVED && it.date > seenAt } else 0
+          androidx.compose.animation.AnimatedVisibility(
+              visible = away,
+              enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = 0.6f),
+              exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(targetScale = 0.6f),
+              modifier = Modifier
+                  .align(Alignment.BottomEnd)
+                  .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                  .padding(horizontal = LocalReadableInset.current)
+                  .padding(end = 16.dp, bottom = composerHeight + 8.dp)
+          ) {
+              LatestButton(newCount) { scope.launch { listState.animateScrollToItem(0) } }
+          }
           Column(
               horizontalAlignment = Alignment.CenterHorizontally,
               modifier = Modifier
@@ -516,19 +535,6 @@ private fun ThreadContent(
                   .onSizeChanged { composerHeight = with(density) { it.height.toDp() } }
                   .onGloballyPositioned { composerTop = it.boundsInWindow().top }
           ) {
-            // Reading further up: the way back to the newest, and how many came in meanwhile.
-            val away by remember { derivedStateOf { listState.firstVisibleItemIndex > 1 } }
-            var seenAt by remember { mutableStateOf(0L) }
-            LaunchedEffect(away) { if (away) seenAt = list.maxOfOrNull { it.date } ?: 0L }
-            val newCount = if (away) list.count { it.box == MessageBox.RECEIVED && it.date > seenAt } else 0
-            androidx.compose.animation.AnimatedVisibility(
-                visible = away,
-                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = 0.6f),
-                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(targetScale = 0.6f),
-                modifier = Modifier.align(Alignment.End).padding(end = 16.dp, bottom = 8.dp)
-            ) {
-                LatestButton(newCount) { scope.launch { listState.animateScrollToItem(0) } }
-            }
             ReplyChips(if (usedFor == newest?.uid) emptyList() else replies) { reply ->
                 haptics.tick()
                 usedFor = newest?.uid
@@ -580,7 +586,13 @@ private fun ThreadContent(
         LazyColumn(
             state = listState,
             reverseLayout = true,
-            modifier = Modifier.fillMaxSize().padding(horizontal = inset).onGloballyPositioned { listBottom = it.boundsInWindow().bottom },
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = inset)
+                .onGloballyPositioned { listBottom = it.boundsInWindow().bottom }
+                // Shown once the composer is measured: its first frame never lays the messages
+                // out against a guessed gap, then moves them.
+                .graphicsLayer { alpha = if (composerTop.isNaN() || listBottom.isNaN()) 0f else 1f },
             contentPadding = PaddingValues(
                 start = 12.dp, end = 12.dp, top = padding.calculateTopPadding() + 8.dp,
                 bottom = if (composerTop.isNaN() || listBottom.isNaN()) padding.calculateBottomPadding() + 16.dp
@@ -677,7 +689,27 @@ private sealed class Row(val key: String) {
 }
 
 /** The conversations opened lately, as they were shown: reopened, one shows at once. */
-private val opened = android.util.LruCache<Long, Pair<List<Message>, List<Row>>>(8)
+private val opened = android.util.LruCache<Long, Pair<List<Message>, List<Row>>>(12)
+
+/**
+ * The newest conversations made ready while the list shows, as AOSP
+ * Messaging has them in its own database before one is opened: their
+ * newest messages read and laid out, so a tap shows them at once.
+ */
+internal object ThreadsAhead {
+    suspend fun warm(messages: com.yaz.sms.data.sms.Messages, threads: List<Long>) {
+        for (t in threads) {
+            if (opened.get(t) != null) continue
+            val list = messages.thread(t, FIRST)
+            if (list.isEmpty()) continue
+            val rows = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { rowsOf(list) }
+            opened.put(t, list to rows)
+        }
+    }
+
+    /** A conversation that changed is read again when opened. */
+    fun forget(thread: Long) { opened.remove(thread) }
+}
 
 /** How many messages a conversation opened for the first time shows before its first page. */
 private const val FIRST = 40

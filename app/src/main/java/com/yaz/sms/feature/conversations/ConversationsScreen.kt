@@ -98,6 +98,12 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         onPauseOrDispose { }
     }
     val all by messages.conversations.collectAsState()
+    // The newest conversations ready before a tap (their latest messages laid out), while this list shows.
+    val ahead = all.take(6).map { it.threadId to it.date }
+    androidx.compose.runtime.LaunchedEffect(ahead) {
+        ahead.forEach { (t, date) -> if (warmed[t] != date) { com.yaz.sms.feature.thread.ThreadsAhead.forget(t); warmed[t] = date } }
+        com.yaz.sms.feature.thread.ThreadsAhead.warm(messages, ahead.map { it.first })
+    }
     val loaded by messages.loaded.collectAsState()
     val contacts by book.entries.collectAsState()
     val settings by store.settings.collectAsState()
@@ -602,3 +608,6 @@ private fun ConversationLine(
         }
     }
 }
+
+/** The date of each conversation's newest message when it was made ready. */
+private val warmed = HashMap<Long, Long>()
