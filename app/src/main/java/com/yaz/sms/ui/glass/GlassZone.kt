@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
@@ -73,6 +74,12 @@ private class GlassZoneNode(var shape: Shape, var look: GlassLook, var lens: Flo
             null
         }
         if (zone != null) {
+            // A soft shadow under the zone, so it floats over the light (the glass is opaque over it).
+            drawIntoCanvas { canvas ->
+                val paint = androidx.compose.ui.graphics.Paint().apply { color = look.ground }
+                paint.asFrameworkPaint().setShadowLayer(10f * density, 0f, 3.5f * density, android.graphics.Color.argb(if (look.dark) 110 else 34, 0, 0, 0))
+                canvas.drawOutline(outline, paint)
+            }
             drawOutline(outline, ShaderBrush(zone))
         } else {
             drawOutline(outline, look.zoneTint)
@@ -146,17 +153,22 @@ internal const val GLASS_COMMON = """
                           sdb(q + float2(0.0, e), b, r) - sdb(q - float2(0.0, e), b, r));
         return normalize(n + 1e-6);
     }
-    // Light and shade come in from the edge over a dozen pixels, never a
-    // line: light from above fading down, a soft shade in the lower part,
-    // the flanks barely touched, by day and by night.
+    // Polished glass (the user's reference, 2026-10-10): a thin rim of light
+    // at the very edge, bright at the top and the bottom, faint on the
+    // flanks, a hair of shade just inside it for the bevel; under it a wide,
+    // gentle gradient, light from above, shade below. Never a flat white line.
     float rimLight(float depth, float2 n, float dpr, float dark) {
-        float band = 1.0 - smoothstep(0.0, 12.0 * dpr, depth);
-        band = band * band;
+        float edge = 1.0 - smoothstep(0.4 * dpr, 1.8 * dpr, depth);
+        float bevel = smoothstep(1.2 * dpr, 2.4 * dpr, depth) * (1.0 - smoothstep(2.4 * dpr, 4.5 * dpr, depth));
+        float band = 1.0 - smoothstep(0.0, 20.0 * dpr, depth);
+        band = band * band * band;
+        float vertical = abs(n.y);
         float up = pow(max(-n.y, 0.0), 1.6);
-        float down = pow(max(n.y, 0.0), 1.6);
-        float light = band * (0.20 + 0.80 * up) * (dark > 0.5 ? 0.16 : 0.18);
-        float shade = band * down * (dark > 0.5 ? 0.07 : 0.06);
-        return light - shade;
+        float down = pow(max(n.y, 0.0), 2.0);
+        float rim = edge * (0.10 + 0.32 * pow(vertical, 1.4)) * (dark > 0.5 ? 0.75 : 1.0);
+        float light = band * (0.20 + 0.80 * up) * (dark > 0.5 ? 0.10 : 0.10);
+        float shade = band * down * (dark > 0.5 ? 0.04 : 0.03) + bevel * (dark > 0.5 ? 0.05 : 0.035);
+        return rim + light - shade;
     }
 """
 
