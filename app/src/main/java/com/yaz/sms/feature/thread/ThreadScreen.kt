@@ -1,5 +1,7 @@
 package com.yaz.sms.feature.thread
 
+import com.yaz.sms.ui.glass.glassZone
+
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.asImageBitmap
@@ -848,6 +850,43 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
  * opened cleaned of their trackers. Held: copy, delete, try again.
  */
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * A message in glass, as iOS's bubbles: its rim lit all round, the sides as
+ * well as the top and the bottom, following its tail; one's own is coloured
+ * glass of the accent (a GlassLook with its tint), never a flat wash over it.
+ */
+@Composable
+private fun BubbleGlass(shape: androidx.compose.ui.graphics.Shape, mine: Boolean, modifier: Modifier, content: @Composable () -> Unit) {
+    val look = com.yaz.sms.ui.glass.LocalGlass.current
+    if (look == null) {
+        ZoneSurface(shape = shape, accent = mine, modifier = modifier, content = content)
+        return
+    }
+    val scheme = MaterialTheme.colorScheme
+    val glass = if (!mine) look else remember(look, scheme) {
+        com.yaz.sms.ui.glass.GlassLook(
+            dark = look.dark,
+            ground = look.ground,
+            halos = look.halos,
+            zoneTint = if (look.dark) scheme.primary.copy(alpha = 0.36f) else scheme.primaryContainer.copy(alpha = 0.55f),
+            floatTint = look.floatTint,
+            accentTint = look.accentTint
+        )
+    }
+    val ink = when {
+        !mine -> scheme.onSurface
+        look.dark -> scheme.onSurface
+        else -> scheme.onPrimaryContainer
+    }
+    androidx.compose.material3.Surface(
+        modifier = modifier.glassZone(shape, glass, lens = 1f, flanks = 1f),
+        shape = shape,
+        color = androidx.compose.ui.graphics.Color.Transparent,
+        contentColor = ink,
+        content = content
+    )
+}
+
 @Composable
 private fun Bubble(
     m: Message,
@@ -1116,7 +1155,7 @@ private fun Bubble(
                     onLongClickLabel = "More"
                 )
             if (big != null) BigEmojiRow(big, emojiPlay, if (inked) held.blur(14.dp, androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded) else held)
-            else ZoneSurface(shape = shape, accent = mine, modifier = held) {
+            else BubbleGlass(shape = shape, mine = mine, modifier = held) {
               Column {
                 if (poll != null && rich != null) PollCard(poll, rich.counts, rich.myReactions, onVote = onReact)
                 // An edit changes the words in a soft blur, not at a stroke.

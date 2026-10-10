@@ -43,10 +43,11 @@ enum class ScreenKind { FIREWORKS, CONFETTI, BALLOONS, LOVE, LASERS, STARS, CELE
  * balloons, a heart, lasers, a shooting star, a celebration, the words'
  * echo or a spotlight on the message at [origin]. Its pieces are glass:
  * see-through tones of the wallpaper's palette with a point of light on
- * each. [onDone] when it has played.
+ * each. [single]: one animated emoji, large in the middle, instead of a
+ * handful (a game won). [onDone] when it has played.
  */
 @Composable
-fun ScreenEffect(effect: ScreenKind, words: String, origin: Offset?, onDone: () -> Unit) {
+fun ScreenEffect(effect: ScreenKind, words: String, origin: Offset?, single: Boolean = false, onDone: () -> Unit) {
     val time = remember(effect, words) { Animatable(0f) }
     val length = when (effect) {
         ScreenKind.FIREWORKS -> 3600
@@ -71,7 +72,7 @@ fun ScreenEffect(effect: ScreenKind, words: String, origin: Offset?, onDone: () 
     // the screen, the drawn shapes kept as a light layer under them. The app
     // keeps them in assets/emoji (1f38a, 1f388, 1f389, 2764_fe0f, 2728 .json)
     // and depends on com.airbnb.android:lottie-compose.
-    lottieOf(effect)?.let { name -> LottieShower(name, effect, words, time.value, pieces) }
+    lottieOf(effect)?.let { name -> LottieShower(name, effect, words, time.value, pieces, single) }
     Canvas(Modifier.fillMaxSize()) {
         val t = time.value
         val fade = if (t > 0.85f) (1f - t) / 0.15f else 1f
@@ -287,12 +288,31 @@ private fun lottieOf(effect: ScreenKind): String? = when (effect) {
  * party poppers go off along the sides; each plays its own animation.
  */
 @Composable
-private fun LottieShower(name: String, effect: ScreenKind, words: String, t: Float, pieces: List<FloatArray>) {
+private fun LottieShower(name: String, effect: ScreenKind, words: String, t: Float, pieces: List<FloatArray>, single: Boolean) {
     val composition by com.airbnb.lottie.compose.rememberLottieComposition(com.airbnb.lottie.compose.LottieCompositionSpec.Asset("emoji/$name.json"))
     val count = when (effect) { ScreenKind.BALLOONS -> 9; ScreenKind.LOVE -> 8; ScreenKind.STARS -> 10; else -> 6 }
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         val w = maxWidth
         val h = maxHeight
+        if (single) {
+            // One, large in the middle: it swells in, plays once, fades out.
+            val local = (t / 0.9f).coerceIn(0f, 1f)
+            if (local >= 1f) return@BoxWithConstraints
+            val size = minOf(w, h) * 0.46f
+            val swell = if (local < 0.2f) 0.6f + 0.4f * (local / 0.2f) else 1f
+            com.airbnb.lottie.compose.LottieAnimation(
+                composition = composition,
+                progress = { local },
+                modifier = Modifier
+                    .offset((w - size) / 2, (h - size) / 2)
+                    .size(size)
+                    .graphicsLayer {
+                        alpha = if (local > 0.82f) (1f - local) / 0.18f else (local / 0.08f).coerceAtMost(1f)
+                        scaleX = swell; scaleY = swell
+                    }
+            )
+            return@BoxWithConstraints
+        }
         repeat(count) { i ->
             val p = pieces[i]
             val start = p[2] * 0.45f

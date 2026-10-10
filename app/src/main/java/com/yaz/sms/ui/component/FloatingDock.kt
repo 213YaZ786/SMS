@@ -116,7 +116,8 @@ fun FloatingDock(
                     )
                     .then(
                         if (glass) {
-                            Modifier.glassFloating(backdrop!!, CircleShape, look!!, tint = look.accentTint, lens = 1.6f)
+                            // By day a pale wash of the accent, whatever the wallpaper: the dark icon on it stays clear.
+                            Modifier.glassFloating(backdrop!!, CircleShape, look!!, tint = if (look.dark) look.accentTint else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f), lens = 1.6f)
                         } else {
                             Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer)
                         }
