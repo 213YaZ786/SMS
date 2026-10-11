@@ -92,6 +92,9 @@ fun Composer(
     onEdit: (String) -> Unit = {},
     /** What the field holds when the screen pauses or closes, to keep as the draft. */
     onDraft: ((String) -> Unit)? = null,
+    /** Media shared from another app, dropped into the attachments once (Bugle's share-intent way in). */
+    incoming: List<Attachment>? = null,
+    onIncomingTaken: () -> Unit = {},
     onSend: (String, Int, List<Attachment>) -> Boolean
 ) {
     val context = LocalContext.current
@@ -136,6 +139,12 @@ fun Composer(
     var attachments by remember { mutableStateOf<List<Attachment>>(emptyList()) }
     fun add(more: List<Attachment>) {
         attachments = (attachments + more).distinctBy { it.uri }.take(5)
+    }
+    LaunchedEffect(incoming) {
+        if (!incoming.isNullOrEmpty()) {
+            add(incoming)
+            onIncomingTaken()
+        }
     }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
         add(uris.map { Attachment(it, context.contentResolver.getType(it) ?: "image/jpeg") })

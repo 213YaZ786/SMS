@@ -18,6 +18,13 @@ class OpenRequests {
     /** A chat invite link from outside (a code read by the camera, a link tapped): asked, never joined unasked. */
     val invite = MutableStateFlow<String?>(null)
 
+    /**
+     * Pictures or films shared from another app (as AOSP Messaging's
+     * ShareIntentActivity takes them): they fill the chosen conversation's
+     * composer, the user sends. Copies of the app's own, taken once.
+     */
+    val sharedMedia = MutableStateFlow<List<com.yaz.sms.core.mms.Attachment>>(emptyList())
+
     private val _pending = MutableStateFlow<OpenRequest?>(null)
     val pending: StateFlow<OpenRequest?> = _pending.asStateFlow()
 

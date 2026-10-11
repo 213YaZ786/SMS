@@ -188,6 +188,9 @@ private fun ThreadContent(
     val changes by messages.changes.collectAsState()
     LaunchedEffect(Unit) { messages.watch() }
     val chat: RichChat = koinInject()
+    // Media shared from another app, waiting for the conversation the user picks.
+    val openRequests: com.yaz.sms.core.sms.OpenRequests = koinInject()
+    val sharedIn by openRequests.sharedMedia.collectAsState()
     val chatChanges by chat.changes.collectAsState()
     val links by chat.links.collectAsState()
     val refs by chat.refs.collectAsState()
@@ -570,6 +573,8 @@ private fun ThreadContent(
                     // Kept even as the screen goes: its own scope ends with it.
                     thread?.let { t -> Thread { com.yaz.sms.data.sms.Drafts.keep(context, t, typed) }.start() }
                 },
+                incoming = sharedIn.takeIf { it.isNotEmpty() },
+                onIncomingTaken = { openRequests.sharedMedia.value = emptyList() },
                 effectsCarried = encrypted,
                 onPoll = if (encrypted) ({ pollOpen = true }) else null,
                 onSend = { typed, sub, attachments ->

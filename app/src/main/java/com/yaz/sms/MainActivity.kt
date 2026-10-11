@@ -78,9 +78,46 @@ class MainActivity : ComponentActivity() {
                 val link = intent.dataString.orEmpty()
                 if (com.yaz.sms.feature.compose.looksLikeInvite(link)) requests.invite.value = link
             }
-            Intent.ACTION_SENDTO, Intent.ACTION_SEND -> {
+            Intent.ACTION_SENDTO, Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE -> {
                 val to = OpenRequests.addressesOf(intent.data?.schemeSpecificPart)
                 val text = OpenRequests.textOf(intent.getStringExtra("sms_body") ?: intent.getCharSequenceExtra(Intent.EXTRA_TEXT))
+                // Pictures or films shared from another app fill the composer, as
+                // AOSP Messaging's ShareIntentActivity takes them; copied now, while
+                // the sender's one-time grant on them lasts.
+                val streams = when (intent.action) {
+                    Intent.ACTION_SEND -> listOfNotNull(intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java))
+                    Intent.ACTION_SEND_MULTIPLE -> intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java).orEmpty()
+                    else -> emptyList()
+                }.take(5)
+                if (streams.isNotEmpty()) {
+                    val resolver = contentResolver
+                    val cache = cacheDir
+                    Thread {
+                        val taken = streams.mapNotNull { uri ->
+                            runCatching {
+                                val type = resolver.getType(uri) ?: intent.type ?: return@mapNotNull null
+                                val dir = java.io.File(cache, "shared-in").apply { mkdirs() }
+                                val file = java.io.File(dir, "in-${System.nanoTime()}")
+                                var kept = 0L
+                                resolver.openInputStream(uri)?.use { input ->
+                                    file.outputStream().use { out ->
+                                        val buffer = ByteArray(64 * 1024)
+                                        while (true) {
+                                            val n = input.read(buffer)
+                                            if (n < 0) break
+                                            kept += n
+                                            // More than any MMS could carry: dropped whole.
+                                            if (kept > 64L * 1024 * 1024) return@mapNotNull null
+                                            out.write(buffer, 0, n)
+                                        }
+                                    }
+                                } ?: return@mapNotNull null
+                                com.yaz.sms.core.mms.Attachment(android.net.Uri.fromFile(file), type)
+                            }.getOrNull()
+                        }
+                        requests.sharedMedia.value = taken
+                    }.start()
+                }
                 // Several numbers (smsto:a,b) open their group.
                 requests.open(OpenRequest(null, to.joinToString(",").ifEmpty { null }, text))
             }
