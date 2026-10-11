@@ -83,7 +83,9 @@ internal fun Peek(
     onPin: (Boolean) -> Unit,
     onArchive: (Boolean) -> Unit,
     onRead: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    /** Starts the multi select on this conversation (AOSP Messaging's select mode). */
+    onSelect: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -192,6 +194,7 @@ internal fun Peek(
                         if (c.unread > 0) Action(AppIcons.DoneAll, "Read") { onRead(); onDismiss() }
                         Action(if (archived) AppIcons.Unarchive else AppIcons.Archive, if (archived) "Unarchive" else "Archive") { onArchive(!archived); onDismiss() }
                         if (!c.group && c.address.count(Char::isDigit) >= 3) Action(AppIcons.Call, "Call") { NumberActions.dial(context, c.address); onDismiss() }
+                        Action(AppIcons.SelectAll, "Select") { onSelect() }
                         Action(AppIcons.Delete, "Delete") { confirmDelete = true }
                     }
                 }

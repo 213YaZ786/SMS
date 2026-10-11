@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -137,6 +138,12 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     val code = remember(all) { Lists.latestCode(all, System.currentTimeMillis()) }
     var servicesOpen by rememberSaveable { mutableStateOf(false) }
     var peeking by remember { mutableStateOf<Conversation?>(null) }
+    // Several conversations taken at once (AOSP Messaging's multi select,
+    // MultiSelectActionModeCallback): archive, read, block or delete in one go.
+    var picked by remember { mutableStateOf<Set<Long>?>(null) }
+    var confirmDeleteMany by remember { mutableStateOf(false) }
+    var confirmBlockMany by remember { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(picked != null) { picked = null }
     // To answer: each card once. The cards already shown are read when the
     // screen comes back, and the ones shown now are kept as seen when it goes.
     var seenAtOpen by remember { mutableStateOf(store.current.answerSeen) }
@@ -171,11 +178,19 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
             look = if (c.group) null else index.find(T9.clean(c.address))?.look,
             pinned = c.threadId in settings.pinned,
-            onOpen = { onOpenThread(c.threadId, c.addresses.joinToString(",")) },
-            onPeek = { peeking = c },
+            onOpen = {
+                val taking = picked
+                if (taking == null) onOpenThread(c.threadId, c.addresses.joinToString(","))
+                else picked = (if (c.threadId in taking) taking - c.threadId else taking + c.threadId).ifEmpty { null }
+            },
+            onPeek = {
+                val taking = picked
+                if (taking == null) peeking = c
+                else picked = (if (c.threadId in taking) taking - c.threadId else taking + c.threadId).ifEmpty { null }
+            },
             encrypted = remember(links, c.threadId) { encrypted(c) },
-            left = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE),
-            right = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE),
+            left = if (picked != null) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE),
+            right = if (picked != null) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE),
             archived = Lists.isArchived(c, settings.archived),
             onSwipe = { action ->
                 when (action) {
@@ -189,7 +204,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     com.yaz.sms.core.sms.SwipeAction.REPLY -> onOpenThread(c.threadId, c.addresses.joinToString(","))
                     com.yaz.sms.core.sms.SwipeAction.NONE -> Unit
                 }
-            }
+            },
+            selected = picked?.contains(c.threadId)
         )
     }
 
@@ -209,6 +225,40 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             if (messages.canRead() && all.isNotEmpty()) Filters(query, { query = it }, if (archive) null else filter, { filter = it })
         },
         overlay = {
+            // Several conversations taken: their actions in one pill, as AOSP
+            // Messaging's select mode offers them (archive, read, block, delete).
+            androidx.compose.animation.AnimatedVisibility(
+                visible = picked != null,
+                enter = androidx.compose.animation.slideInVertically { -it } + androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.slideOutVertically { -it } + androidx.compose.animation.fadeOut(),
+                modifier = Modifier.align(Alignment.TopCenter)
+                    .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
+                    .padding(top = 8.dp)
+            ) {
+                val taken = picked.orEmpty()
+                val those = all.filter { it.threadId in taken }
+                FloatingPane(shape = CircleShape) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        com.yaz.sms.ui.component.FloatingAction(AppIcons.Close, "Leave the selection", { picked = null })
+                        Text("${taken.size}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 6.dp))
+                        com.yaz.sms.ui.component.FloatingAction(AppIcons.DoneAll, "Mark read", {
+                            rememberedHaptics.done()
+                            those.forEach { messages.markRead(it.threadId) }
+                            picked = null
+                        })
+                        com.yaz.sms.ui.component.FloatingAction(if (archive) AppIcons.Unarchive else AppIcons.Archive, if (archive) "Unarchive" else "Archive", {
+                            rememberedHaptics.done()
+                            store.update { s ->
+                                s.copy(archived = if (archive) s.archived - taken else s.archived + those.map { it.threadId to it.date })
+                            }
+                            picked = null
+                        })
+                        if (those.isNotEmpty() && those.all { !it.group && it.address.count(Char::isDigit) >= 3 } && NumberActions.canBlock(context))
+                            com.yaz.sms.ui.component.FloatingAction(AppIcons.Block, "Block", { confirmBlockMany = true })
+                        com.yaz.sms.ui.component.FloatingAction(AppIcons.Delete, "Delete", { confirmDeleteMany = true }, tint = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
             // A conversation deleted by a swipe can be taken back for a few seconds.
             androidx.compose.animation.AnimatedVisibility(
                 visible = deleting != null,
@@ -300,6 +350,40 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         }
     }
 
+    if (confirmDeleteMany) {
+        val taken = picked.orEmpty()
+        com.yaz.sms.ui.component.ZoneAlertDialog(
+            onDismissRequest = { confirmDeleteMany = false },
+            title = { Text("Delete ${taken.size} conversations?") },
+            text = { Text("All their messages are deleted from this phone.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    confirmDeleteMany = false
+                    rememberedHaptics.done()
+                    taken.forEach { messages.delete(it) }
+                    picked = null
+                }) { Text("Delete") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmDeleteMany = false }) { Text("Cancel") } }
+        )
+    }
+    if (confirmBlockMany) {
+        val those = all.filter { it.threadId in picked.orEmpty() }
+        com.yaz.sms.ui.component.ZoneAlertDialog(
+            onDismissRequest = { confirmBlockMany = false },
+            title = { Text(if (those.size == 1) "Block this number?" else "Block ${those.size} numbers?") },
+            text = { Text("Calls and messages from them will not reach you.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    confirmBlockMany = false
+                    rememberedHaptics.done()
+                    those.forEach { NumberActions.block(context, it.address) }
+                    picked = null
+                }) { Text("Block") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmBlockMany = false }) { Text("Cancel") } }
+        )
+    }
     peeking?.let { c ->
         Peek(
             c,
@@ -316,6 +400,10 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             onPin = { on -> store.update { s -> s.copy(pinned = if (on) s.pinned + c.threadId else s.pinned - c.threadId) } },
             onArchive = { on -> store.update { s -> s.copy(archived = if (on) s.archived + (c.threadId to c.date) else s.archived - c.threadId) } },
             onRead = { messages.markRead(c.threadId) },
+            onSelect = {
+                picked = setOf(c.threadId)
+                peeking = null
+            },
             onDelete = {
                 val gone = messages.delete(c.threadId)
                 // The chat side of its messages goes too, before their numbers are reused.
@@ -430,7 +518,9 @@ private fun ConversationLine(
     left: com.yaz.sms.core.sms.SwipeAction,
     right: com.yaz.sms.core.sms.SwipeAction,
     archived: Boolean,
-    onSwipe: (com.yaz.sms.core.sms.SwipeAction) -> Unit
+    onSwipe: (com.yaz.sms.core.sms.SwipeAction) -> Unit,
+    /** Several at once (AOSP Messaging's multi select): null out of it, else whether this one is taken. */
+    selected: Boolean? = null
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -541,7 +631,14 @@ private fun ConversationLine(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 14.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)) {
                 Box {
-                    ContactAvatar(name, photo, 48.dp, look = look)
+                    // Taken in the multi select: the check stands where the face was.
+                    if (selected == true) Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.primary, CircleShape)
+                    ) {
+                        Icon(AppIcons.Done, contentDescription = "Selected", tint = MaterialTheme.colorScheme.onPrimary)
+                    }
+                    else ContactAvatar(name, photo, 48.dp, look = look)
                     if (unread) {
                         Box(
                             contentAlignment = Alignment.Center,
