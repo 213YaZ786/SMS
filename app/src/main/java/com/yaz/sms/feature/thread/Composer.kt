@@ -43,8 +43,10 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,11 +90,29 @@ fun Composer(
     editing: String? = null,
     onCancelEdit: () -> Unit = {},
     onEdit: (String) -> Unit = {},
+    /** What the field holds when the screen pauses or closes, to keep as the draft. */
+    onDraft: ((String) -> Unit)? = null,
     onSend: (String, Int, List<Attachment>) -> Boolean
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var text by rememberSaveable { mutableStateOf(initial) }
+    // The draft kept when the user goes, as AOSP Messaging keeps it on pause
+    // (ConversationFragment.onPause -> saveDraft); never a message being edited.
+    if (onDraft != null) {
+        val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
+        val keep by rememberUpdatedState(if (editing == null) text else null)
+        DisposableEffect(lifecycle) {
+            val watcher = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) keep?.let(onDraft)
+            }
+            lifecycle.lifecycle.addObserver(watcher)
+            onDispose {
+                lifecycle.lifecycle.removeObserver(watcher)
+                keep?.let(onDraft)
+            }
+        }
+    }
     // Where the cursor is, or what is selected: a style wraps it.
     var sel by remember { mutableStateOf(androidx.compose.ui.text.TextRange(initial.length)) }
     var formatting by remember { mutableStateOf(false) }

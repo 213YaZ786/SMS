@@ -62,7 +62,9 @@ data class Conversation(
     /** The last message is one the user sent (or tried to). */
     val fromMe: Boolean,
     val failed: Boolean,
-    val addresses: List<String> = listOf(address)
+    val addresses: List<String> = listOf(address),
+    /** A text left in the composer, shown over the snippet as Bugle shows its drafts. */
+    val draft: String? = null
 ) {
     val group: Boolean get() = addresses.size > 1
 }
@@ -125,6 +127,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
      */
     private fun readConversations(): List<Conversation> = runCatching {
         val people = recipients()
+        val drafts = Drafts.all(context)
         val unread = HashMap<Long, Int>()
         context.contentResolver.query(
             Telephony.Sms.CONTENT_URI, arrayOf(Telephony.Sms.THREAD_ID),
@@ -158,7 +161,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                 unread = unread[m.thread] ?: 0,
                 fromMe = m.box != Telephony.Sms.MESSAGE_TYPE_INBOX,
                 failed = m.box == Telephony.Sms.MESSAGE_TYPE_FAILED,
-                addresses = addresses
+                addresses = addresses,
+                draft = drafts[m.thread]
             ) else {
                 val (text, media) = parts[m.id] ?: ("" to emptyList())
                 Conversation(
@@ -169,7 +173,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     unread = unread[m.thread] ?: 0,
                     fromMe = m.box != Telephony.Mms.MESSAGE_BOX_INBOX,
                     failed = m.box == Telephony.Mms.MESSAGE_BOX_FAILED,
-                    addresses = addresses.ifEmpty { listOf("") }
+                    addresses = addresses.ifEmpty { listOf("") },
+                    draft = drafts[m.thread]
                 )
             }
         }.sortedByDescending { it.date }
@@ -209,7 +214,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     Telephony.Sms._ID, Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE, Telephony.Sms.TYPE,
                     Telephony.Sms.READ, Telephony.Sms.STATUS, Telephony.Sms.SUBSCRIPTION_ID
                 ),
-                "${Telephony.Sms.THREAD_ID} = ?", arrayOf(threadId.toString()), "${Telephony.Sms.DATE} DESC LIMIT $limit"
+                "${Telephony.Sms.THREAD_ID} = ? AND ${Telephony.Sms.TYPE} != ${Telephony.Sms.MESSAGE_TYPE_DRAFT}",
+                arrayOf(threadId.toString()), "${Telephony.Sms.DATE} DESC LIMIT $limit"
             )?.use { c ->
                 while (c.moveToNext()) {
                     out += Message(
@@ -228,7 +234,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             context.contentResolver.query(
                 Telephony.Mms.CONTENT_URI,
                 arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID),
-                "${Telephony.Mms.THREAD_ID} = ?", arrayOf(threadId.toString()), "${Telephony.Mms.DATE} DESC LIMIT $limit"
+                "${Telephony.Mms.THREAD_ID} = ? AND ${Telephony.Mms.MESSAGE_BOX} != ${Telephony.Mms.MESSAGE_BOX_DRAFTS}",
+                arrayOf(threadId.toString()), "${Telephony.Mms.DATE} DESC LIMIT $limit"
             )?.use { c ->
                 // The rows first, then all their parts in one query.
                 val rows = ArrayList<LongArray>()

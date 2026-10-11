@@ -270,6 +270,14 @@ private fun ThreadContent(
     val store: SettingsStore = koinInject()
     var waiting by remember { mutableStateOf<List<Pending>>(emptyList()) }
     var restore by remember { mutableStateOf<String?>(null) }
+    // The draft left last time back into the field, read as AOSP Messaging
+    // reads it when its conversation opens (ReadDraftDataAction).
+    LaunchedEffect(thread) {
+        if (draft.isEmpty()) {
+            val t = thread ?: return@LaunchedEffect
+            withContext(Dispatchers.IO) { com.yaz.sms.data.sms.Drafts.of(context, t) }?.let { restore = it }
+        }
+    }
     // A message held back to go at a chosen time.
     var scheduling by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var scheduled by remember { mutableStateOf(com.yaz.sms.core.sms.Timed.scheduled(context)) }
@@ -558,6 +566,10 @@ private fun ThreadContent(
                     if (e != null && typed.isNotBlank() && typed != e.second) scope.launch { if (!chat.edit(e.first, typed)) haptics.reject() }
                 },
                 onSendEffect = { text, sub, effect, attachments -> if (people.isNotEmpty()) queue(Pending(System.nanoTime(), text, sub, attachments, quote, effect)) },
+                onDraft = { typed ->
+                    // Kept even as the screen goes: its own scope ends with it.
+                    thread?.let { t -> Thread { com.yaz.sms.data.sms.Drafts.keep(context, t, typed) }.start() }
+                },
                 effectsCarried = encrypted,
                 onPoll = if (encrypted) ({ pollOpen = true }) else null,
                 onSend = { typed, sub, attachments ->

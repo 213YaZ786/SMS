@@ -589,12 +589,15 @@ private fun ConversationLine(
                     }
                     Text(
                         when {
+                            // A draft wins the line, as AOSP Messaging shows its drafts first.
+                            c.draft != null -> "Draft: " + com.yaz.sms.core.sms.Markup.plain(c.draft)
                             c.failed -> "Not sent: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
                             c.fromMe -> "You: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
                             else -> com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = when {
+                            c.draft != null -> MaterialTheme.colorScheme.primary
                             c.failed -> MaterialTheme.colorScheme.error
                             unread -> MaterialTheme.colorScheme.onSurface
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
