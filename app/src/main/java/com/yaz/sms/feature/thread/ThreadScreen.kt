@@ -1203,6 +1203,16 @@ private fun Bubble(
                     if (said.isNotBlank()) MessageAction(AppIcons.Copy, "Copy") { copy(context, "Message", said) } else null,
                     if (said.length > 12) MessageAction(AppIcons.SelectAll, "Select") { selecting = true } else null,
                     if (said.isNotBlank()) MessageAction(AppIcons.Forward, "Forward") { forward(context, said) } else null,
+                    // A message's media saved or handed on, as AOSP Messaging offers (save_attachment, share_message_menu).
+                    if (m.parts.isNotEmpty()) MessageAction(AppIcons.Download, "Save") {
+                        Thread {
+                            val n = com.yaz.sms.core.mms.SaveParts.save(context, m.parts)
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                android.widget.Toast.makeText(context, if (n > 0) "Saved" else "Could not save", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }.start()
+                    } else null,
+                    if (m.parts.size == 1) MessageAction(AppIcons.Share, "Share") { shareOutside(context, m.parts.first()) } else null,
                     if (chatId != null) MessageAction(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin") { onPin(chatId, rich?.pinned != true) } else null,
                     if (m.box == MessageBox.FAILED && !m.mms) MessageAction(AppIcons.Send, "Try again") { onRetry() } else null,
                     if (chatId != null && rich?.mine == true) MessageAction(AppIcons.Delete, "Delete for everyone", danger = true) { confirmDeleteAll = true } else null,

@@ -103,7 +103,7 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false) {
                 }
             }
         }
-        if (large) PictureViewer(part.uri, onClose = { large = false })
+        if (large) PictureViewer(part.uri, onClose = { large = false }, part = part)
     } else if (sound) {
         VoiceTile(part, mine)
     } else {
@@ -138,8 +138,18 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false) {
                 Text(person ?: part.name ?: mediaWord(part.contentType), style = MaterialTheme.typography.bodyLarge)
             }
         }
-        if (video) VideoViewer(part.uri, onClose = { video = false })
+        if (video) VideoViewer(part.uri, onClose = { video = false }, part = part)
     }
+}
+
+/** Saves one part in the background and says so. */
+internal fun savePart(context: Context, part: MmsPart) {
+    Thread {
+        val n = com.yaz.sms.core.mms.SaveParts.save(context, listOf(part))
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(context, if (n > 0) "Saved" else "Could not save", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }.start()
 }
 
 /**
@@ -148,8 +158,9 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false) {
  * and closes past a threshold.
  */
 @Composable
-internal fun PictureViewer(uri: Uri, onClose: () -> Unit) {
+internal fun PictureViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null) {
     val image by rememberPicture(uri, 2048)
+    val context = LocalContext.current
     val haptics = com.yaz.sms.ui.component.rememberHaptics()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val drag = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -202,6 +213,12 @@ internal fun PictureViewer(uri: Uri, onClose: () -> Unit) {
                 Box(Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(16.dp)) {
                     FloatingAction(AppIcons.Close, "Close", onClose)
                 }
+                // Saved or handed on from the viewer too, as AOSP Messaging's photo viewer offers.
+                if (part != null) Row(Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(16.dp)) {
+                    FloatingAction(AppIcons.Download, "Save", onClick = { savePart(context, part) })
+                    Spacer(Modifier.width(10.dp))
+                    FloatingAction(AppIcons.Share, "Share", onClick = { shareOutside(context, part) })
+                }
             }
         }
     }
@@ -233,7 +250,7 @@ fun rememberKind(uri: Uri): State<MediaCheck.Kind?> {
  * another app, read by Media3 limited to the formats of messages.
  */
 @Composable
-internal fun VideoViewer(uri: Uri, onClose: () -> Unit) {
+internal fun VideoViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null) {
     val context = LocalContext.current
     var muted by remember { mutableStateOf(false) }
     val player = remember(uri) {
@@ -251,6 +268,11 @@ internal fun VideoViewer(uri: Uri, onClose: () -> Unit) {
             Box(Modifier.fillMaxSize()) {
                 GlassVideo(player = player, muted = muted, onMutedChange = { muted = it })
                 Box(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp)) { FloatingAction(AppIcons.Close, "Close", onClose) }
+                if (part != null) Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp)) {
+                    FloatingAction(AppIcons.Download, "Save", onClick = { savePart(context, part) })
+                    Spacer(Modifier.width(10.dp))
+                    FloatingAction(AppIcons.Share, "Share", onClick = { shareOutside(context, part) })
+                }
             }
         }
     }
@@ -275,22 +297,43 @@ private fun HeldTile(label: String, onShow: () -> Unit) {
     }
 }
 
+/** A copy of [part] another app may read once, or null for an app hidden in a message. */
+private fun sharedCopy(context: Context, part: MmsPart): Uri? = runCatching {
+    val dir = File(context.cacheDir, "shared").apply { mkdirs() }
+    val file = File(dir, "media." + com.yaz.sms.core.mms.MediaPrivacy.extension(part.contentType))
+    context.contentResolver.openInputStream(part.uri)?.use { input -> file.outputStream().use { input.copyTo(it) } }
+    // An app hidden in a message is never handed to the installer.
+    if (com.yaz.sms.core.mms.MediaPrivacy.isApp(part.contentType, file)) {
+        file.delete()
+        android.widget.Toast.makeText(context, "Apps can't be opened from a message.", android.widget.Toast.LENGTH_LONG).show()
+        return null
+    }
+    FileProvider.getUriForFile(context, "${context.packageName}.mms", file)
+}.getOrNull()
+
 /** A video or a sound opened in the app chosen for it: a copy shared for that one opening. */
 internal fun openOutside(context: Context, part: MmsPart) {
+    val shared = sharedCopy(context, part) ?: return
     runCatching {
-        val dir = File(context.cacheDir, "shared").apply { mkdirs() }
-        val file = File(dir, "media." + com.yaz.sms.core.mms.MediaPrivacy.extension(part.contentType))
-        context.contentResolver.openInputStream(part.uri)?.use { input -> file.outputStream().use { input.copyTo(it) } }
-        // An app hidden in a message is never handed to the installer.
-        if (com.yaz.sms.core.mms.MediaPrivacy.isApp(part.contentType, file)) {
-            file.delete()
-            android.widget.Toast.makeText(context, "Apps can't be opened from a message.", android.widget.Toast.LENGTH_LONG).show()
-            return
-        }
-        val shared = FileProvider.getUriForFile(context, "${context.packageName}.mms", file)
         context.startActivity(
             Intent(Intent.ACTION_VIEW).setDataAndType(shared, com.yaz.sms.core.mms.MediaPrivacy.safeType(part.contentType))
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+}
+
+/** A part offered to the app the user picks, as AOSP Messaging shares one (photo_view_menu action_share). */
+internal fun shareOutside(context: Context, part: MmsPart) {
+    val shared = sharedCopy(context, part) ?: return
+    runCatching {
+        context.startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND)
+                    .setType(com.yaz.sms.core.mms.MediaPrivacy.safeType(part.contentType))
+                    .putExtra(Intent.EXTRA_STREAM, shared)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                null
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     }
 }

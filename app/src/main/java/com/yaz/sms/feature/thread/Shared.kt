@@ -197,8 +197,8 @@ internal fun PictureCell(part: MmsPart, modifier: Modifier) {
         if (shown != null) Image(shown, contentDescription = "Photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         else Icon(if (ContentType.isVideoType(part.contentType)) AppIcons.Play else AppIcons.Image, contentDescription = null)
     }
-    if (large) PictureViewer(part.uri, onClose = { large = false })
-    if (video) VideoViewer(part.uri, onClose = { video = false })
+    if (large) PictureViewer(part.uri, onClose = { large = false }, part = part)
+    if (video) VideoViewer(part.uri, onClose = { video = false }, part = part)
 }
 
 /** One thing shared, on a line of glass: what it is, when, and what a tap does. */
