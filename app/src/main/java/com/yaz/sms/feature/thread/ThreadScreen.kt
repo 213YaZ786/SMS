@@ -930,6 +930,7 @@ private fun Bubble(
     val haptics = rememberHaptics()
     // Held: the message lifts, the reactions and the actions come around it.
     var menuOpen by remember { mutableStateOf(false) }
+    var showingDetails by remember { mutableStateOf(false) }
     var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val mine = m.box != MessageBox.RECEIVED
     // The words without an effect's mark, and the effect: carried, sent from here, or brought by the words.
@@ -1219,6 +1220,7 @@ private fun Bubble(
               }
             }
         }
+        if (showingDetails) MessageDetailsDialog(m) { showingDetails = false }
         // Out of the bubble's block: a message of only media opens its menu too.
         if (menuOpen) MessageMenu(
                 bounds = bounds,
@@ -1249,6 +1251,7 @@ private fun Bubble(
                         }.start()
                     } else null,
                     if (m.parts.size == 1) MessageAction(AppIcons.Share, "Share") { shareOutside(context, m.parts.first()) } else null,
+                    MessageAction(AppIcons.Info, "Details") { showingDetails = true },
                     if (chatId != null) MessageAction(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin") { onPin(chatId, rich?.pinned != true) } else null,
                     if (m.box == MessageBox.FAILED) MessageAction(AppIcons.Send, "Try again") { onRetry() } else null,
                     if (chatId != null && rich?.mine == true) MessageAction(AppIcons.Delete, "Delete for everyone", danger = true) { confirmDeleteAll = true } else null,
