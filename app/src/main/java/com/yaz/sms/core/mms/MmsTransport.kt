@@ -101,15 +101,61 @@ object MmsTransport {
     fun download(context: Context, pdu: ByteArray, subId: Int) {
         val app = context.applicationContext
         val ind = runCatching { PduParser(pdu, true).parse() as? NotificationInd }.getOrNull() ?: return
-        val location = ind.contentLocation?.let { String(it) } ?: return
         val sub = if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) subId else SubscriptionManager.getDefaultSmsSubscriptionId()
+        // The announcement is kept first, as AOSP Mms keeps a NotificationInd: a
+        // download that fails or waits leaves a message the user can download by hand.
+        val (thread, id) = MmsStore.saveNotification(app, ind, sub) ?: return
+        val prefs = com.yaz.sms.data.settings.SettingsStore(app).current
+        val roaming = runCatching {
+            app.getSystemService(android.telephony.TelephonyManager::class.java)
+                ?.createForSubscriptionId(sub)?.isNetworkRoaming == true
+        }.getOrDefault(false)
+        if (!(prefs.autoMmsDownload && (!roaming || prefs.autoMmsRoaming)) || !downloadStored(app, id)) {
+            // Waiting for a tap: the conversation says a picture message is there.
+            MessageNotifier(app).show(thread)
+        }
+    }
+
+    /**
+     * Downloads the picture message a kept announcement points to, as AOSP
+     * Messaging's RedownloadMmsAction re-asks for one; the row is replaced
+     * by the message once it arrives.
+     */
+    fun downloadStored(context: Context, mmsId: Long): Boolean {
+        val app = context.applicationContext
+        val (location, sub, transaction) = MmsStore.notification(app, mmsId) ?: return false
         val file = file(app, "get-${System.nanoTime()}")
-        runCatching {
+        pendingRows[file.path] = mmsId
+        downloading.value += mmsId
+        return runCatching {
             manager(app, sub).downloadMultimediaMessage(
                 app, location, share(app, file), null,
-                report(app, ACTION_DOWNLOADED, Uri.parse(location), file, sub, ind.transactionId, ind.from?.string)
+                report(app, ACTION_DOWNLOADED, Uri.parse(location), file, sub, transaction, MmsStore.sender(app, mmsId))
             )
-        }.onFailure { MessageNotifier(app).pictureFailed(ind.from?.string) }
+            true
+        }.getOrElse {
+            pendingRows.remove(file.path)
+            downloading.value -= mmsId
+            false
+        }
+    }
+
+    /** The kept announcement each running download will replace, by its result file. */
+    private val pendingRows = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** The announcements being fetched right now, for their tiles to say so. */
+    val downloading = kotlinx.coroutines.flow.MutableStateFlow<Set<Long>>(emptySet())
+
+    /** A failed picture message sent again, as AOSP Messaging's ResendMessageAction: the old row leaves once the new one is on its way. */
+    fun resend(context: Context, mmsId: Long): Boolean {
+        val app = context.applicationContext
+        val (text, media) = MmsStore.parts(app, mmsId)
+        val recipients = MmsStore.recipients(app, mmsId)
+        if (recipients.isEmpty()) return false
+        val sub = MmsStore.subOf(app, mmsId)
+        val sent = send(app, recipients, text, media.map { Attachment(it.uri, it.contentType) }, sub)
+        if (sent != null) MmsStore.delete(app, mmsId)
+        return sent != null
     }
 
     /** What Android says once a picture message went out or came in. */
@@ -125,13 +171,18 @@ object MmsTransport {
                 }
                 ACTION_DOWNLOADED -> {
                     val from = intent.getStringExtra(EXTRA_FROM)
+                    val row = file?.path?.let { pendingRows.remove(it) }
+                    row?.let { downloading.value -= it }
                     val bytes = file?.takeIf { resultCode == Activity.RESULT_OK && it.exists() }?.readBytes()
                     val conf = bytes?.let { runCatching { PduParser(it, true).parse() as? RetrieveConf }.getOrNull() }
                     val thread = conf?.let { MmsStore.saveReceived(context, it, sub) }
                     if (thread == null) {
+                        // The announcement stays: its tile offers the download again.
                         MessageNotifier(context).pictureFailed(from)
                         return
                     }
+                    // The announcement leaves: the message itself stands in the conversation now.
+                    row?.let { MmsStore.delete(context, it) }
                     MessageNotifier(context).show(thread)
                     // Tells the network the message arrived, as MMS asks.
                     intent.getByteArrayExtra(EXTRA_TRANSACTION)?.let { acknowledge(context, it, sub) }

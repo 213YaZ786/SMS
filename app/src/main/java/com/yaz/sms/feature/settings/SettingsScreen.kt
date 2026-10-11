@@ -171,6 +171,18 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                         Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                     )
                 }
+                SwitchRow(
+                    title = "Download picture messages",
+                    summary = "A picture message downloads itself when it arrives; off, it waits for a tap in the conversation.",
+                    checked = settings.autoMmsDownload,
+                    onChange = viewModel::setAutoMmsDownload
+                )
+                if (settings.autoMmsDownload) SwitchRow(
+                    title = "Also when roaming",
+                    summary = "Abroad too, where data can cost more.",
+                    checked = settings.autoMmsRoaming,
+                    onChange = viewModel::setAutoMmsRoaming
+                )
                 SettingRow(
                     title = "Blocked numbers",
                     summary = "The list Android keeps for every app",

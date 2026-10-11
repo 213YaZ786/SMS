@@ -32,6 +32,25 @@ class DebugBulkReceiver : BroadcastReceiver() {
             android.util.Log.d("DebugBulk", "video message $saved")
             return
         }
+        // --ez waiting true: a picture message announced, not downloaded (the tap-to-download tile).
+        if (intent.getBooleanExtra("waiting", false)) {
+            val ind = com.yaz.sms.core.mms.pdu.NotificationInd().apply {
+                contentLocation = "http://mmsc.example/xyz${System.nanoTime()}".toByteArray()
+                transactionId = "T${System.nanoTime()}".toByteArray()
+                setFrom(com.yaz.sms.core.mms.pdu.EncodedStringValue(from))
+            }
+            android.util.Log.d("DebugBulk", "waiting ${com.yaz.sms.core.mms.MmsStore.saveNotification(context, ind, -1)}")
+            return
+        }
+        // --ez failmms true: one of the user's own picture messages left as failed.
+        if (intent.getBooleanExtra("failmms", false)) {
+            val uri = com.yaz.sms.core.mms.MmsStore.saveSendingParts(context, listOf(from), "Echec MMS test", null, null)
+            uri?.let {
+                com.yaz.sms.core.mms.MmsStore.setBox(context, android.content.ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, it), Telephony.Mms.MESSAGE_BOX_FAILED)
+            }
+            android.util.Log.d("DebugBulk", "failed mms $uri")
+            return
+        }
         val body = intent.getStringExtra("body")
         val count = intent.getIntExtra("count", if (body != null) 1 else 1000)
         val done = goAsync()

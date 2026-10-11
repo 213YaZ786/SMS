@@ -60,6 +60,83 @@ object MmsStore {
         thread
     }.getOrNull()
 
+    /**
+     * The network's announcement of a picture message, kept in the inbox
+     * to download now or by hand, as AOSP Mms persists a NotificationInd
+     * (PduPersister.persist): its thread and row id.
+     */
+    fun saveNotification(context: Context, ind: com.yaz.sms.core.mms.pdu.NotificationInd, subId: Int): Pair<Long, Long>? = runCatching {
+        val from = ind.from?.string.orEmpty()
+        val location = ind.contentLocation?.let { String(it) } ?: return null
+        // Announced twice by the network: the same message is kept once.
+        context.contentResolver.query(
+            Telephony.Mms.CONTENT_URI, arrayOf(Telephony.Mms._ID, Telephony.Mms.THREAD_ID),
+            "${Telephony.Mms.MESSAGE_TYPE} = ${PduHeaders.MESSAGE_TYPE_NOTIFICATION_IND} AND ${Telephony.Mms.CONTENT_LOCATION} = ?",
+            arrayOf(location), null
+        )?.use { c -> if (c.moveToFirst()) return c.getLong(1) to c.getLong(0) }
+        val thread = Telephony.Threads.getOrCreateThreadId(context, setOf(from.ifBlank { "unknown" }))
+        val uri = context.contentResolver.insert(
+            Telephony.Mms.Inbox.CONTENT_URI,
+            ContentValues().apply {
+                put(Telephony.Mms.THREAD_ID, thread)
+                put(Telephony.Mms.DATE, System.currentTimeMillis() / 1000)
+                put(Telephony.Mms.MESSAGE_BOX, Telephony.Mms.MESSAGE_BOX_INBOX)
+                put(Telephony.Mms.READ, 0)
+                put(Telephony.Mms.SEEN, 0)
+                put(Telephony.Mms.MESSAGE_TYPE, PduHeaders.MESSAGE_TYPE_NOTIFICATION_IND)
+                put(Telephony.Mms.MMS_VERSION, PduHeaders.CURRENT_MMS_VERSION)
+                put(Telephony.Mms.CONTENT_LOCATION, location)
+                ind.transactionId?.let { put(Telephony.Mms.TRANSACTION_ID, String(it)) }
+                if (ind.expiry > 0) put(Telephony.Mms.EXPIRY, ind.expiry)
+                if (ind.messageSize > 0) put(Telephony.Mms.MESSAGE_SIZE, ind.messageSize)
+                put(Telephony.Mms.SUBSCRIPTION_ID, subId)
+            }
+        ) ?: return null
+        val id = ContentUris.parseId(uri)
+        if (from.isNotBlank()) writeAddress(context, id, from, PduHeaders.FROM)
+        thread to id
+    }.getOrNull()
+
+    /** Where a kept announcement's message waits: its location, SIM and transaction. */
+    fun notification(context: Context, id: Long): Triple<String, Int, ByteArray?>? = runCatching {
+        context.contentResolver.query(
+            ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, id),
+            arrayOf(Telephony.Mms.CONTENT_LOCATION, Telephony.Mms.SUBSCRIPTION_ID, Telephony.Mms.TRANSACTION_ID),
+            null, null, null
+        )?.use { c ->
+            if (!c.moveToFirst()) return null
+            Triple(c.getString(0) ?: return null, c.getInt(1), c.getString(2)?.toByteArray())
+        }
+    }.getOrNull()
+
+    /** Who a sent picture message went to, from its address rows. */
+    fun recipients(context: Context, id: Long): List<String> = runCatching {
+        val out = ArrayList<String>()
+        context.contentResolver.query(
+            Uri.parse("content://mms/$id/addr"), arrayOf(Telephony.Mms.Addr.ADDRESS, Telephony.Mms.Addr.TYPE),
+            null, null, null
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val type = c.getInt(1)
+                val address = c.getString(0).orEmpty()
+                if ((type == PduHeaders.TO || type == PduHeaders.CC) && address.isNotBlank() && address != "insert-address-token") out += address
+            }
+        }
+        out.distinct()
+    }.getOrDefault(emptyList())
+
+    fun delete(context: Context, id: Long) {
+        runCatching { context.contentResolver.delete(ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, id), null, null) }
+    }
+
+    /** The SIM a message rode on. */
+    fun subOf(context: Context, id: Long): Int = runCatching {
+        context.contentResolver.query(
+            ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, id),
+            arrayOf(Telephony.Mms.SUBSCRIPTION_ID), null, null, null
+        )?.use { c -> if (c.moveToFirst()) c.getInt(0) else null }
+    }.getOrNull() ?: android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId()
+
     /** A message about to go out, kept in the outbox until the network answers. */
     fun saveOutgoing(context: Context, recipients: List<String>, body: PduBody, subId: Int): Uri? = runCatching {
         val thread = Telephony.Threads.getOrCreateThreadId(context, recipients.toSet())

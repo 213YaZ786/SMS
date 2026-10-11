@@ -18,6 +18,8 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     fun setUpdates(mode: UpdateMode) = store.update { it.copy(updates = mode) }
     fun setHideInRecents(on: Boolean) = store.update { it.copy(hideInRecents = on) }
     fun setQuietSales(on: Boolean) = store.update { it.copy(quietSales = on) }
+    fun setAutoMmsDownload(on: Boolean) = store.update { it.copy(autoMmsDownload = on) }
+    fun setAutoMmsRoaming(on: Boolean) = store.update { it.copy(autoMmsRoaming = on) }
     fun setRichChat(on: Boolean) = store.update { it.copy(richChat = on) }
     fun setRelay(relay: String) = store.update { it.copy(relay = relay) }
     fun setUndoSeconds(seconds: Int) = store.update { it.copy(undoSeconds = seconds) }

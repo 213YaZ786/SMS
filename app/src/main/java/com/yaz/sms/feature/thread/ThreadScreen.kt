@@ -670,6 +670,9 @@ private fun ThreadContent(
                         onRetry = {
                             if (!row.message.mms) {
                                 scope.launch(Dispatchers.IO) { SmsSender.retry(context, row.message.id, row.message.address, row.message.body, row.message.subId) }
+                            } else {
+                                // A failed picture message goes again (AOSP Messaging's ResendMessageAction).
+                                scope.launch(Dispatchers.IO) { com.yaz.sms.core.mms.MmsTransport.resend(context, row.message.id) }
                             }
                         },
                         onDelete = {
@@ -1027,8 +1030,39 @@ private fun Bubble(
         sender?.let {
             Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 12.dp, bottom = 2.dp))
         }
+        // Announced by the network, not here yet: a tap fetches it, as AOSP
+        // Messaging's download action on a waiting picture message.
+        if (m.waiting) {
+            val busy by com.yaz.sms.core.mms.MmsTransport.downloading.collectAsState()
+            val fetching = m.id in busy
+            ZoneSurface(
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable(enabled = !fetching) {
+                    haptics.tick()
+                    Thread {
+                        if (!com.yaz.sms.core.mms.MmsTransport.downloadStored(context, m.id)) {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                android.widget.Toast.makeText(context, "Could not download", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }.start()
+                }
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Icon(AppIcons.Download, contentDescription = null)
+                    Spacer(Modifier.width(10.dp))
+                    Text(if (fetching) "Downloading…" else "Picture message, tap to download", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
         m.parts.forEach { part ->
-            MediaTile(part, mine, held = stranger && !mine)
+            // Only media: the tile stands where the bubble would, for the menu to lift it.
+            Box(Modifier.onGloballyPositioned { if (said.isEmpty()) bounds = it.boundsInWindow() }) {
+                MediaTile(part, mine, held = stranger && !mine, onMore = {
+                    haptics.firm()
+                    menuOpen = true
+                })
+            }
             Spacer(Modifier.height(4.dp))
         }
         val scope = rememberCoroutineScope()
@@ -1044,7 +1078,7 @@ private fun Bubble(
             fx.animateTo(1f, androidx.compose.animation.core.tween(if (e == com.yaz.sms.core.sms.Effects.Effect.GENTLE) 1700 else 950, easing = androidx.compose.animation.core.LinearEasing))
         }
         LaunchedEffect(fx.value >= 0.35f) { if (bubbleEffect == com.yaz.sms.core.sms.Effects.Effect.SLAM && fx.value in 0.35f..0.5f) haptics.firm() }
-        if (said.isNotEmpty() || m.parts.isEmpty()) Box(
+        if (!m.waiting && (said.isNotEmpty() || m.parts.isEmpty())) Box(
             Modifier
                 .fillMaxWidth(0.82f)
                 .graphicsLayer {
@@ -1184,7 +1218,9 @@ private fun Bubble(
                 }
               }
             }
-            if (menuOpen) MessageMenu(
+        }
+        // Out of the bubble's block: a message of only media opens its menu too.
+        if (menuOpen) MessageMenu(
                 bounds = bounds,
                 mine = mine,
                 reactions = if (rich != null || onSmsReact != null) Reactions else null,
@@ -1214,7 +1250,7 @@ private fun Bubble(
                     } else null,
                     if (m.parts.size == 1) MessageAction(AppIcons.Share, "Share") { shareOutside(context, m.parts.first()) } else null,
                     if (chatId != null) MessageAction(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin") { onPin(chatId, rich?.pinned != true) } else null,
-                    if (m.box == MessageBox.FAILED && !m.mms) MessageAction(AppIcons.Send, "Try again") { onRetry() } else null,
+                    if (m.box == MessageBox.FAILED) MessageAction(AppIcons.Send, "Try again") { onRetry() } else null,
                     if (chatId != null && rich?.mine == true) MessageAction(AppIcons.Delete, "Delete for everyone", danger = true) { confirmDeleteAll = true } else null,
                     MessageAction(AppIcons.Delete, if (chatId != null && rich?.mine == true) "Delete for me" else "Delete", danger = true) { onDelete() }
                 ),
@@ -1223,11 +1259,15 @@ private fun Bubble(
                 onMoreReactions = if (rich != null) ({ pickingEmoji = true }) else null
             ) {
                 if (big != null) BigEmojiRow(big, 0)
-                else ZoneSurface(shape = shape, accent = mine, shadowElevation = 8.dp) {
-                    Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                else ZoneSurface(shape = RoundedCornerShape(22.dp), accent = mine, shadowElevation = 8.dp) {
+                    if (text.isNotBlank()) Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                    else Text(
+                        com.yaz.sms.core.mms.mediaWord(m.parts.firstOrNull()?.contentType),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
                 }
             }
-        }
         // A link not recognized: one capsule of glass just under the message, a tap tells where it goes.
         // Never an accusation (it may be a sound link), except a site on the public list.
         checks.entries.firstOrNull()?.let { (url, verdict) ->

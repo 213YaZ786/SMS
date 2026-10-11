@@ -22,6 +22,7 @@ import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -71,8 +72,9 @@ import kotlinx.coroutines.withContext
  * really is comes from its first bytes, not from the type it was sent
  * with. From an unknown number ([held]) nothing is read before a tap.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false) {
+fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -> Unit)? = null) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var large by remember { mutableStateOf(false) }
@@ -90,10 +92,15 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false) {
             Modifier
                 .widthIn(max = 280.dp)
                 .clip(RoundedCornerShape(20.dp))
-                .clickable {
-                    haptics.tick()
-                    large = true
-                }
+                // Held, a message of only media still opens its menu (Save, Forward, Delete).
+                .combinedClickable(
+                    onClick = {
+                        haptics.tick()
+                        large = true
+                    },
+                    onLongClick = onMore,
+                    onLongClickLabel = if (onMore != null) "More" else null
+                )
         ) {
             if (shown != null) {
                 Image(shown, contentDescription = "Photo", contentScale = ContentScale.FillWidth, modifier = Modifier.width(280.dp))
@@ -110,10 +117,14 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false) {
         ZoneSurface(
             shape = RoundedCornerShape(20.dp),
             accent = mine,
-            modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable {
-                haptics.tick()
-                if (ContentType.isVideoType(part.contentType) && kind == MediaCheck.Kind.VIDEO) video = true else openOutside(context, part)
-            }
+            modifier = Modifier.clip(RoundedCornerShape(20.dp)).combinedClickable(
+                onClick = {
+                    haptics.tick()
+                    if (ContentType.isVideoType(part.contentType) && kind == MediaCheck.Kind.VIDEO) video = true else openOutside(context, part)
+                },
+                onLongClick = onMore,
+                onLongClickLabel = if (onMore != null) "More" else null
+            )
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Icon(

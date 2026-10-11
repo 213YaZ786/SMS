@@ -41,6 +41,8 @@ data class Message(
     /** A picture message: its pictures, videos and sounds; the text is in [body]. */
     val mms: Boolean = false,
     val parts: List<MmsPart> = emptyList(),
+    /** Announced by the network, not downloaded yet: a tap fetches it. */
+    val waiting: Boolean = false,
     /** Went over the rich chat. */
     val rich: Boolean = false,
     /** The other side read it (rich chat). */
@@ -128,6 +130,12 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
     private fun readConversations(): List<Conversation> = runCatching {
         val people = recipients()
         val drafts = Drafts.all(context)
+        // Announcements still waiting for their download (kept NotificationInd rows).
+        val waiting = HashSet<Long>()
+        context.contentResolver.query(
+            Telephony.Mms.CONTENT_URI, arrayOf(Telephony.Mms._ID),
+            "${Telephony.Mms.MESSAGE_TYPE} = 130", null, null
+        )?.use { c -> while (c.moveToNext()) waiting += c.getLong(0) }
         val unread = HashMap<Long, Int>()
         context.contentResolver.query(
             Telephony.Sms.CONTENT_URI, arrayOf(Telephony.Sms.THREAD_ID),
@@ -168,7 +176,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                 Conversation(
                     threadId = m.thread,
                     address = addresses.firstOrNull().orEmpty(),
-                    snippet = text.ifBlank { mediaWord(media.firstOrNull()?.contentType) },
+                    snippet = if (m.id in waiting) "Picture message" else text.ifBlank { mediaWord(media.firstOrNull()?.contentType) },
                     date = m.date,
                     unread = unread[m.thread] ?: 0,
                     fromMe = m.box != Telephony.Mms.MESSAGE_BOX_INBOX,
@@ -233,16 +241,19 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             }
             context.contentResolver.query(
                 Telephony.Mms.CONTENT_URI,
-                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID),
+                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID, Telephony.Mms.MESSAGE_TYPE),
                 "${Telephony.Mms.THREAD_ID} = ? AND ${Telephony.Mms.MESSAGE_BOX} != ${Telephony.Mms.MESSAGE_BOX_DRAFTS}",
                 arrayOf(threadId.toString()), "${Telephony.Mms.DATE} DESC LIMIT $limit"
             )?.use { c ->
                 // The rows first, then all their parts in one query.
                 val rows = ArrayList<LongArray>()
-                while (c.moveToNext()) rows += longArrayOf(c.getLong(0), c.getLong(1), c.getInt(2).toLong(), c.getInt(3).toLong(), c.getInt(4).toLong())
+                while (c.moveToNext()) rows += longArrayOf(c.getLong(0), c.getLong(1), c.getInt(2).toLong(), c.getInt(3).toLong(), c.getInt(4).toLong(), c.getInt(5).toLong())
                 val parts = MmsStore.parts(context, rows.map { it[0] })
-                rows.forEach { (id, date, box, read, sub) ->
+                rows.forEach { r ->
+                    val (id, date, box, read, sub) = r
                     val (text, media) = parts[id] ?: ("" to emptyList())
+                    // An announcement not downloaded yet (a kept NotificationInd) waits for a tap.
+                    val waiting = r[5].toInt() == 130
                     out += Message(
                         id = id,
                         threadId = threadId,
@@ -259,7 +270,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                         delivered = false,
                         subId = sub.toInt(),
                         mms = true,
-                        parts = media
+                        parts = media,
+                        waiting = waiting
                     )
                 }
             }

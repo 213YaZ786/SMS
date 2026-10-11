@@ -21,6 +21,10 @@ data class Settings(
      * this one request is the app's only use of the internet.
      */
     val updates: UpdateMode = UpdateMode.INSTALL,
+    /** A picture message announced by the network downloads itself. */
+    val autoMmsDownload: Boolean = true,
+    /** It downloads itself abroad too (roaming data can cost). */
+    val autoMmsRoaming: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     /** True black instead of dark grey in dark mode. */
     val pureBlack: Boolean = false,
