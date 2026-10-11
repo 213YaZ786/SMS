@@ -23,6 +23,16 @@ class SalesCallsTest {
     }
 
     @Test
+    fun networkFormsKeepingTheTrunkZeroAreTheSameNumber() {
+        assertTrue(SalesCalls.isSalesCall("+330568123456", null))
+        assertTrue(SalesCalls.isSalesCall("+33 (0)5 68 12 34 56", "us"))
+        assertTrue(SalesCalls.isSalesCall(" +33568123456", null))
+        assertTrue(SalesCalls.isSalesCall("00330568123456", null))
+        assertTrue(SalesCalls.isSalesCall("0568123456;ext=12", "fr"))
+        assertFalse(SalesCalls.isSalesCall("+330668123456", null))
+    }
+
+    @Test
     fun spanishSalesNumbersStartWith400() {
         assertTrue(SalesCalls.isSalesCall("+34 400 123 456", null))
         assertTrue(SalesCalls.isSalesCall("400123456", "es"))
