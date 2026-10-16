@@ -25,6 +25,14 @@ class OpenRequests {
      */
     val sharedMedia = MutableStateFlow<List<com.yaz.sms.core.mms.Attachment>>(emptyList())
 
+    /**
+     * The address of the conversation [sharedMedia] is for: the number the
+     * share named, else the one picked. Only that conversation takes it,
+     * never one already open behind (AOSP Messaging hands the draft to the
+     * conversation picked, ShareIntentActivity.onConversationClick).
+     */
+    val sharedTo = MutableStateFlow<String?>(null)
+
     private val _pending = MutableStateFlow<OpenRequest?>(null)
     val pending: StateFlow<OpenRequest?> = _pending.asStateFlow()
 

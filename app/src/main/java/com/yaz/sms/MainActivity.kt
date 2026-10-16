@@ -90,12 +90,20 @@ class MainActivity : ComponentActivity() {
                     else -> emptyList()
                 }.take(5)
                 if (streams.isNotEmpty()) {
+                    requests.sharedTo.value = to.joinToString(",").ifEmpty { null }
                     val resolver = contentResolver
                     val cache = cacheDir
                     Thread {
                         val taken = streams.mapNotNull { uri ->
                             runCatching {
-                                val type = resolver.getType(uri) ?: intent.type ?: return@mapNotNull null
+                                // Only another app's content: AOSP Messaging's ShareIntentActivity
+                                // refuses file:// (UriUtil.isFileUri), and none of our own providers
+                                // (https://developer.android.com/privacy-and-security/risks/content-resolver,
+                                // belongsToCurrentApplication), or a share could send our own files out.
+                                if (uri.scheme != android.content.ContentResolver.SCHEME_CONTENT) return@mapNotNull null
+                                val owner = packageManager.resolveContentProvider(uri.authority ?: return@mapNotNull null, 0)?.packageName
+                                if (owner == null || owner == packageName) return@mapNotNull null
+                                val claimed = resolver.getType(uri) ?: intent.type ?: return@mapNotNull null
                                 val dir = java.io.File(cache, "shared-in").apply { mkdirs() }
                                 val file = java.io.File(dir, "in-${System.nanoTime()}")
                                 var kept = 0L
@@ -112,7 +120,10 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 } ?: return@mapNotNull null
-                                com.yaz.sms.core.mms.Attachment(android.net.Uri.fromFile(file), type)
+                                // Sent under the type its bytes prove, as received parts are opened.
+                                val copy = android.net.Uri.fromFile(file)
+                                val type = com.yaz.sms.core.security.MediaCheck.typeFor(this, copy, claimed)
+                                com.yaz.sms.core.mms.Attachment(copy, type)
                             }.getOrNull()
                         }
                         requests.sharedMedia.value = taken

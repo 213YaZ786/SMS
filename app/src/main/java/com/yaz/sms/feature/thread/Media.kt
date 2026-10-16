@@ -64,6 +64,7 @@ import com.yaz.sms.ui.icon.AppIcons
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.repeatOnLifecycle
 
 /**
  * A picture, video or sound of a message. A picture shows itself and
@@ -82,12 +83,17 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
     var shown by remember(part.uri) { mutableStateOf(!held) }
     val kind by rememberKind(part.uri)
     val image = ContentType.isImageType(part.contentType) && kind != MediaCheck.Kind.OTHER
-    val sound = ContentType.isAudioType(part.contentType) && kind != MediaCheck.Kind.OTHER
+    // A sound goes to Android's player only once its first bytes say it is one (a 3GP or MP4 holds sounds too).
+    val sound = ContentType.isAudioType(part.contentType) && (kind == MediaCheck.Kind.AUDIO || kind == MediaCheck.Kind.VIDEO)
     if (!shown && (image || sound)) {
-        HeldTile(if (image) "Photo from an unknown number, tap to show" else "Sound from an unknown number, tap to load") { shown = true }
+        HeldTile(
+            if (image) "Photo from an unknown number, tap to show" else "Sound from an unknown number, tap to load",
+            if (image) AppIcons.Image else AppIcons.Mic
+        ) { shown = true }
     } else if (image) {
         val image by rememberPicture(part.uri, 720)
-        val shown = image
+        val moving by rememberGifFrame(part.uri, 720, part.contentType.contains("gif", ignoreCase = true))
+        val shown = moving ?: image
         Box(
             Modifier
                 .widthIn(max = 280.dp)
@@ -113,6 +119,34 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
         if (large) PictureViewer(part.uri, onClose = { large = false }, part = part)
     } else if (sound) {
         VoiceTile(part, mine)
+    } else if (shown && ContentType.isVideoType(part.contentType) && kind == MediaCheck.Kind.VIDEO) {
+        // A film shows its first frame under a play mark, as Google Messages and AOSP Messaging do.
+        val still by rememberVideoFrame(part.uri, 720)
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .widthIn(max = 280.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .combinedClickable(
+                    onClick = {
+                        haptics.tick()
+                        video = true
+                    },
+                    onLongClick = onMore,
+                    onLongClickLabel = if (onMore != null) "More" else null
+                )
+        ) {
+            val frame = still
+            if (frame != null) {
+                Image(frame, contentDescription = "Video", contentScale = ContentScale.FillWidth, modifier = Modifier.width(280.dp))
+            } else {
+                ZoneSurface(shape = RoundedCornerShape(20.dp), modifier = Modifier.size(200.dp, 150.dp)) {}
+            }
+            androidx.compose.material3.Surface(shape = androidx.compose.foundation.shape.CircleShape, color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)) {
+                Icon(AppIcons.Play, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.padding(14.dp).size(32.dp))
+            }
+        }
+        if (video) VideoViewer(part.uri, onClose = { video = false }, part = part)
     } else {
         ZoneSurface(
             shape = RoundedCornerShape(20.dp),
@@ -170,7 +204,9 @@ internal fun savePart(context: Context, part: MmsPart) {
  */
 @Composable
 internal fun PictureViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null) {
-    val image by rememberPicture(uri, 2048)
+    val still by rememberPicture(uri, 2048)
+    val moving by rememberGifFrame(uri, 1440, part?.contentType?.contains("gif", ignoreCase = true) == true)
+    val image = moving ?: still
     val context = LocalContext.current
     val haptics = com.yaz.sms.ui.component.rememberHaptics()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -247,6 +283,54 @@ fun rememberPicture(uri: Uri, side: Int): State<ImageBitmap?> {
     }
 }
 
+/**
+ * An animated GIF's frame of the moment: the frames decoded in the isolated
+ * DecoderService (SafeImages.frames), each shown for its delay as Glide's
+ * GifFrameLoader does (https://github.com/bumptech/glide), and only while the
+ * screen is started (repeatOnLifecycle,
+ * https://developer.android.com/topic/libraries/architecture/coroutines#restart).
+ * Null for a still picture, which then shows rememberPicture's.
+ */
+@Composable
+fun rememberGifFrame(uri: Uri, side: Int, gif: Boolean): State<ImageBitmap?> {
+    val context = LocalContext.current
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    return produceState<ImageBitmap?>(null, uri, side, gif) {
+        if (!gif) return@produceState
+        val frames = SafeImages.frames(context, uri, side) ?: return@produceState
+        val pictures = frames.pictures.map { it.asImageBitmap() }
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            var i = 0
+            while (true) {
+                value = pictures[i]
+                kotlinx.coroutines.delay(frames.delays[i].toLong())
+                i = (i + 1) % pictures.size
+            }
+        }
+    }
+}
+
+/**
+ * A film's still for its tile, as AOSP Messaging's VideoThumbnailRequest
+ * takes it (MediaMetadataRetriever.getFrameAtTime): the frame is decoded by
+ * Android's media process, never in the app; asked at the size shown
+ * (getScaledFrameAtTime) instead of scaled after.
+ */
+@Composable
+fun rememberVideoFrame(uri: Uri, side: Int): State<ImageBitmap?> {
+    val context = LocalContext.current
+    return produceState<ImageBitmap?>(null, uri, side) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                android.media.MediaMetadataRetriever().use { retriever ->
+                    retriever.setDataSource(context, uri)
+                    retriever.getScaledFrameAtTime(0L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, side, side)?.asImageBitmap()
+                }
+            }.getOrNull()
+        }
+    }
+}
+
 /** What a part really is, read from its first bytes; null while it is read. */
 @Composable
 fun rememberKind(uri: Uri): State<MediaCheck.Kind?> {
@@ -291,7 +375,7 @@ internal fun VideoViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null) {
 
 /** What a part from an unknown number waits behind: a tap, before anything reads it. */
 @Composable
-private fun HeldTile(label: String, onShow: () -> Unit) {
+private fun HeldTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onShow: () -> Unit) {
     val haptics = rememberHaptics()
     ZoneSurface(
         shape = RoundedCornerShape(20.dp),
@@ -301,17 +385,22 @@ private fun HeldTile(label: String, onShow: () -> Unit) {
         }
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Icon(AppIcons.Image, contentDescription = null)
+            Icon(icon, contentDescription = null)
             Spacer(Modifier.width(10.dp))
             Text(label, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
 
-/** A copy of [part] another app may read once, or null for an app hidden in a message. */
-private fun sharedCopy(context: Context, part: MmsPart): Uri? = runCatching {
+/**
+ * A copy of [part] another app may read once, with the type it goes out
+ * under (the sender's only when the bytes agree, MediaCheck.typeFor), or
+ * null for an app hidden in a message.
+ */
+private fun sharedCopy(context: Context, part: MmsPart): Pair<Uri, String>? = runCatching {
     val dir = File(context.cacheDir, "shared").apply { mkdirs() }
-    val file = File(dir, "media." + com.yaz.sms.core.mms.MediaPrivacy.extension(part.contentType))
+    val type = MediaCheck.typeFor(context, part.uri, com.yaz.sms.core.mms.MediaPrivacy.safeType(part.contentType))
+    val file = File(dir, "media." + com.yaz.sms.core.mms.MediaPrivacy.extension(type))
     context.contentResolver.openInputStream(part.uri)?.use { input -> file.outputStream().use { input.copyTo(it) } }
     // An app hidden in a message is never handed to the installer.
     if (com.yaz.sms.core.mms.MediaPrivacy.isApp(part.contentType, file)) {
@@ -319,28 +408,34 @@ private fun sharedCopy(context: Context, part: MmsPart): Uri? = runCatching {
         android.widget.Toast.makeText(context, "Apps can't be opened from a message.", android.widget.Toast.LENGTH_LONG).show()
         return null
     }
-    FileProvider.getUriForFile(context, "${context.packageName}.mms", file)
+    FileProvider.getUriForFile(context, "${context.packageName}.mms", file) to type
 }.getOrNull()
 
-/** A video or a sound opened in the app chosen for it: a copy shared for that one opening. */
+/**
+ * A file opened in the app chosen for it: a copy shared for that one
+ * opening. With no app for it, AOSP Messaging's answer
+ * (UiUtils, activity_not_found_message): a toast, never a silent tap.
+ */
 internal fun openOutside(context: Context, part: MmsPart) {
-    val shared = sharedCopy(context, part) ?: return
+    val (shared, type) = sharedCopy(context, part) ?: return
     runCatching {
         context.startActivity(
-            Intent(Intent.ACTION_VIEW).setDataAndType(shared, com.yaz.sms.core.mms.MediaPrivacy.safeType(part.contentType))
+            Intent(Intent.ACTION_VIEW).setDataAndType(shared, type)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         )
+    }.onFailure {
+        android.widget.Toast.makeText(context, "No app can open this file", android.widget.Toast.LENGTH_SHORT).show()
     }
 }
 
 /** A part offered to the app the user picks, as AOSP Messaging shares one (photo_view_menu action_share). */
 internal fun shareOutside(context: Context, part: MmsPart) {
-    val shared = sharedCopy(context, part) ?: return
+    val (shared, type) = sharedCopy(context, part) ?: return
     runCatching {
         context.startActivity(
             Intent.createChooser(
                 Intent(Intent.ACTION_SEND)
-                    .setType(com.yaz.sms.core.mms.MediaPrivacy.safeType(part.contentType))
+                    .setType(type)
                     .putExtra(Intent.EXTRA_STREAM, shared)
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
                 null

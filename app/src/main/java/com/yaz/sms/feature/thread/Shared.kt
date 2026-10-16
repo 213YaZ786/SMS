@@ -68,7 +68,8 @@ import java.time.format.FormatStyle
 
 /** What two people sent each other, as the Shared page lists it. */
 internal sealed class Item(val date: Long) {
-    class Picture(val part: MmsPart, date: Long) : Item(date)
+    /** [held]: from an unknown number, read only after a tap, as in the conversation. */
+    class Picture(val part: MmsPart, date: Long, val held: Boolean = false) : Item(date)
     class File(val part: MmsPart, date: Long) : Item(date)
     class Link(val url: String, val doubtful: LinkCheck.Verdict?, date: Long) : Item(date)
     class Code(val code: String, date: Long) : Item(date)
@@ -99,7 +100,8 @@ internal fun gather(messages: List<Message>, stranger: (Message) -> Boolean): Li
     buildList {
         m.parts.forEach { part ->
             when {
-                ContentType.isImageType(part.contentType) || ContentType.isVideoType(part.contentType) -> add(Item.Picture(part, m.date))
+                ContentType.isImageType(part.contentType) || ContentType.isVideoType(part.contentType) ->
+                    add(Item.Picture(part, m.date, m.box == com.yaz.sms.data.sms.Box.RECEIVED && stranger(m)))
                 ContentType.isAudioType(part.contentType) -> Unit
                 !part.contentType.startsWith("text/") -> add(Item.File(part, m.date))
             }
@@ -138,7 +140,7 @@ internal fun SharedPage(name: String, messages: List<Message>, stranger: (Messag
                     val pictures = shown.filterIsInstance<Item.Picture>()
                     items(pictures.chunked(3)) { line ->
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
-                            line.forEach { PictureCell(it.part, Modifier.weight(1f)) }
+                            line.forEach { PictureCell(it.part, Modifier.weight(1f), it.held) }
                             repeat(3 - line.size) { Spacer(Modifier.weight(1f)) }
                         }
                     }
@@ -177,10 +179,22 @@ private fun Chip(label: String, chosen: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-internal fun PictureCell(part: MmsPart, modifier: Modifier) {
+internal fun PictureCell(part: MmsPart, modifier: Modifier, held: Boolean = false) {
     var large by remember { mutableStateOf(false) }
     var video by remember { mutableStateOf(false) }
+    // From an unknown number nothing is read before a tap, as MediaTile's HeldTile; the state
+    // keyed by the part (https://developer.android.com/develop/ui/compose/state#store-state).
+    var open by remember(part.uri) { mutableStateOf(!held) }
     val context = LocalContext.current
+    if (!open) {
+        Box(
+            modifier.aspectRatio(1f).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { open = true },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(if (ContentType.isVideoType(part.contentType)) AppIcons.Play else AppIcons.Image, contentDescription = "From an unknown number, tap to show")
+        }
+        return
+    }
     val image by rememberPicture(part.uri, 360)
     val kind by rememberKind(part.uri)
     Box(

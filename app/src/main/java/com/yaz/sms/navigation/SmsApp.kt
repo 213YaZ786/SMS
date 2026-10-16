@@ -162,12 +162,20 @@ private fun SmsNavHost(navController: NavHostController) {
             // Media shared from another app belongs to this choice, as AOSP Messaging's
             // ShareIntentActivity holds it: left without a pick (back arrow or gesture), it is dropped.
             var picked by remember { mutableStateOf(false) }
-            DisposableEffect(Unit) { onDispose { if (!picked) requests.sharedMedia.value = emptyList() } }
+            DisposableEffect(Unit) {
+                onDispose {
+                    if (!picked) {
+                        requests.sharedMedia.value = emptyList()
+                        requests.sharedTo.value = null
+                    }
+                }
+            }
             ReadableScroll {
                 NewMessageScreen(
                     onBack = { navController.popBackStack() },
                     onPick = { address ->
                         picked = true
+                        requests.sharedTo.value = address
                         navController.popBackStack()
                         navController.navigate(Routes.thread(null, address, text))
                     }

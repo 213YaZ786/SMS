@@ -32,6 +32,12 @@ class DebugBulkReceiver : BroadcastReceiver() {
             android.util.Log.d("DebugBulk", "video message $saved")
             return
         }
+        // --es file files/x.gif --es mime image/gif: any part, with the type its sender wrote.
+        intent.getStringExtra("file")?.let { name ->
+            val saved = com.yaz.sms.core.mms.MmsStore.saveReceivedParts(context, from, intent.getStringExtra("body").orEmpty(), intent.getStringExtra("mime"), java.io.File(context.dataDir, name))
+            android.util.Log.d("DebugBulk", "file message $saved")
+            return
+        }
         // --ez waiting true: a picture message announced, not downloaded (the tap-to-download tile).
         if (intent.getBooleanExtra("waiting", false)) {
             val ind = com.yaz.sms.core.mms.pdu.NotificationInd().apply {

@@ -191,6 +191,7 @@ private fun ThreadContent(
     // Media shared from another app, waiting for the conversation the user picks.
     val openRequests: com.yaz.sms.core.sms.OpenRequests = koinInject()
     val sharedIn by openRequests.sharedMedia.collectAsState()
+    val sharedTo by openRequests.sharedTo.collectAsState()
     val chatChanges by chat.changes.collectAsState()
     val links by chat.links.collectAsState()
     val refs by chat.refs.collectAsState()
@@ -574,8 +575,11 @@ private fun ThreadContent(
                     val with = people.filter { '@' !in it }.toSet()
                     Thread { com.yaz.sms.data.sms.Drafts.keep(context, with, typed) }.start()
                 },
-                incoming = sharedIn.takeIf { it.isNotEmpty() },
-                onIncomingTaken = { openRequests.sharedMedia.value = emptyList() },
+                incoming = sharedIn.takeIf { it.isNotEmpty() && sharedTo != null && sharedTo == address },
+                onIncomingTaken = {
+                    openRequests.sharedMedia.value = emptyList()
+                    openRequests.sharedTo.value = null
+                },
                 effectsCarried = encrypted,
                 onPoll = if (encrypted) ({ pollOpen = true }) else null,
                 onSend = { typed, sub, attachments ->

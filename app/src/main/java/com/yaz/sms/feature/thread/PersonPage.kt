@@ -192,7 +192,7 @@ fun PersonPage(
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
                                     these.filterIsInstance<Item.Picture>().take(6).chunked(3).forEach { line ->
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            line.forEach { PictureCell(it.part, Modifier.weight(1f)) }
+                                            line.forEach { PictureCell(it.part, Modifier.weight(1f), it.held) }
                                             repeat(3 - line.size) { Spacer(Modifier.weight(1f)) }
                                         }
                                     }

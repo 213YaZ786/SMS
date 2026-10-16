@@ -18,7 +18,18 @@ object SaveParts {
     fun save(context: Context, parts: List<MmsPart>): Int = parts.count { save(context, it) }
 
     private fun save(context: Context, part: MmsPart): Boolean = runCatching {
-        val type = MediaPrivacy.safeType(part.contentType)
+        val claimed = MediaPrivacy.safeType(part.contentType)
+        // A "photo" whose bytes are not one lands in Downloads as a plain file, under our name.
+        val type = com.yaz.sms.core.security.MediaCheck.typeFor(context, part.uri, claimed)
+        val name = part.name.takeIf { type == claimed }
+        // An app hidden in a message is never saved where the installer can open it (as sharedCopy refuses it).
+        val probe = java.io.File(context.cacheDir, "save-probe-${System.nanoTime()}")
+        try {
+            context.contentResolver.openInputStream(part.uri)?.use { input -> probe.outputStream().use { input.copyTo(it) } }
+            if (MediaPrivacy.isApp(part.contentType, probe) || part.name?.endsWith(".apk", ignoreCase = true) == true) return false
+        } finally {
+            probe.delete()
+        }
         val (collection, folder) = when {
             ContentType.isImageType(type) -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI to "Pictures/SMS"
             ContentType.isVideoType(type) -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI to "Movies/SMS"
@@ -26,7 +37,7 @@ object SaveParts {
         }
         val resolver = context.contentResolver
         val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, part.name ?: "SMS-${System.currentTimeMillis()}.${MediaPrivacy.extension(type)}")
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name ?: "SMS-${System.currentTimeMillis()}.${MediaPrivacy.extension(type)}")
             put(MediaStore.MediaColumns.MIME_TYPE, type)
             folder?.let { put(MediaStore.MediaColumns.RELATIVE_PATH, it) }
             put(MediaStore.MediaColumns.IS_PENDING, 1)

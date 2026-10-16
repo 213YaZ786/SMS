@@ -122,6 +122,8 @@ dependencies {
     implementation(libs.koin.android)
     implementation(libs.koin.compose)
     implementation(libs.media3.exoplayer)
+    // GIF frames, decoded only inside the isolated DecoderService.
+    implementation(libs.glide.gifdecoder)
     // QR codes of the invite to chat without a number (Apache 2.0).
     implementation("com.google.zxing:core:3.5.4")
 
