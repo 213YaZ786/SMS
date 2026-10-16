@@ -265,6 +265,8 @@ private fun ThreadContent(
     var listBottom by remember { mutableStateOf(Float.NaN) }
     // A message swiped to answer it: shown over the field, sent quoted.
     var quote by remember { mutableStateOf<String?>(null) }
+    // How far the conversation is pulled left to show every time (iOS Messages), springing back on release.
+    val timesPeek = remember { Animatable(0f) }
     // One of the user's own chat messages being changed: its chat id and text.
     var editing by remember { mutableStateOf<Pair<Int, String>?>(null) }
     // How long messages last in the encrypted chat, in seconds; 0 for always.
@@ -663,7 +665,23 @@ private fun ThreadContent(
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                     // A message deleted, here or for everyone, fades away as the others close up.
-                    is Row.Bubble -> Box(Modifier.fillMaxWidth().animateItem(fadeOutSpec = androidx.compose.animation.core.tween(450))) { Bubble(
+                    is Row.Bubble -> Box(Modifier.fillMaxWidth().animateItem(fadeOutSpec = androidx.compose.animation.core.tween(450))) {
+                      val mineRow = row.message.box != MessageBox.RECEIVED
+                      // Every message's time, drawn in from the right edge while the
+                      // conversation is pulled left, as iOS Messages shows them.
+                      if (timesPeek.value > 0f) Text(
+                          clockOf(context, row.message.date),
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                          modifier = Modifier.align(Alignment.CenterEnd).padding(end = 8.dp)
+                              .graphicsLayer { alpha = (timesPeek.value / TIMES_REACH).coerceIn(0f, 1f) }
+                      )
+                      Column(
+                          // One's own messages make way for the times; those received stay where they are, as on iOS.
+                          Modifier.fillMaxWidth().offset { IntOffset(if (mineRow) -timesPeek.value.roundToInt() else 0, 0) },
+                          horizontalAlignment = if (mineRow) Alignment.End else Alignment.Start
+                      ) {
+                      Bubble(
                         row.message,
                         row.last,
                         fresh = row.message.box == MessageBox.RECEIVED && row.message.uid in fresh,
@@ -703,8 +721,23 @@ private fun ThreadContent(
                         holdMedia = !prefs.showStrangerMedia && row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
                         highlight = if (searching) query.trim().takeIf { it.isNotEmpty() } else null,
                         sentEffect = sentEffects[com.yaz.sms.core.sms.Effects.plain(row.message.body)]?.takeIf { (_, at) -> row.message.box != MessageBox.RECEIVED && row.message.date >= at - 10_000 }?.first,
-                        onReplay = { e, words -> playing = Triple(e, words, null) }
-                    ) }
+                        onReplay = { e, words -> playing = Triple(e, words, null) },
+                        onPeek = { dx ->
+                            scope.launch {
+                                if (dx == null) timesPeek.animateTo(0f, spring(dampingRatio = 0.7f, stiffness = 380f))
+                                else timesPeek.snapTo((timesPeek.value - dx).coerceIn(0f, TIMES_REACH))
+                            }
+                        }
+                    )
+                      // The last of a run carries its time, unless its status line already says it.
+                      if (row.stamp && !(mineRow && row.last) && row.message.box != MessageBox.FAILED) Text(
+                          clockOf(context, row.message.date),
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                          modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 4.dp)
+                      )
+                      }
+                    }
                 }
             }
         }
@@ -715,7 +748,8 @@ private fun ThreadContent(
 private sealed class Row(val key: String) {
     class Day(val label: String, day: String) : Row("day/$day")
     // An SMS and a picture message may hold the same number: the kind is part of the key.
-    class Bubble(val message: Message, val last: Boolean, val smsReactions: List<String> = emptyList(), val smsMine: List<String> = emptyList()) : Row("m/${message.uid}")
+    /** [stamp]: its time shown under it, the last of a run (AOSP Messaging's clustering). */
+    class Bubble(val message: Message, val last: Boolean, val smsReactions: List<String> = emptyList(), val smsMine: List<String> = emptyList(), val stamp: Boolean = false) : Row("m/${message.uid}")
 }
 
 /** The conversations opened lately, as they were shown: reopened, one shows at once. */
@@ -744,6 +778,9 @@ internal object ThreadsAhead {
 /** How many messages a conversation opened for the first time shows before its first page. */
 private const val FIRST = 40
 
+/** How far the messages slide left for their times to show, in pixels. */
+private const val TIMES_REACH = 180f
+
 private fun rowsOf(all: List<Message>): List<Row> {
     // Reactions that came as SMS sit under their message, not as messages of their own.
     val folded = com.yaz.sms.core.sms.SmsReactions.fold(all)
@@ -751,16 +788,26 @@ private fun rowsOf(all: List<Message>): List<Row> {
     val out = ArrayList<Row>()
     var day: java.time.LocalDate? = null
     val lastMine = list.lastOrNull { it.box != MessageBox.RECEIVED }?.id
-    list.forEach { m ->
+    list.forEachIndexed { i, m ->
         val d = Instant.ofEpochMilli(m.date).atZone(ZoneId.systemDefault()).toLocalDate()
         if (d != day) {
             day = d
             out += Row.Day(dayLabel(d), d.toString())
         }
-        out += Row.Bubble(m, m.id == lastMine, folded.reactions[m.uid].orEmpty(), folded.mine[m.uid].orEmpty())
+        // AOSP Messaging (ConversationMessageData.canClusterWithMessage, ConversationMessageView):
+        // a message shows its time when the next one is from the other side or more than a
+        // minute later, so each run of messages carries one time.
+        val next = list.getOrNull(i + 1)
+        val stamp = next == null || (next.box == MessageBox.RECEIVED) != (m.box == MessageBox.RECEIVED) ||
+            kotlin.math.abs(next.date - m.date) > android.text.format.DateUtils.MINUTE_IN_MILLIS
+        out += Row.Bubble(m, m.id == lastMine, folded.reactions[m.uid].orEmpty(), folded.mine[m.uid].orEmpty(), stamp)
     }
     return out
 }
+
+/** A message's time of day in the phone's own format (DateFormat.getTimeFormat, developer.android.com). */
+internal fun clockOf(context: android.content.Context, millis: Long): String =
+    android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(millis))
 
 /**
  * The ways to call this person: the phone call (Dialer), and with the
@@ -939,7 +986,9 @@ private fun Bubble(
     highlight: String? = null,
     sentEffect: com.yaz.sms.core.sms.Effects.Effect? = null,
     onReplay: (com.yaz.sms.core.sms.Effects.Effect, String) -> Unit = { _, _ -> },
-    onPollShown: () -> Unit = {}
+    onPollShown: () -> Unit = {},
+    /** A pull to the left, its step in pixels, or null when the finger lifts (the times of iOS Messages). */
+    onPeek: (Float?) -> Unit = {}
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -1132,18 +1181,30 @@ private fun Bubble(
                 }
                 // Swiped right, it follows the finger, ticks once past the
                 // point where it will be answered, and springs back.
+                // Swiped left, the whole conversation slides to show every time (onPeek).
                 .pointerInput(m.id) {
+                    var peeking = false
                     detectHorizontalDragGestures(
                         onDragEnd = {
                             if (armed) onQuote()
                             armed = false
+                            if (peeking) onPeek(null)
+                            peeking = false
                             scope.launch { pull.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 420f)) }
                         },
                         onDragCancel = {
                             armed = false
+                            if (peeking) onPeek(null)
+                            peeking = false
                             scope.launch { pull.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 420f)) }
                         },
                         onHorizontalDrag = { change, dx ->
+                            if (peeking || (pull.value == 0f && dx < 0f)) {
+                                peeking = true
+                                onPeek(dx)
+                                change.consume()
+                                return@detectHorizontalDragGestures
+                            }
                             val give = if (pull.value > reach) 0.35f else 1f
                             val next = (pull.value + dx * give).coerceIn(0f, reach * 1.7f)
                             scope.launch { pull.snapTo(next) }

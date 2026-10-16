@@ -38,6 +38,10 @@ object SmsSender {
                     put(Telephony.Sms.DATE, System.currentTimeMillis())
                     put(Telephony.Sms.READ, 1)
                     put(Telephony.Sms.SEEN, 1)
+                    // A delivery report is asked for, so the row waits for it: as AOSP
+                    // SMSDispatcher.SmsTracker.persistSentMessageIfRequired
+                    // (frameworks/opt/telephony, googlesource) writes STATUS_PENDING.
+                    put(Telephony.Sms.STATUS, Telephony.Sms.STATUS_PENDING)
                     put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_OUTBOX)
                     put(Telephony.Sms.THREAD_ID, thread)
                     put(Telephony.Sms.SUBSCRIPTION_ID, sub)

@@ -29,8 +29,8 @@ class SmsStatusReceiver : BroadcastReceiver() {
             SmsSender.ACTION_DELIVERED -> {
                 val pdu = intent.getByteArrayExtra("pdu") ?: return
                 val status = runCatching { SmsMessage.createFromPdu(pdu, intent.getStringExtra("format")).status }.getOrNull() ?: return
-                // 0 is "received by the phone" in GSM; anything else is kept as told.
-                val value = if (status == 0) Telephony.Sms.STATUS_COMPLETE else Telephony.Sms.STATUS_FAILED
+                // Bands of 3GPP TS 23.040 and the 3gpp2 error class, as AOSP does (DeliveryStatus).
+                val value = DeliveryStatus.of(status, intent.getStringExtra("format"))
                 runCatching { context.contentResolver.update(uri, ContentValues().apply { put(Telephony.Sms.STATUS, value) }, null, null) }
             }
         }
