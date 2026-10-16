@@ -571,7 +571,8 @@ private fun ThreadContent(
                 onSendEffect = { text, sub, effect, attachments -> if (people.isNotEmpty()) queue(Pending(System.nanoTime(), text, sub, attachments, quote, effect)) },
                 onDraft = { typed ->
                     // Kept even as the screen goes: its own scope ends with it.
-                    thread?.let { t -> Thread { com.yaz.sms.data.sms.Drafts.keep(context, t, typed) }.start() }
+                    val with = people.filter { '@' !in it }.toSet()
+                    Thread { com.yaz.sms.data.sms.Drafts.keep(context, with, typed) }.start()
                 },
                 incoming = sharedIn.takeIf { it.isNotEmpty() },
                 onIncomingTaken = { openRequests.sharedMedia.value = emptyList() },
@@ -1062,8 +1063,13 @@ private fun Bubble(
             }
         }
         m.parts.forEach { part ->
-            // Only media: the tile stands where the bubble would, for the menu to lift it.
-            Box(Modifier.onGloballyPositioned { if (said.isEmpty()) bounds = it.boundsInWindow() }) {
+            // Only media: the tile stands where the bubble would, for the menu to lift it;
+            // it steps aside while its lifted copy shows, as the text bubble does.
+            Box(
+                Modifier
+                    .onGloballyPositioned { if (said.isEmpty()) bounds = it.boundsInWindow() }
+                    .graphicsLayer { alpha = if (menuOpen && said.isEmpty()) 0f else 1f }
+            ) {
                 MediaTile(part, mine, held = stranger && !mine, onMore = {
                     haptics.firm()
                     menuOpen = true
@@ -1267,13 +1273,17 @@ private fun Bubble(
                 onMoreReactions = if (rich != null) ({ pickingEmoji = true }) else null
             ) {
                 if (big != null) BigEmojiRow(big, 0)
-                else ZoneSurface(shape = RoundedCornerShape(22.dp), accent = mine, shadowElevation = 8.dp) {
-                    if (text.isNotBlank()) Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                    else Text(
-                        com.yaz.sms.core.mms.mediaWord(m.parts.firstOrNull()?.contentType),
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-                    )
+                // A message of only media lifts its own tile.
+                else if (said.isEmpty() && m.parts.isNotEmpty()) MediaTile(m.parts.first(), mine, held = stranger && !mine)
+                // The bubble's own shape, its tail included.
+                else ZoneSurface(
+                    shape = RoundedCornerShape(
+                        topStart = 22.dp, topEnd = 22.dp,
+                        bottomStart = if (mine) 22.dp else 6.dp, bottomEnd = if (mine) 6.dp else 22.dp
+                    ),
+                    accent = mine, shadowElevation = 8.dp
+                ) {
+                    Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                 }
             }
         // A link not recognized: one capsule of glass just under the message, a tap tells where it goes.

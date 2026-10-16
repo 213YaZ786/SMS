@@ -25,6 +25,9 @@ class SmsApplication : Application() {
             modules(appModule)
         }
         com.yaz.sms.core.chat.ChatLife.init(this)
+        // Messages scheduled by a version without the boot receiver: armed, and the receiver
+        // switched on for them (Android's alarm recipe keeps it on only while one waits).
+        Thread { com.yaz.sms.core.sms.Timed.rearm(this) }.start()
         // What was only passing through (photos cleaned before sending, a shot
         // just taken, files opened in another app) does not pile up over the years.
         Thread {

@@ -21,15 +21,32 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.yaz.sms.ui.icon.AppIcons
 
-/** A pill of glass to type a name or a number in; the cross clears it. */
+/**
+ * A pill of glass to type a name or a number in; the cross clears it. Opened from a
+ * search icon, it takes the keyboard at once and its cross, once empty, folds it away
+ * ([autoFocus], [onClose]), as Material 3's search opened from an app bar icon does
+ * (https://m3.material.io/components/search/guidelines); the focus taken by Compose's
+ * FocusRequester recipe (https://developer.android.com/develop/ui/compose/touch-input/focus/change-focus-behavior).
+ */
 @Composable
-fun SearchPill(value: String, onChange: (String) -> Unit, hint: String, modifier: Modifier = Modifier, floating: Boolean = false) {
+fun SearchPill(
+    value: String,
+    onChange: (String) -> Unit,
+    hint: String,
+    modifier: Modifier = Modifier,
+    floating: Boolean = false,
+    autoFocus: Boolean = false,
+    onClose: (() -> Unit)? = null
+) {
     val haptics = rememberHaptics()
+    val focus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
+    if (autoFocus) androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     val pane: @Composable (@Composable () -> Unit) -> Unit = { inner ->
         if (floating) FloatingPane(shape = CircleShape, modifier = modifier) { inner() } else ZoneSurface(shape = CircleShape, modifier = modifier) { inner() }
     }
@@ -45,21 +62,22 @@ fun SearchPill(value: String, onChange: (String) -> Unit, hint: String, modifier
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    modifier = androidx.compose.ui.Modifier.focusRequester(focus),
                     decorationBox = { field ->
                         if (value.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         field()
                     }
                 )
             }
-            AnimatedVisibility(visible = value.isNotEmpty(), enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
+            AnimatedVisibility(visible = value.isNotEmpty() || onClose != null, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
                 IconButton(onClick = {
                     haptics.tick()
-                    onChange("")
+                    if (value.isNotEmpty()) onChange("") else onClose?.invoke()
                 }) {
-                    Icon(AppIcons.Close, contentDescription = "Clear", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(AppIcons.Close, contentDescription = if (value.isNotEmpty()) "Clear" else "Close search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (value.isEmpty()) Spacer(Modifier.size(48.dp))
+            if (value.isEmpty() && onClose == null) Spacer(Modifier.size(48.dp))
         }
     }
 }

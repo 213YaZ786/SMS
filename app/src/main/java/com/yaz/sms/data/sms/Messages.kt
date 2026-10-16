@@ -170,7 +170,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                 fromMe = m.box != Telephony.Sms.MESSAGE_TYPE_INBOX,
                 failed = m.box == Telephony.Sms.MESSAGE_TYPE_FAILED,
                 addresses = addresses,
-                draft = drafts[m.thread]
+                draft = drafts[m.thread]?.first
             ) else {
                 val (text, media) = parts[m.id] ?: ("" to emptyList())
                 Conversation(
@@ -182,7 +182,19 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     fromMe = m.box != Telephony.Mms.MESSAGE_BOX_INBOX,
                     failed = m.box == Telephony.Mms.MESSAGE_BOX_FAILED,
                     addresses = addresses.ifEmpty { listOf("") },
-                    draft = drafts[m.thread]
+                    draft = drafts[m.thread]?.first
+                )
+            }
+        }.let { listed ->
+            // A conversation holding only a draft has no message for Android's conversations
+            // view to return; AOSP Mms lists it from the threads table (Conversation.java,
+            // sAllThreadsUri "simple=true"), marked as a draft. Its people come from there too.
+            val shown = listed.map { it.threadId }.toSet()
+            listed + drafts.filterKeys { it !in shown && !people[it].isNullOrEmpty() }.map { (thread, d) ->
+                val addresses = people[thread].orEmpty()
+                Conversation(
+                    threadId = thread, address = addresses.first(), snippet = d.first, date = d.second,
+                    unread = 0, fromMe = true, failed = false, addresses = addresses, draft = d.first
                 )
             }
         }.sortedByDescending { it.date }

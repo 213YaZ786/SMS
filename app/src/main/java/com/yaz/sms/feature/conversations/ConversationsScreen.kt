@@ -210,19 +210,63 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     }
 
     val archive = filter == Filter.ARCHIVED
+    // One line at the top (the user, 2026-10-16): the search behind a magnifier that
+    // opens into the field, as Material 3's search from an app bar icon, and one
+    // Unread toggle; no title on the list, as Google Messages shows none.
+    var searching by rememberSaveable { mutableStateOf(false) }
+    val canFilter = messages.canRead() && all.isNotEmpty()
+    // The search folded away: the list back at its top, where the keyboard had pushed it from.
+    var wasSearching by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(searching || query.isNotEmpty()) {
+        val open = searching || query.isNotEmpty()
+        if (wasSearching && !open) listState.animateScrollToItem(0)
+        wasSearching = open
+    }
     TabFrame(
-        title = if (archive) "Archive" else "Messages",
+        title = if (archive) "Archive" else null,
         onOpenSettings = onOpenSettings,
         // Top left, facing Settings: the archive, and back from it.
         leading = {
             com.yaz.sms.ui.component.FloatingAction(
                 if (archive) AppIcons.ArrowBack else AppIcons.Archive,
                 if (archive) "Back to messages" else "Archive",
-                { filter = if (archive) Filter.ALL else Filter.ARCHIVED }
+                {
+                    searching = false
+                    query = ""
+                    filter = if (archive) Filter.ALL else Filter.ARCHIVED
+                }
             )
         },
+        center = if (archive || !canFilter) null else ({
+            androidx.compose.animation.AnimatedContent(searching || query.isNotEmpty(), label = "search") { open ->
+                if (open) SearchPill(
+                    query, { query = it }, hint = "Search",
+                    modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(),
+                    floating = true, autoFocus = searching && query.isEmpty(),
+                    onClose = { searching = false }
+                )
+                else Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    com.yaz.sms.ui.component.FloatingAction(AppIcons.Search, "Search", {
+                        rememberedHaptics.tick()
+                        searching = true
+                    })
+                    val unreadOnly = filter == Filter.UNREAD
+                    FloatingPane(shape = CircleShape, accent = unreadOnly, onClick = {
+                        rememberedHaptics.tick()
+                        filter = if (unreadOnly) Filter.ALL else Filter.UNREAD
+                    }) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            Icon(AppIcons.MarkUnread, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Unread", style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+        }),
         controls = {
-            if (messages.canRead() && all.isNotEmpty()) Filters(query, { query = it }, if (archive) null else filter, { filter = it })
+            // In the archive, the search stays on its own line under its name.
+            if (archive && canFilter) Filters(query, { query = it }, null, { filter = it })
         },
         overlay = {
             // Several conversations taken: their actions in one pill, as AOSP

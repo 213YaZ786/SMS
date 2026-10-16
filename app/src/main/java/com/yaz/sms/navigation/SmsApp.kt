@@ -30,6 +30,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -158,10 +159,15 @@ private fun SmsNavHost(navController: NavHostController) {
             arguments = listOf(navArgument("x") { type = NavType.StringType; defaultValue = "" })
         ) { entry ->
             val text = entry.arguments?.getString("x").orEmpty()
+            // Media shared from another app belongs to this choice, as AOSP Messaging's
+            // ShareIntentActivity holds it: left without a pick (back arrow or gesture), it is dropped.
+            var picked by remember { mutableStateOf(false) }
+            DisposableEffect(Unit) { onDispose { if (!picked) requests.sharedMedia.value = emptyList() } }
             ReadableScroll {
                 NewMessageScreen(
                     onBack = { navController.popBackStack() },
                     onPick = { address ->
+                        picked = true
                         navController.popBackStack()
                         navController.navigate(Routes.thread(null, address, text))
                     }

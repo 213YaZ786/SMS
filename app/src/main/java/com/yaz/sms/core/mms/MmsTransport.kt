@@ -46,6 +46,7 @@ object MmsTransport {
     private const val EXTRA_SUB = "sub"
     private const val EXTRA_TRANSACTION = "transaction"
     private const val EXTRA_FROM = "from"
+    private const val EXTRA_ROW = "row"
     /** What carriers take when they say nothing: 300 KB. */
     private const val DEFAULT_MAX = 300 * 1024
 
@@ -125,23 +126,21 @@ object MmsTransport {
         val app = context.applicationContext
         val (location, sub, transaction) = MmsStore.notification(app, mmsId) ?: return false
         val file = file(app, "get-${System.nanoTime()}")
-        pendingRows[file.path] = mmsId
         downloading.value += mmsId
         return runCatching {
+            // The row to replace rides in the result's own intent, as AOSP Messaging's
+            // MmsSender.downloadMms puts its message's extras in the downloaded intent:
+            // the app may be gone and back by the time the network answers.
             manager(app, sub).downloadMultimediaMessage(
                 app, location, share(app, file), null,
-                report(app, ACTION_DOWNLOADED, Uri.parse(location), file, sub, transaction, MmsStore.sender(app, mmsId))
+                report(app, ACTION_DOWNLOADED, Uri.parse(location), file, sub, transaction, MmsStore.sender(app, mmsId), mmsId)
             )
             true
         }.getOrElse {
-            pendingRows.remove(file.path)
             downloading.value -= mmsId
             false
         }
     }
-
-    /** The kept announcement each running download will replace, by its result file. */
-    private val pendingRows = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /** The announcements being fetched right now, for their tiles to say so. */
     val downloading = kotlinx.coroutines.flow.MutableStateFlow<Set<Long>>(emptySet())
@@ -171,7 +170,7 @@ object MmsTransport {
                 }
                 ACTION_DOWNLOADED -> {
                     val from = intent.getStringExtra(EXTRA_FROM)
-                    val row = file?.path?.let { pendingRows.remove(it) }
+                    val row = intent.getLongExtra(EXTRA_ROW, -1).takeIf { it >= 0 }
                     row?.let { downloading.value -= it }
                     val bytes = file?.takeIf { resultCode == Activity.RESULT_OK && it.exists() }?.readBytes()
                     val conf = bytes?.let { runCatching { PduParser(it, true).parse() as? RetrieveConf }.getOrNull() }
@@ -251,12 +250,12 @@ object MmsTransport {
     private fun share(context: Context, file: File): Uri = FileProvider.getUriForFile(context, "${context.packageName}.mms", file)
 
     /** Mutable because Android adds its result; explicit, so only this app gets it. */
-    private fun report(context: Context, action: String, uri: Uri, file: File, sub: Int, transaction: ByteArray?, from: String?): PendingIntent =
+    private fun report(context: Context, action: String, uri: Uri, file: File, sub: Int, transaction: ByteArray?, from: String?, row: Long = -1): PendingIntent =
         PendingIntent.getBroadcast(
             context, file.name.hashCode(),
             Intent(context, MmsResultReceiver::class.java).setAction(action).setData(uri)
                 .putExtra(EXTRA_FILE, file.path).putExtra(EXTRA_SUB, sub)
-                .putExtra(EXTRA_TRANSACTION, transaction).putExtra(EXTRA_FROM, from),
+                .putExtra(EXTRA_TRANSACTION, transaction).putExtra(EXTRA_FROM, from).putExtra(EXTRA_ROW, row),
             PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 }

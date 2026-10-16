@@ -50,11 +50,37 @@ object Timed {
     fun schedule(context: Context, message: Scheduled) {
         save(context, load(context) + message)
         alarm(context, ACTION_SEND, message.id.toInt(), message.at) { putExtra("id", message.id) }
+        keepAcrossReboots(context)
     }
 
     fun cancel(context: Context, id: Long) {
         save(context, load(context).filterNot { it.id == id })
         context.getSystemService(AlarmManager::class.java).cancel(intent(context, ACTION_SEND, id.toInt()) { putExtra("id", id) })
+        keepAcrossReboots(context)
+    }
+
+    /**
+     * Every waiting message armed again: alarms die with a reboot. Android's recipe
+     * (https://developer.android.com/develop/background-work/services/alarms/schedule,
+     * "Start an alarm when the device restarts"), run as Fossify Messages'
+     * RescheduleAlarmsReceiver runs it; a time already past fires at once.
+     */
+    fun rearm(context: Context) {
+        load(context).forEach { m -> alarm(context, ACTION_SEND, m.id.toInt(), m.at) { putExtra("id", m.id) } }
+        keepAcrossReboots(context)
+    }
+
+    /** The boot receiver on only while a message waits, as the same Android recipe enables and disables it. */
+    private fun keepAcrossReboots(context: Context) {
+        val on = load(context).isNotEmpty()
+        runCatching {
+            context.packageManager.setComponentEnabledSetting(
+                android.content.ComponentName(context, TimedRearmReceiver::class.java),
+                if (on) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                android.content.pm.PackageManager.DONT_KILL_APP
+            )
+        }
     }
 
     fun scheduled(context: Context): List<Scheduled> = load(context)
@@ -72,10 +98,33 @@ object Timed {
     private fun load(context: Context): List<Scheduled> = runCatching { json.decodeFromString<List<Scheduled>>(file(context).readText()) }.getOrDefault(emptyList())
     private fun save(context: Context, list: List<Scheduled>) { runCatching { file(context).writeTextAtomically(json.encodeToString(list)) } }
 
-    internal fun take(context: Context, id: Long): Scheduled? = load(context).firstOrNull { it.id == id }?.also { s -> save(context, load(context).filterNot { it.id == s.id }) }
+    internal fun take(context: Context, id: Long): Scheduled? = load(context).firstOrNull { it.id == id }?.also { s ->
+        save(context, load(context).filterNot { it.id == s.id })
+        keepAcrossReboots(context)
+    }
 
     internal const val LATER = ACTION_LATER
     internal const val SEND = ACTION_SEND
+}
+
+/**
+ * After a reboot, an update of the app, or the clock or time zone changed: the waiting
+ * messages armed again. Android's boot-receiver recipe
+ * (https://developer.android.com/develop/background-work/services/alarms/schedule),
+ * with the actions Fossify Messages' RescheduleAlarmsReceiver listens to. Not exported;
+ * disabled while nothing waits.
+ */
+class TimedRearmReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val done = goAsync()
+        Thread {
+            try {
+                Timed.rearm(context.applicationContext)
+            } finally {
+                done.finish()
+            }
+        }.start()
+    }
 }
 
 /** A time came: a scheduled message goes. Not exported. */

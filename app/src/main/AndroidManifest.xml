@@ -50,6 +50,8 @@
     <!-- Where the phone is, once, when the user taps Place in the composer; never in the background. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Messages sent later survive a reboot (the user said yes, 2026-10-16). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- The encrypted chat's invite, for the Contacts app when two phones touch: apps signed with the same key only. -->
     <permission
         android:name="${applicationId}.permission.INVITE"
@@ -231,6 +233,19 @@
         <receiver
             android:name=".core.sms.TimedReceiver"
             android:exported="false" />
+        <!-- Messages sent later armed again after a reboot, an update or a clock change
+             (developer.android.com, "Start an alarm when the device restarts"); off while none waits. -->
+        <receiver
+            android:name=".core.sms.TimedRearmReceiver"
+            android:enabled="false"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Picture messages handed to Android's MMS service, and media opened
              in another app: shared one file at a time, never exported. -->
