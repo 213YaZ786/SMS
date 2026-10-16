@@ -1,0 +1,19 @@
+# Media from an unknown number, seeded by run-media.sh: nothing is read before a tap.
+# Commands from https://docs.maestro.dev/reference/commands-available.
+appId: com.yaz.sms.debug
+---
+- extendedWaitUntil:
+    visible: "T-held-sound"
+    timeout: 10000
+- assertVisible:
+    text: "Sound from an unknown number, tap to load"
+    above: "T-held-sound"
+- assertVisible:
+    text: "Photo from an unknown number, tap to show"
+    above: "T-held-photo"
+- tapOn:
+    text: "Photo from an unknown number, tap to show"
+    above: "T-held-photo"
+- assertVisible:
+    text: "Photo"
+    above: "T-held-photo"

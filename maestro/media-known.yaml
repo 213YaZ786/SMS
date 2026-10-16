@@ -1,0 +1,36 @@
+# Media from a contact, seeded by run-media.sh; commands from https://docs.maestro.dev/reference/commands-available.
+appId: com.yaz.sms.debug
+---
+# A contact card shows the name read from the card.
+- extendedWaitUntil:
+    visible: "T-card"
+    timeout: 10000
+- assertVisible:
+    text: "Karim Test"
+    above: "T-card"
+# A text sent as a photo stays a file: no picture decoded.
+- assertVisible:
+    text: "Photo"
+    above: "T-fake"
+# A film cut short says so, and still says so turned.
+- tapOn:
+    text: "Video"
+    above: "T-cut"
+- assertVisible: "Can't play this video"
+- setOrientation: LANDSCAPE_LEFT
+- assertVisible: "Can't play this video"
+- setOrientation: PORTRAIT
+- back
+# A real film plays and keeps playing when the screen turns.
+- scrollUntilVisible:
+    element: "T-landscape"
+    direction: UP
+- tapOn:
+    text: "Video"
+    above: "T-landscape"
+- waitForAnimationToEnd
+- setOrientation: LANDSCAPE_LEFT
+- assertNotVisible: "Can't play this video"
+- setOrientation: PORTRAIT
+- assertNotVisible: "Can't play this video"
+- back

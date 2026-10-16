@@ -65,6 +65,8 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 /**
  * A picture, video or sound of a message. A picture shows itself and
@@ -127,6 +129,9 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
             modifier = Modifier
                 .widthIn(max = 280.dp)
                 .clip(RoundedCornerShape(20.dp))
+                // Named for TalkBack whether its still came or not
+                // (https://developer.android.com/develop/ui/compose/accessibility/semantics).
+                .semantics(mergeDescendants = true) { contentDescription = "Video" }
                 .combinedClickable(
                     onClick = {
                         haptics.tick()
@@ -138,7 +143,7 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
         ) {
             val frame = still
             if (frame != null) {
-                Image(frame, contentDescription = "Video", contentScale = ContentScale.FillWidth, modifier = Modifier.width(280.dp))
+                Image(frame, contentDescription = null, contentScale = ContentScale.FillWidth, modifier = Modifier.width(280.dp))
             } else {
                 ZoneSurface(shape = RoundedCornerShape(20.dp), modifier = Modifier.size(200.dp, 150.dp)) {}
             }
