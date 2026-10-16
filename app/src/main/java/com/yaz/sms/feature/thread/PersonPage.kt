@@ -76,6 +76,8 @@ fun PersonPage(
     vanish: Int?,
     messages: List<Message>,
     stranger: (Message) -> Boolean,
+    /** Its media wait for a tap (a stranger's, when Settings asks so); asked when shown. */
+    holdMedia: (Message) -> Boolean = { false },
     calls: CallChoices,
     silencedUntil: Long?,
     onSearch: () -> Unit,
@@ -90,7 +92,7 @@ fun PersonPage(
     val items = remember(messages) { gather(messages, stranger) }
     var seeAll by remember { mutableStateOf<Kind?>(null) }
     var showAll by remember { mutableStateOf(false) }
-    if (showAll) SharedPage(name, messages, stranger, start = seeAll) { showAll = false }
+    if (showAll) SharedPage(name, messages, stranger, holdMedia, start = seeAll) { showAll = false }
     var blocked by remember(address) { mutableStateOf(NumberActions.isBlocked(context, address)) }
     var confirmBlock by remember { mutableStateOf(false) }
     var choosingSignature by remember { mutableStateOf(false) }
@@ -223,7 +225,7 @@ fun PersonPage(
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
                                     these.filterIsInstance<Item.Picture>().take(6).chunked(3).forEach { line ->
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            line.forEach { PictureCell(it.part, Modifier.weight(1f), it.held) }
+                                            line.forEach { PictureCell(it.part, Modifier.weight(1f), holdMedia(it.from)) }
                                             repeat(3 - line.size) { Spacer(Modifier.weight(1f)) }
                                         }
                                     }

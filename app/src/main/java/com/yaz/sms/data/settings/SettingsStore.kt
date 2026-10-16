@@ -25,6 +25,14 @@ data class Settings(
     val autoMmsDownload: Boolean = true,
     /** It downloads itself abroad too (roaming data can cost). */
     val autoMmsRoaming: Boolean = false,
+    /**
+     * Photos, films and sounds from a number in no contact shown at once,
+     * as from a contact (still decoded in the isolated process); off, each
+     * waits for a tap. On by default (the user, 2026-10-17), as Signal's
+     * media auto-download choices (Signal-Android, preferences
+     * DataAndStorageSettingsFragment).
+     */
+    val showStrangerMedia: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     /** True black instead of dark grey in dark mode. */
     val pureBlack: Boolean = false,

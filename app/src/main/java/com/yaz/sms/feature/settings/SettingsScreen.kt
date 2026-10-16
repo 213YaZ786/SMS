@@ -183,6 +183,12 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     checked = settings.autoMmsRoaming,
                     onChange = viewModel::setAutoMmsRoaming
                 )
+                SwitchRow(
+                    title = "Show media from unknown numbers",
+                    summary = "Off, a photo, a video or a sound from a number in no contact waits for a tap.",
+                    checked = settings.showStrangerMedia,
+                    onChange = viewModel::setShowStrangerMedia
+                )
                 SettingRow(
                     title = "Blocked numbers",
                     summary = "The list Android keeps for every app",

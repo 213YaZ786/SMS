@@ -82,7 +82,8 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
     val haptics = rememberHaptics()
     var large by remember { mutableStateOf(false) }
     var video by remember { mutableStateOf(false) }
-    var shown by remember(part.uri) { mutableStateOf(!held) }
+    // Keyed on [held] too: the contacts load after the first frame, and a contact's media must not stay held.
+    var shown by remember(part.uri, held) { mutableStateOf(!held) }
     val kind by rememberKind(part.uri)
     val image = ContentType.isImageType(part.contentType) && kind != MediaCheck.Kind.OTHER
     // A sound goes to Android's player only once its first bytes say it is one (a 3GP or MP4 holds sounds too).

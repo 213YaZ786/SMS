@@ -1,4 +1,5 @@
-# Media from an unknown number, seeded by run-media.sh: nothing is read before a tap.
+# Media from an unknown number, seeded by run-media.sh. Shown at once by default
+# (Settings, "Show media from unknown numbers"); off, each waits for a tap.
 # Commands from https://docs.maestro.dev/reference/commands-available.
 appId: com.yaz.sms.debug
 ---
@@ -6,8 +7,21 @@ appId: com.yaz.sms.debug
     visible: "T-held-sound"
     timeout: 10000
 - assertVisible:
-    text: "Sound from an unknown number, tap to load"
-    above: "T-held-sound"
+    text: "Photo"
+    above: "T-held-photo"
+- assertNotVisible: "Photo from an unknown number, tap to show"
+# The setting off: the same photo waits for a tap.
+- tapOn: "Back"
+- tapOn: "Settings"
+- scrollUntilVisible:
+    element: "Show media from unknown numbers"
+    direction: DOWN
+- tapOn: "Show media from unknown numbers"
+- back
+- tapOn: "\\+33 7 99 88 77 66"
+- extendedWaitUntil:
+    visible: "T-held-photo"
+    timeout: 10000
 - assertVisible:
     text: "Photo from an unknown number, tap to show"
     above: "T-held-photo"
@@ -17,3 +31,11 @@ appId: com.yaz.sms.debug
 - assertVisible:
     text: "Photo"
     above: "T-held-photo"
+# Back to the default.
+- tapOn: "Back"
+- tapOn: "Settings"
+- scrollUntilVisible:
+    element: "Show media from unknown numbers"
+    direction: DOWN
+- tapOn: "Show media from unknown numbers"
+- back

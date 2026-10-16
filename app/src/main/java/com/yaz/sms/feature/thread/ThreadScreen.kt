@@ -457,6 +457,7 @@ private fun ThreadContent(
         vanish = if (encrypted) vanish else null,
         messages = list,
         stranger = { m -> index.find(T9.clean(m.address)) == null },
+        holdMedia = { m -> !prefs.showStrangerMedia && m.box == MessageBox.RECEIVED && index.find(T9.clean(m.address)) == null },
         calls = calls,
         silencedUntil = silencedUntil,
         onSearch = { searching = true },
@@ -476,7 +477,8 @@ private fun ThreadContent(
     if (sharedOpen) {
         // Everything the conversation holds, not only what the screen shows.
         LaunchedEffect(Unit) { if (window < 5000) window = 5000 }
-        SharedPage(if (group) title else entry?.name ?: Numbers.format(context, to), list, stranger = { m -> index.find(T9.clean(m.address)) == null }) { sharedOpen = false }
+        SharedPage(if (group) title else entry?.name ?: Numbers.format(context, to), list, stranger = { m -> index.find(T9.clean(m.address)) == null },
+            holdMedia = { m -> !prefs.showStrangerMedia && m.box == MessageBox.RECEIVED && index.find(T9.clean(m.address)) == null }) { sharedOpen = false }
     }
     // The keyboard lifts the conversation with the field, the message being answered kept in sight.
     val keyboard = WindowInsets.ime.exclude(WindowInsets.navigationBars).asPaddingValues().calculateBottomPadding()
@@ -698,6 +700,7 @@ private fun ThreadContent(
                         onPin = { id, on -> scope.launch { chat.pin(id, on) } },
                         chatId = chat.chatIdOf(row.message.mms, row.message.id).also { refs.size },
                         stranger = row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
+                        holdMedia = !prefs.showStrangerMedia && row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
                         highlight = if (searching) query.trim().takeIf { it.isNotEmpty() } else null,
                         sentEffect = sentEffects[com.yaz.sms.core.sms.Effects.plain(row.message.body)]?.takeIf { (_, at) -> row.message.box != MessageBox.RECEIVED && row.message.date >= at - 10_000 }?.first,
                         onReplay = { e, words -> playing = Triple(e, words, null) }
@@ -931,6 +934,8 @@ private fun Bubble(
     onPin: (Int, Boolean) -> Unit,
     chatId: Int?,
     stranger: Boolean = false,
+    /** Its media wait for a tap: from a stranger, when Settings asks so. */
+    holdMedia: Boolean = stranger,
     highlight: String? = null,
     sentEffect: com.yaz.sms.core.sms.Effects.Effect? = null,
     onReplay: (com.yaz.sms.core.sms.Effects.Effect, String) -> Unit = { _, _ -> },
@@ -1074,7 +1079,7 @@ private fun Bubble(
                     .onGloballyPositioned { if (said.isEmpty()) bounds = it.boundsInWindow() }
                     .graphicsLayer { alpha = if (menuOpen && said.isEmpty()) 0f else 1f }
             ) {
-                MediaTile(part, mine, held = stranger && !mine, onMore = {
+                MediaTile(part, mine, held = holdMedia && !mine, onMore = {
                     haptics.firm()
                     menuOpen = true
                 })
@@ -1278,7 +1283,7 @@ private fun Bubble(
             ) {
                 if (big != null) BigEmojiRow(big, 0)
                 // A message of only media lifts its own tile.
-                else if (said.isEmpty() && m.parts.isNotEmpty()) MediaTile(m.parts.first(), mine, held = stranger && !mine)
+                else if (said.isEmpty() && m.parts.isNotEmpty()) MediaTile(m.parts.first(), mine, held = holdMedia && !mine)
                 // The bubble's own shape, its tail included.
                 else ZoneSurface(
                     shape = RoundedCornerShape(

@@ -68,8 +68,8 @@ import java.time.format.FormatStyle
 
 /** What two people sent each other, as the Shared page lists it. */
 internal sealed class Item(val date: Long) {
-    /** [held]: from an unknown number, read only after a tap, as in the conversation. */
-    class Picture(val part: MmsPart, date: Long, val held: Boolean = false) : Item(date)
+    /** [from]: its message, asked when shown whether it waits for a tap (the contacts may load after). */
+    class Picture(val part: MmsPart, date: Long, val from: Message) : Item(date)
     class File(val part: MmsPart, date: Long) : Item(date)
     class Link(val url: String, val doubtful: LinkCheck.Verdict?, date: Long) : Item(date)
     class Code(val code: String, date: Long) : Item(date)
@@ -100,8 +100,7 @@ internal fun gather(messages: List<Message>, stranger: (Message) -> Boolean): Li
     buildList {
         m.parts.forEach { part ->
             when {
-                ContentType.isImageType(part.contentType) || ContentType.isVideoType(part.contentType) ->
-                    add(Item.Picture(part, m.date, m.box == com.yaz.sms.data.sms.Box.RECEIVED && stranger(m)))
+                ContentType.isImageType(part.contentType) || ContentType.isVideoType(part.contentType) -> add(Item.Picture(part, m.date, m))
                 ContentType.isAudioType(part.contentType) -> Unit
                 !part.contentType.startsWith("text/") -> add(Item.File(part, m.date))
             }
@@ -119,7 +118,14 @@ internal fun gather(messages: List<Message>, stranger: (Message) -> Boolean): Li
  * each acts as it does in the conversation (open, copy, add to calendar).
  */
 @Composable
-internal fun SharedPage(name: String, messages: List<Message>, stranger: (Message) -> Boolean, start: Kind? = null, onClose: () -> Unit) {
+internal fun SharedPage(
+    name: String,
+    messages: List<Message>,
+    stranger: (Message) -> Boolean,
+    holdMedia: (Message) -> Boolean = { false },
+    start: Kind? = null,
+    onClose: () -> Unit
+) {
     val items = remember(messages) { gather(messages, stranger) }
     val kinds = remember(items) { Kind.entries.filter { k -> items.any { kindOf(it) == k } } }
     var only by remember { mutableStateOf(start) }
@@ -140,19 +146,19 @@ internal fun SharedPage(name: String, messages: List<Message>, stranger: (Messag
                     val pictures = shown.filterIsInstance<Item.Picture>()
                     items(pictures.chunked(3)) { line ->
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
-                            line.forEach { PictureCell(it.part, Modifier.weight(1f), it.held) }
+                            line.forEach { PictureCell(it.part, Modifier.weight(1f), holdMedia(it.from)) }
                             repeat(3 - line.size) { Spacer(Modifier.weight(1f)) }
                         }
                     }
                     items(shown.filter { it !is Item.Picture }) { item -> Line(item) }
                 }
                 // The top floats over the list, in glass.
-                Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FloatingAction(AppIcons.ArrowBack, "Back", onClose)
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { TitlePill("Shared with $name") }
-                        Spacer(Modifier.width(48.dp))
-                    }
+                Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(bottom = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    // The shared top of every screen (panes kit): its gaps keep a long name off the back button.
+                    com.yaz.sms.ui.component.FloatingTop(
+                        title = "Shared with $name",
+                        leading = { FloatingAction(AppIcons.ArrowBack, "Back", onClose) }
+                    )
                     if (kinds.size > 1) FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -184,7 +190,7 @@ internal fun PictureCell(part: MmsPart, modifier: Modifier, held: Boolean = fals
     var video by remember { mutableStateOf(false) }
     // From an unknown number nothing is read before a tap, as MediaTile's HeldTile; the state
     // keyed by the part (https://developer.android.com/develop/ui/compose/state#store-state).
-    var open by remember(part.uri) { mutableStateOf(!held) }
+    var open by remember(part.uri, held) { mutableStateOf(!held) }
     val context = LocalContext.current
     if (!open) {
         Box(

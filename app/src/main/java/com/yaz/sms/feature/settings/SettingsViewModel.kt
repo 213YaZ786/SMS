@@ -20,6 +20,8 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     fun setQuietSales(on: Boolean) = store.update { it.copy(quietSales = on) }
     fun setAutoMmsDownload(on: Boolean) = store.update { it.copy(autoMmsDownload = on) }
     fun setAutoMmsRoaming(on: Boolean) = store.update { it.copy(autoMmsRoaming = on) }
+    // The same setter as the ones above, for Signal-Android's media auto-download choice.
+    fun setShowStrangerMedia(on: Boolean) = store.update { it.copy(showStrangerMedia = on) }
     fun setRichChat(on: Boolean) = store.update { it.copy(richChat = on) }
     fun setRelay(relay: String) = store.update { it.copy(relay = relay) }
     fun setUndoSeconds(seconds: Int) = store.update { it.copy(undoSeconds = seconds) }

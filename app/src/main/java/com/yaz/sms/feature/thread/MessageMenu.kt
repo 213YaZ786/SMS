@@ -220,8 +220,9 @@ fun Palette(actions: List<MessageAction>, onDismiss: () -> Unit, modifier: Modif
                                 }
                                 .padding(vertical = 4.dp)
                         ) {
-                            // Each action in a drop of glass of its own, the icon large in it.
-                            ZoneSurface(shape = CircleShape, accent = !action.danger, modifier = Modifier.size(56.dp)) {
+                            // Each action in a drop of polished glass of its own (rim, bevel, shadow), the
+                            // colour in the icon only: an accent wash flattened them into plain discs.
+                            ZoneSurface(shape = CircleShape, modifier = Modifier.size(56.dp)) {
                                 Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
                                     Icon(action.icon, contentDescription = null, tint = tint, modifier = Modifier.size(28.dp))
                                 }
