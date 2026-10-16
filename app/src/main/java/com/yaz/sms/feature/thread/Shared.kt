@@ -207,9 +207,12 @@ internal fun PictureCell(part: MmsPart, modifier: Modifier, held: Boolean = fals
         },
         contentAlignment = Alignment.Center
     ) {
-        val shown = image
-        if (shown != null) Image(shown, contentDescription = "Photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        else Icon(if (ContentType.isVideoType(part.contentType)) AppIcons.Play else AppIcons.Image, contentDescription = null)
+        // A film shows its first frame under its play mark, as in the conversation (rememberVideoFrame).
+        val film = ContentType.isVideoType(part.contentType) && kind == com.yaz.sms.core.security.MediaCheck.Kind.VIDEO
+        val still = if (film) rememberVideoFrame(part.uri, 360).value else null
+        val shown = image ?: still
+        if (shown != null) Image(shown, contentDescription = if (film) "Video" else "Photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        if (shown == null || film) Icon(if (ContentType.isVideoType(part.contentType)) AppIcons.Play else AppIcons.Image, contentDescription = null, tint = if (shown != null) androidx.compose.ui.graphics.Color.White else androidx.compose.material3.LocalContentColor.current)
     }
     if (large) PictureViewer(part.uri, onClose = { large = false }, part = part)
     if (video) VideoViewer(part.uri, onClose = { video = false }, part = part)

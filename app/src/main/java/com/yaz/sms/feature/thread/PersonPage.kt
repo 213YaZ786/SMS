@@ -174,35 +174,7 @@ fun PersonPage(
                         }
                         }
                     }
-                    // What they and the user sent each other, by kind.
-                    Kind.entries.forEach { kind ->
-                        val these = items.filter { kindOf(it) == kind }
-                        if (these.isEmpty()) return@forEach
-                        item(key = "head/$kind") {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(top = 6.dp)) {
-                                Text("${kind.label} · ${these.size}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).padding(start = 6.dp))
-                                if (these.size > (if (kind == Kind.PICTURES) 6 else 3)) TextButton(onClick = {
-                                    seeAll = kind
-                                    showAll = true
-                                }) { Text("See all") }
-                            }
-                        }
-                        if (kind == Kind.PICTURES) {
-                            item(key = "pics") {
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
-                                    these.filterIsInstance<Item.Picture>().take(6).chunked(3).forEach { line ->
-                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            line.forEach { PictureCell(it.part, Modifier.weight(1f), it.held) }
-                                            repeat(3 - line.size) { Spacer(Modifier.weight(1f)) }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            these.take(3).forEachIndexed { i, it -> item(key = "$kind/$i") { Line(it) } }
-                        }
-                    }
-                    // About them.
+                    // About them: the rest of the actions, Block last.
                     item {
                         val digits = !group && address.count(Char::isDigit) >= 3
                         // Cards in two columns, each its icon over its name, the rows as tall as each other.
@@ -230,6 +202,35 @@ fun PersonPage(
                                 } else confirmBlock = true
                             }
                         }
+                        }
+                    }
+                    // What they and the user sent each other, by kind, under every action: Apple's
+                    // Messages details, its Photos, Links and Documents below (https://support.apple.com/en-gb/111116).
+                    Kind.entries.forEach { kind ->
+                        val these = items.filter { kindOf(it) == kind }
+                        if (these.isEmpty()) return@forEach
+                        item(key = "head/$kind") {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(top = 6.dp)) {
+                                Text("${kind.label} · ${these.size}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).padding(start = 6.dp))
+                                if (these.size > (if (kind == Kind.PICTURES) 6 else 3)) TextButton(onClick = {
+                                    seeAll = kind
+                                    showAll = true
+                                }) { Text("See all") }
+                            }
+                        }
+                        if (kind == Kind.PICTURES) {
+                            item(key = "pics") {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
+                                    these.filterIsInstance<Item.Picture>().take(6).chunked(3).forEach { line ->
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            line.forEach { PictureCell(it.part, Modifier.weight(1f), it.held) }
+                                            repeat(3 - line.size) { Spacer(Modifier.weight(1f)) }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            these.take(3).forEachIndexed { i, it -> item(key = "$kind/$i") { Line(it) } }
                         }
                     }
                 }
