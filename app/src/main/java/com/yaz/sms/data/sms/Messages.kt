@@ -66,7 +66,9 @@ data class Conversation(
     val failed: Boolean,
     val addresses: List<String> = listOf(address),
     /** A text left in the composer, shown over the snippet as Bugle shows its drafts. */
-    val draft: String? = null
+    val draft: String? = null,
+    /** How many messages the user sent in it: three make an unknown sender known (Screening). */
+    val sent: Int = 0
 ) {
     val group: Boolean get() = addresses.size > 1
 }
@@ -145,6 +147,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             Telephony.Mms.CONTENT_URI, arrayOf(Telephony.Mms.THREAD_ID),
             "${Telephony.Mms.MESSAGE_BOX} = ${Telephony.Mms.MESSAGE_BOX_INBOX} AND ${Telephony.Mms.READ} = 0", null, null
         )?.use { c -> while (c.moveToNext()) c.getLong(0).let { unread[it] = (unread[it] ?: 0) + 1 } }
+        // The messages the user sent, per conversation, in one read (Screening.sentCounts).
+        val sentCounts = com.yaz.sms.core.sms.Screening.sentCounts(context)
         // The newest of each conversation, an SMS (type) or a picture message (msg_box).
         class Last(val thread: Long, val id: Long, val date: Long, val body: String, val address: String, val sms: Boolean, val box: Int)
         val last = ArrayList<Last>()
@@ -170,7 +174,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                 fromMe = m.box != Telephony.Sms.MESSAGE_TYPE_INBOX,
                 failed = m.box == Telephony.Sms.MESSAGE_TYPE_FAILED,
                 addresses = addresses,
-                draft = drafts[m.thread]?.first
+                draft = drafts[m.thread]?.first,
+                sent = sentCounts[m.thread] ?: 0
             ) else {
                 val (text, media) = parts[m.id] ?: ("" to emptyList())
                 Conversation(
@@ -182,7 +187,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     fromMe = m.box != Telephony.Mms.MESSAGE_BOX_INBOX,
                     failed = m.box == Telephony.Mms.MESSAGE_BOX_FAILED,
                     addresses = addresses.ifEmpty { listOf("") },
-                    draft = drafts[m.thread]?.first
+                    draft = drafts[m.thread]?.first,
+                    sent = sentCounts[m.thread] ?: 0
                 )
             }
         }.let { listed ->

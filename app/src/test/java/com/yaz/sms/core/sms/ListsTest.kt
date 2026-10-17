@@ -88,6 +88,54 @@ class ListsTest {
         assertEquals(null, Lists.latestCode(listOf(old), now))
     }
 
+    // iOS 26 Messages' Unknown Senders (https://support.apple.com/en-us/125068) over SpamBlocker's
+    // checkers (https://github.com/aj3423/SpamBlocker, Checker.kt): the screened conversations leave
+    // the main list for Unknown, Transactions and Promotions; a code stays eight hours.
+    @Test
+    fun screenedConversationsLeaveTheMainList() {
+        val all = listOf(c(1, 1), c(2, 2), c(3, 3), c(4, 4), c(5, 20, address = "GOOGLE"))
+        val screened = mapOf(
+            2L to Verdict(Category.PROMOTIONS, Screening.BY_OPT_OUT),
+            3L to Verdict(Category.TRANSACTIONS, Screening.BY_PARCEL),
+            4L to Verdict(Category.UNKNOWN, Screening.BY_DEFAULT),
+            5L to Verdict(Category.TRANSACTIONS, Screening.BY_CODE)
+        )
+        fun ids(filter: Filter) = Lists.shown(all, filter, emptyList(), emptyMap(), screened = screened, now = now).map { it.threadId }
+        // The code of 20 hours ago has gone with its eight hours.
+        assertEquals(listOf(1L), ids(Filter.ALL))
+        assertEquals(listOf(2L, 3L, 4L, 5L), ids(Filter.UNKNOWN))
+        assertEquals(listOf(3L, 5L), ids(Filter.TRANSACTIONS))
+        assertEquals(listOf(2L), ids(Filter.PROMOTIONS))
+    }
+
+    @Test
+    fun aRecentCodeIsAlsoInTheMainList() {
+        val all = listOf(c(1, 2, address = "GOOGLE"), c(2, 1))
+        val screened = mapOf(1L to Verdict(Category.TRANSACTIONS, Screening.BY_CODE))
+        assertEquals(listOf(2L, 1L), Lists.shown(all, Filter.ALL, emptyList(), emptyMap(), screened = screened, now = now).map { it.threadId })
+        assertEquals(listOf(1L), Lists.shown(all, Filter.UNKNOWN, emptyList(), emptyMap(), screened = screened, now = now).map { it.threadId })
+        assertEquals(listOf(1L), Lists.shown(all, Filter.TRANSACTIONS, emptyList(), emptyMap(), screened = screened, now = now).map { it.threadId })
+    }
+
+    @Test
+    fun withScreeningOffEverythingIsAsBefore() {
+        val all = listOf(c(1, 1), c(2, 2))
+        assertEquals(listOf(1L, 2L), Lists.shown(all, Filter.ALL, emptyList(), emptyMap(), screened = null).map { it.threadId })
+        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.PROMOTIONS, emptyList(), emptyMap(), screened = null).map { it.threadId })
+    }
+
+    @Test
+    fun anArchivedOrTrashedUnknownIsNotInUnknown() {
+        val all = listOf(c(1, 1), c(2, 2))
+        val screened = mapOf(
+            1L to Verdict(Category.UNKNOWN, Screening.BY_DEFAULT),
+            2L to Verdict(Category.UNKNOWN, Screening.BY_DEFAULT)
+        )
+        val archived = mapOf(1L to now)
+        val trashed = mapOf(2L to Trashed(now, now))
+        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.UNKNOWN, emptyList(), archived, trashed = trashed, screened = screened, now = now).map { it.threadId })
+    }
+
     @Test
     fun unknownIsPeopleNotInTheContacts() {
         val all = listOf(c(1, 1, address = "0611111111"), c(2, 2, address = "0622222222"), c(3, 3, address = "LaPoste"))

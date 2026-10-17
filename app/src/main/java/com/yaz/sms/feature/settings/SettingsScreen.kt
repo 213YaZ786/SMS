@@ -141,6 +141,12 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     summary = "Sound, vibration and how they show",
                     onClick = { open(context, Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)) }
                 )
+                SwitchRow(
+                    title = "Screen unknown senders",
+                    summary = "Numbers you don't know go to Unknown, sorted as Transactions or Promotions. Codes still notify.",
+                    checked = settings.screenUnknown,
+                    onChange = viewModel::setScreenUnknown
+                )
                 // Only where the country keeps ranges for sales.
                 val country = remember { SalesCalls.country(context) }
                 if (country in SalesCalls.countries) {

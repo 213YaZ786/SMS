@@ -71,6 +71,7 @@ import org.koin.compose.koinInject
  * its last messages, a field to answer on the spot, and what can be done
  * with it. It is marked read only when answered or opened.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun Peek(
     c: Conversation,
@@ -86,7 +87,9 @@ internal fun Peek(
     onRead: () -> Unit,
     onDelete: () -> Unit,
     /** Starts the multi select on this conversation (AOSP Messaging's select mode). */
-    onSelect: () -> Unit = {}
+    onSelect: () -> Unit = {},
+    /** Marks the sender known, so its messages come back to the list (shown only for an unknown sender). */
+    onKnown: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -190,7 +193,14 @@ internal fun Peek(
                         }
                     }
                     // What can be done with the conversation, each on its own pane.
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    // Wrapping onto a second line when they do not all fit, never sideways (Jetpack Compose FlowRow,
+                    // https://developer.android.com/develop/ui/compose/layouts/flow).
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    ) {
+                        if (onKnown != null) Action(AppIcons.CheckCircle, "Mark as known") { onKnown(); onDismiss() }
                         Action(AppIcons.PushPin, if (pinned) "Unpin" else "Pin") { onPin(!pinned); onDismiss() }
                         if (c.unread > 0) Action(AppIcons.DoneAll, "Read") { onRead(); onDismiss() }
                         Action(if (archived) AppIcons.Unarchive else AppIcons.Archive, if (archived) "Unarchive" else "Archive") { onArchive(!archived); onDismiss() }

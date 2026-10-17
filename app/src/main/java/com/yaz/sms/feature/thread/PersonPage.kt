@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,6 +90,17 @@ fun PersonPage(
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
+    // Mark as known (iOS 26 Messages: an unknown sender's conversation moves to the list), kept in
+    // KnownStore. Koin is read the way MessageNotifier reads it, so a screen drawn without the
+    // app's container (the screenshot tests) simply has no such button.
+    val koin = remember { org.koin.core.context.GlobalContext.getOrNull() }
+    val knownStore = remember(koin) { koin?.get<com.yaz.sms.data.settings.KnownStore>() }
+    val markedFlow = remember(knownStore) { knownStore?.known ?: kotlinx.coroutines.flow.MutableStateFlow(emptySet<String>()) }
+    val marked by markedFlow.collectAsState()
+    val senderKey = remember(address) { com.yaz.sms.core.sms.Screening.senderKey(address) }
+    val canMark = knownStore != null && koin?.get<com.yaz.sms.data.settings.SettingsStore>()?.current?.screenUnknown == true && !group &&
+        contactId == null && address.isNotBlank() && '@' !in address &&
+        messages.count { it.box != com.yaz.sms.data.sms.Box.RECEIVED } < com.yaz.sms.core.sms.Screening.REPLIES_TO_KNOW
     val items = remember(messages) { gather(messages, stranger) }
     var seeAll by remember { mutableStateOf<Kind?>(null) }
     var showAll by remember { mutableStateOf(false) }
@@ -187,6 +199,13 @@ fun PersonPage(
                             maxItemsInEachRow = 2,
                             modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth()
                         ) {
+                            // An unknown sender first: its messages come back to the list, or leave it again.
+                            if (canMark) {
+                                val isMarked = senderKey in marked
+                                Row(AppIcons.CheckCircle, if (isMarked) "Mark as unknown" else "Mark as known") {
+                                    if (isMarked) knownStore?.unmark(senderKey) else knownStore?.mark(senderKey)
+                                }
+                            }
                             if (digits && NumberActions.canShowCalls(context)) Row(AppIcons.Recents, "Calls with them") { NumberActions.showCalls(context, address) }
                             // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
                             if (contactId != null && contactId > 0) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }

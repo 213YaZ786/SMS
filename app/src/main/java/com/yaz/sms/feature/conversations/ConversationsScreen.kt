@@ -58,6 +58,9 @@ import com.yaz.sms.core.dial.Numbers
 import com.yaz.sms.core.dial.T9
 import com.yaz.sms.core.sms.Filter
 import com.yaz.sms.core.sms.Lists
+import com.yaz.sms.core.sms.Screening
+import com.yaz.sms.core.sms.Verdict
+import com.yaz.sms.data.settings.KnownStore
 import com.yaz.sms.data.contacts.PhoneBook
 import com.yaz.sms.data.contacts.PhoneIndex
 import com.yaz.sms.data.settings.SettingsStore
@@ -122,6 +125,27 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     androidx.compose.runtime.LaunchedEffect(settings.checkLinks) {
         if (settings.checkLinks) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.yaz.sms.core.link.BadHosts.refresh(context) }
     }
+    // Unknown senders (Screening, iOS 26 Screen Unknown Senders): not in the contacts, not marked
+    // known, fewer than three replies, no encrypted chat with them. Each conversation's verdict is
+    // kept while its newest message and its known state stay the same, so a change of the store
+    // reads only what moved.
+    val knownStore: KnownStore = koinInject()
+    val marked by knownStore.known.collectAsState()
+    val chatLinks by chat.links.collectAsState()
+    val country = remember { com.yaz.sms.core.dial.SalesCalls.country(context) }
+    val kept = remember { HashMap<Long, Pair<List<Any>, Verdict?>>() }
+    val screened: Map<Long, Verdict>? = remember(all, index, marked, chatLinks, settings.screenUnknown) {
+        if (!settings.screenUnknown) null else buildMap {
+            for (c in all) {
+                val isKnown = Screening.isKnown(index.find(T9.clean(c.address)) != null, marked, c.address, c.sent) ||
+                    (!c.group && chat.linkFor(c.address) != null)
+                val key = listOf<Any>(c.date, c.snippet, c.fromMe, isKnown, country ?: "")
+                val verdict = kept[c.threadId]?.takeIf { it.first == key }?.second
+                    ?: Screening.verdict(c, isKnown, country).also { kept[c.threadId] = key to it }
+                if (verdict != null) put(c.threadId, verdict)
+            }
+        }
+    }
     // Everything together, SMS and chat; the archive behind its button.
     var filter by rememberSaveable { mutableStateOf(Filter.ALL) }
     androidx.activity.compose.BackHandler(enabled = filter != Filter.ALL) { filter = Filter.ALL }
@@ -137,9 +161,9 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // A trashed conversation tapped: it is restored to be read.
     var restoring by remember { mutableStateOf<Conversation?>(null) }
     val rememberedHaptics = rememberHaptics()
-    val shown = remember(all, filter, settings.pinned, settings.archived, trashed, query, index) {
+    val shown = remember(all, filter, settings.pinned, settings.archived, trashed, query, index, screened) {
         val q = query.trim().lowercase()
-        Lists.shown(all, filter, settings.pinned, settings.archived, known = { c -> index.find(T9.clean(c.address)) != null }, trashed = trashed).filter { c ->
+        Lists.shown(all, filter, settings.pinned, settings.archived, known = { c -> index.find(T9.clean(c.address)) != null }, trashed = trashed, screened = screened).filter { c ->
             q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
         }
     }
@@ -162,8 +186,11 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // To answer: each card once. The cards already shown are read when the
     // screen comes back, and the ones shown now are kept as seen when it goes.
     var seenAtOpen by remember { mutableStateOf(store.current.answerSeen) }
-    val waiting = remember(live, settings.archived, filter, query, seenAtOpen) {
-        if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.toAnswer(live, settings.archived, seenAtOpen)
+    val waiting = remember(live, settings.archived, filter, query, seenAtOpen, screened) {
+        // Unknown senders wait in Unknown, not among the cards.
+        val now = System.currentTimeMillis()
+        if (filter != Filter.ALL || query.isNotBlank()) emptyList()
+        else Lists.toAnswer(live.filterNot { Lists.isScreened(it, screened, now) }, settings.archived, seenAtOpen)
     }
     val shownCards by androidx.compose.runtime.rememberUpdatedState(waiting)
     // A new card to answer comes in on top: in sight when the list was at its top.
@@ -259,8 +286,15 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
 
     val archive = filter == Filter.ARCHIVED
     val inTrash = filter == Filter.TRASH
-    // The Archive and the Trash are two places side by side, away from the inbox.
-    val apart = archive || inTrash
+    // Unknown, with its Transactions and Promotions, is a place of the same kind (iOS 26 Messages'
+    // Unknown Senders filter and its categories).
+    val inUnknown = filter == Filter.UNKNOWN || filter == Filter.TRANSACTIONS || filter == Filter.PROMOTIONS
+    // The Archive, the Trash and Unknown are places side by side, away from the inbox.
+    val apart = archive || inTrash || inUnknown
+    // Unknown shows what waits in it: the unread conversations screened away.
+    val unknownUnread = remember(screened, all, settings.archived, trashed) {
+        if (screened == null) 0 else all.count { it.threadId in screened && it.unread > 0 && !Lists.isArchived(it, settings.archived) && !Lists.isTrashed(it, trashed) }
+    }
     // One line at the top (the user, 2026-10-16): the search behind a magnifier that
     // opens into the field, as Material 3's search from an app bar icon, and one
     // Unread toggle; no title on the list, as Google Messages shows none.
@@ -295,7 +329,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         wasSearching = open
     }
     TabFrame(
-        title = if (archive) "Archive" else if (inTrash) "Trash" else null,
+        title = if (archive) "Archive" else if (inTrash) "Trash" else if (inUnknown) "Unknown" else null,
         onOpenSettings = onOpenSettings,
         // Top left, facing Settings: the archive, and back from it or from the Trash.
         leading = {
@@ -340,7 +374,20 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         controls = {
             // In the archive and the Trash, the search stays on its own line under the name, with
             // the way from one to the other beside it.
-            if (apart && canFilter) Filters(query, { query = it }, filter, listOf(Filter.ARCHIVED to "Archive", Filter.TRASH to "Trash")) {
+            if (apart && canFilter) Filters(
+                query, { query = it }, filter,
+                listOfNotNull(
+                    Filter.ARCHIVED to "Archive",
+                    Filter.TRASH to "Trash",
+                    if (settings.screenUnknown) Filter.UNKNOWN to (if (unknownUnread > 0) "Unknown · $unknownUnread" else "Unknown") else null
+                ),
+                selected = { value -> if (value == Filter.UNKNOWN) inUnknown else value == filter }
+            ) {
+                picked = null
+                filter = it
+            }
+            // Unknown: all of it, or only what looks like a transaction or a promotion.
+            if (inUnknown && canFilter) Kinds(filter) {
                 picked = null
                 filter = it
             }
@@ -454,12 +501,15 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     filter == Filter.ARCHIVED -> "Nothing in the archive"
                     filter == Filter.TRASH -> "Trash is empty"
                     filter == Filter.UNKNOWN -> "No one unknown"
+                    filter == Filter.TRANSACTIONS -> "No transactions"
+                    filter == Filter.PROMOTIONS -> "No promotions"
                     else -> "No messages yet"
                 },
                 message = when {
                     query.isNotBlank() -> "No name, number or message matches \"$query\"."
                     filter == Filter.ALL -> "Write to someone with the button below."
                     filter == Filter.TRASH -> "Conversations you trash stay here 30 days."
+                    inUnknown -> "Messages from numbers you don't know come here."
                     else -> "Archive a conversation with a long press; it comes back with its next message."
                 },
                 icon = if (filter == Filter.TRASH) AppIcons.Delete else AppIcons.Message,
@@ -592,31 +642,67 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 picked = setOf(c.threadId)
                 peeking = null
             },
-            onDelete = { moveToTrash(listOf(c)) }
+            onDelete = { moveToTrash(listOf(c)) },
+            // Only for an unknown sender: its conversation comes back to the list.
+            onKnown = if (screened?.containsKey(c.threadId) == true) ({ knownStore.mark(Screening.senderKey(c.address)) }) else null
         )
     }
 }
 
 /** The search and, as in Dialer's calls, the places to switch between on the same line, in glass (the Archive and the Trash). */
 @Composable
-private fun Filters(query: String, onQuery: (String) -> Unit, filter: Filter, chips: List<Pair<Filter, String>>, onFilter: (Filter) -> Unit) {
+private fun Filters(
+    query: String, onQuery: (String) -> Unit, filter: Filter, chips: List<Pair<Filter, String>>,
+    selected: (Filter) -> Boolean = { it == filter },
+    onFilter: (Filter) -> Unit
+) {
     val haptics = rememberHaptics()
+    // Three places do not fit beside the search on a phone: the search takes its own line.
+    val stacked = chips.size > 2
+    if (stacked) Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
+        SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(), floating = true)
+    }
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
-        SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).weight(1f, fill = false).fillMaxWidth(), floating = true)
+        if (!stacked) SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).weight(1f, fill = false).fillMaxWidth(), floating = true)
         chips.forEach { (value, label) ->
             FloatingPane(
                 shape = CircleShape,
-                accent = filter == value,
+                accent = selected(value),
                 onClick = {
                     haptics.tick()
                     onFilter(value)
                 }
             ) {
                 Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp))
+            }
+        }
+    }
+}
+
+/**
+ * The kinds of Unknown, one choice among All, Transactions and Promotions: a group of chips with one
+ * selected, as Jetpack Compose Material 3's FilterChip rows are used
+ * (https://developer.android.com/develop/ui/compose/components/chip#filter), in this screen's own glass
+ * chips (the ones of Filters above).
+ */
+@Composable
+private fun Kinds(filter: Filter, onFilter: (Filter) -> Unit) {
+    val haptics = rememberHaptics()
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        listOf(Filter.UNKNOWN to "All", Filter.TRANSACTIONS to "Transactions", Filter.PROMOTIONS to "Promotions").forEach { (value, label) ->
+            FloatingPane(shape = CircleShape, accent = filter == value, onClick = {
+                haptics.tick()
+                onFilter(value)
+            }) {
+                Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
             }
         }
     }

@@ -40,6 +40,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -80,79 +81,26 @@ import androidx.compose.ui.semantics.semantics
 fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -> Unit)? = null) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
-    var large by remember { mutableStateOf(false) }
     var video by remember { mutableStateOf(false) }
     // Keyed on [held] too: the contacts load after the first frame, and a contact's media must not stay held.
     var shown by remember(part.uri, held) { mutableStateOf(!held) }
     val kind by rememberKind(part.uri)
-    val image = ContentType.isImageType(part.contentType) && kind != MediaCheck.Kind.OTHER
+    val image = isPicture(part, kind)
     // A sound goes to Android's player only once its first bytes say it is one (a 3GP or MP4 holds sounds too).
     val sound = ContentType.isAudioType(part.contentType) && (kind == MediaCheck.Kind.AUDIO || kind == MediaCheck.Kind.VIDEO)
-    if (!shown && (image || sound)) {
+    if (!shown && sound) {
         HeldTile(
-            if (image) "Photo from an unknown number, tap to show" else "Sound from an unknown number, tap to load",
-            if (image) AppIcons.Image else AppIcons.Mic
+            "Sound from an unknown number, tap to load",
+            AppIcons.Mic
         ) { shown = true }
-    } else if (image) {
-        val image by rememberPicture(part.uri, 720)
-        val moving by rememberGifFrame(part.uri, 720, part.contentType.contains("gif", ignoreCase = true))
-        val shown = moving ?: image
-        Box(
-            Modifier
-                .widthIn(max = 280.dp)
-                .clip(RoundedCornerShape(20.dp))
-                // Held, a message of only media still opens its menu (Save, Forward, Delete).
-                .combinedClickable(
-                    onClick = {
-                        haptics.tick()
-                        large = true
-                    },
-                    onLongClick = onMore,
-                    onLongClickLabel = if (onMore != null) "More" else null
-                )
-        ) {
-            if (shown != null) {
-                Image(shown, contentDescription = "Photo", contentScale = ContentScale.FillWidth, modifier = Modifier.width(280.dp))
-            } else {
-                ZoneSurface(shape = RoundedCornerShape(20.dp), modifier = Modifier.size(200.dp, 150.dp)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(AppIcons.Image, contentDescription = null) }
-                }
-            }
+    } else if (image || isFilm(part, kind)) {
+        // A picture or a film alone, if one is handed here: the conversation lays them out in the message's
+        // bubble (MediaGallery); this is the same tile in a box of its own.
+        Box(Modifier.widthIn(max = 280.dp).clip(RoundedCornerShape(20.dp))) {
+            MediaCell(part, kind, held, single = true, onMore = onMore)
         }
-        if (large) PictureViewer(part.uri, onClose = { large = false }, part = part)
     } else if (sound) {
         VoiceTile(part, mine)
-    } else if (shown && ContentType.isVideoType(part.contentType) && kind == MediaCheck.Kind.VIDEO) {
-        // A film shows its first frame under a play mark, as Google Messages and AOSP Messaging do.
-        val still by rememberVideoFrame(part.uri, 720)
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .widthIn(max = 280.dp)
-                .clip(RoundedCornerShape(20.dp))
-                // Named for TalkBack whether its still came or not
-                // (https://developer.android.com/develop/ui/compose/accessibility/semantics).
-                .semantics(mergeDescendants = true) { contentDescription = "Video" }
-                .combinedClickable(
-                    onClick = {
-                        haptics.tick()
-                        video = true
-                    },
-                    onLongClick = onMore,
-                    onLongClickLabel = if (onMore != null) "More" else null
-                )
-        ) {
-            val frame = still
-            if (frame != null) {
-                Image(frame, contentDescription = null, contentScale = ContentScale.FillWidth, modifier = Modifier.width(280.dp))
-            } else {
-                ZoneSurface(shape = RoundedCornerShape(20.dp), modifier = Modifier.size(200.dp, 150.dp)) {}
-            }
-            androidx.compose.material3.Surface(shape = androidx.compose.foundation.shape.CircleShape, color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)) {
-                Icon(AppIcons.Play, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.padding(14.dp).size(32.dp))
-            }
-        }
-        if (video) VideoViewer(part.uri, onClose = { video = false }, part = part)
     } else {
         ZoneSurface(
             shape = RoundedCornerShape(20.dp),
@@ -324,16 +272,47 @@ fun rememberGifFrame(uri: Uri, side: Int, gif: Boolean): State<ImageBitmap?> {
  */
 @Composable
 fun rememberVideoFrame(uri: Uri, side: Int): State<ImageBitmap?> {
+    val still by rememberVideoStill(uri, side)
+    return remember { derivedStateOf { still?.frame } }
+}
+
+/** A film's still and its length in milliseconds, each null when Android's media process cannot give it. */
+class VideoStill(val frame: ImageBitmap?, val durationMs: Long?)
+
+/**
+ * A film's still as [rememberVideoFrame] takes it, with its length from the same MediaMetadataRetriever
+ * (extractMetadata METADATA_KEY_DURATION, https://developer.android.com/reference/android/media/MediaMetadataRetriever),
+ * for the badge Element X puts on a film (VideoOverlay in TimelineItemGalleryView.kt,
+ * https://github.com/element-hq/element-x-android). Capped at 100 hours.
+ */
+@Composable
+fun rememberVideoStill(uri: Uri, side: Int): State<VideoStill?> {
     val context = LocalContext.current
-    return produceState<ImageBitmap?>(null, uri, side) {
+    return produceState<VideoStill?>(null, uri, side) {
         value = withContext(Dispatchers.IO) {
             runCatching {
                 android.media.MediaMetadataRetriever().use { retriever ->
                     retriever.setDataSource(context, uri)
-                    retriever.getScaledFrameAtTime(0L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, side, side)?.asImageBitmap()
+                    VideoStill(
+                        retriever.getScaledFrameAtTime(0L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, side, side)?.asImageBitmap(),
+                        retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.coerceIn(0L, 360_000_000L)
+                    )
                 }
             }.getOrNull()
         }
+    }
+}
+
+/**
+ * What each part really is, read from their first bytes, all together; null while they are read.
+ * The same MediaCheck as [rememberKind], for a message's parts in one go.
+ */
+@Composable
+fun rememberKinds(uris: List<Uri>): State<List<MediaCheck.Kind?>> {
+    val context = LocalContext.current
+    return produceState<List<MediaCheck.Kind?>>(uris.map { null }, uris) {
+        // A text message has no part: nothing to read.
+        if (uris.isNotEmpty()) value = withContext(Dispatchers.IO) { uris.map { MediaCheck.kind(context, it) } }
     }
 }
 

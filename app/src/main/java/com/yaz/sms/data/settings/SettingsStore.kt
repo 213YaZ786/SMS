@@ -65,6 +65,12 @@ data class Settings(
     val relay: String = "",
     /** Messages from the ranges kept for sales are kept apart, without a notification. */
     val quietSales: Boolean = false,
+    /**
+     * Texts from senders the user does not know (no contact, not marked known, fewer than three
+     * replies) leave the list for Unknown, sorted as Transactions and Promotions (Screening);
+     * iOS 26's Screen Unknown Senders.
+     */
+    val screenUnknown: Boolean = true,
     /** Conversations pinned on top, by thread id. */
     val pinned: List<Long> = emptyList(),
     /** Conversations put away, thread id to when: out of the list until a newer message comes. */

@@ -35,6 +35,8 @@ A messaging app for Android. No account, no tracking, no ads.
   files, links, dates, parcels, codes), silence it for a while, a
   reminder to reply, and the encryption's keys to compare.
 - Short answers offered for the last message.
+- Senders you don't know kept apart, sorted as Transactions and
+  Promotions; codes still notify.
 - Voice messages written out under them, on the phone itself, in any
   language, once the speech model is fetched (asked first, 60 to 190 MB).
 - Light and dark themes in your wallpaper's colours.
@@ -56,8 +58,12 @@ off in Settings.
 
 ## Licence
 
-GPL-3.0 (MIT up to 0.14.14). Starred messages port Zulip's, Apache
-License 2.0. Icons from Google's Material Icons, Apache License 2.0. Picture
+AGPL-3.0 (MIT up to 0.14.14). Bubbles and media in the conversation
+port Element X's (AGPL-3.0) and Signal's (AGPL-3.0); the trash ports
+Fossify Messages' recycle bin (GPL-3.0); starred messages port Zulip's,
+Apache License 2.0; the screening of unknown senders ports SpamBlocker's
+checkers (MIT), AOSP ExtServices' code detection (Apache License 2.0) and
+the keyword filters of QUIK and Fossify Messages (GPL-3.0). Icons from Google's Material Icons, Apache License 2.0. Picture
 messages use code from AOSP Messaging, Apache License 2.0. The encrypted
 chat runs chatmail core (github.com/chatmail/core), Mozilla Public
 License 2.0, downloaded unchanged at build time. Calls use WebRTC's

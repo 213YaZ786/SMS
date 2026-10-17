@@ -4,7 +4,7 @@ import com.yaz.sms.data.settings.Trashed
 import com.yaz.sms.data.sms.Conversation
 
 /** Which conversations the list shows. */
-enum class Filter { ALL, UNREAD, UNKNOWN, ARCHIVED, TRASH }
+enum class Filter { ALL, UNREAD, UNKNOWN, TRANSACTIONS, PROMOTIONS, ARCHIVED, TRASH }
 
 /** How the list of conversations is put together, apart from the screen. */
 object Lists {
@@ -22,19 +22,39 @@ object Lists {
      */
     fun isTrashed(c: Conversation, trashed: Map<Long, Trashed>): Boolean = trashed[c.threadId]?.let { c.date <= it.cutoff } == true
 
-    /** The conversations of [filter], pinned ones first, then newest first. */
+    /**
+     * A conversation screened away from the main list: it has a verdict in [screened] and is not
+     * a time sensitive one still inside its eight hours (iOS 26 Messages,
+     * https://support.apple.com/en-us/125068, with the checkers of SpamBlocker,
+     * https://github.com/aj3423/SpamBlocker, service/checker/Checker.kt, in Screening).
+     */
+    fun isScreened(c: Conversation, screened: Map<Long, Verdict>?, now: Long): Boolean =
+        screened?.get(c.threadId)?.let { !Screening.staysListed(it, c, now) } == true
+
+    /**
+     * The conversations of [filter], pinned ones first, then newest first. With [screened] (the
+     * unknown senders and what they are, null when the setting is off) the main list leaves them
+     * out and Unknown, Transactions and Promotions list them.
+     */
     fun shown(
         all: List<Conversation>, filter: Filter, pinned: List<Long>, archived: Map<Long, Long>,
         known: (Conversation) -> Boolean = { true },
-        trashed: Map<Long, Trashed> = emptyMap()
+        trashed: Map<Long, Trashed> = emptyMap(),
+        screened: Map<Long, Verdict>? = null,
+        now: Long = System.currentTimeMillis()
     ): List<Conversation> {
         val kept = all.filter { c ->
             val gone = isTrashed(c, trashed)
+            val away = isScreened(c, screened, now)
             when (filter) {
-                Filter.ALL -> !isArchived(c, archived) && !gone
-                Filter.UNREAD -> c.unread > 0 && !isArchived(c, archived) && !gone
-                // People not in the contacts: no group, no bank or delivery service.
-                Filter.UNKNOWN -> !c.group && !isService(c) && !known(c) && !isArchived(c, archived) && !gone
+                Filter.ALL -> !isArchived(c, archived) && !gone && !away
+                Filter.UNREAD -> c.unread > 0 && !isArchived(c, archived) && !gone && !away
+                // Screened: every unknown sender. Otherwise people not in the contacts: no group, no bank or delivery service.
+                Filter.UNKNOWN ->
+                    if (screened != null) c.threadId in screened && !isArchived(c, archived) && !gone
+                    else !c.group && !isService(c) && !known(c) && !isArchived(c, archived) && !gone
+                Filter.TRANSACTIONS -> screened?.get(c.threadId)?.category == Category.TRANSACTIONS && !isArchived(c, archived) && !gone
+                Filter.PROMOTIONS -> screened?.get(c.threadId)?.category == Category.PROMOTIONS && !isArchived(c, archived) && !gone
                 Filter.ARCHIVED -> isArchived(c, archived) && !gone
                 Filter.TRASH -> gone
             }
@@ -59,9 +79,16 @@ object Lists {
      * A service rather than a person: a sender written in letters (a bank,
      * a delivery company) or a short number of 3 to 6 digits.
      */
-    fun isService(c: Conversation): Boolean {
-        if (c.group) return false
-        val address = c.address.trim()
+    fun isService(c: Conversation): Boolean = !c.group && isServiceAddress(c.address)
+
+    /**
+     * The same test on an address alone, for a message that has just arrived (the rule of
+     * isService above; sender ids of letters and short codes as AOSP Messaging's
+     * PhoneUtils / Android's PhoneNumberUtils.isAlphaNumeric treat them,
+     * https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/telephony/java/android/telephony/PhoneNumberUtils.java).
+     */
+    fun isServiceAddress(raw: String): Boolean {
+        val address = raw.trim()
         // A person met without a number, by their chat address: a person, not a service.
         if ('@' in address) return false
         if (address.any(Char::isLetter)) return true

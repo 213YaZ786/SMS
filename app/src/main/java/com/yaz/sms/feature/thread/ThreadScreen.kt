@@ -67,9 +67,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.animation.core.animateDp
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.layout.boundsInWindow
@@ -99,7 +97,6 @@ import com.yaz.sms.data.settings.SettingsStore
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.drawscope.clipRect
 import com.yaz.sms.core.chat.RichRef
 import com.yaz.sms.data.contacts.PhoneBook
 import com.yaz.sms.data.contacts.PhoneIndex
@@ -107,7 +104,6 @@ import com.yaz.sms.data.sms.Box as MessageBox
 import com.yaz.sms.data.sms.Message
 import com.yaz.sms.data.sms.Messages
 import com.yaz.sms.feature.conversations.dayLabel
-import com.yaz.sms.feature.conversations.timeLabel
 import com.yaz.sms.navigation.LocalReadableInset
 import com.yaz.sms.ui.component.FloatingAction
 import com.yaz.sms.ui.component.FloatingFrame
@@ -716,7 +712,6 @@ private fun ThreadContent(
                       ) {
                       Bubble(
                         row.message,
-                        row.last,
                         fresh = row.message.box == MessageBox.RECEIVED && row.message.uid in fresh,
                         rich = chat.refOf(row.message.mms, row.message.id).also { refs.size },
                         smsReactions = row.smsReactions,
@@ -755,8 +750,6 @@ private fun ThreadContent(
                         stranger = row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
                         holdMedia = !prefs.showStrangerMedia && row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
                         highlight = if (searching) query.trim().takeIf { it.isNotEmpty() } else null,
-                        // The last of a run carries its time, unless its status line already says it.
-                        stamp = if (row.stamp && !(mineRow && row.last) && row.message.box != MessageBox.FAILED) clockOf(context, row.message.date) else null,
                         starred = row.message.uid in stars,
                         onStar = {
                             haptics.tick()
@@ -783,8 +776,7 @@ private fun ThreadContent(
 private sealed class Row(val key: String) {
     class Day(val label: String, day: String) : Row("day/$day")
     // An SMS and a picture message may hold the same number: the kind is part of the key.
-    /** [stamp]: its time shown under it, the last of a run (AOSP Messaging's clustering). */
-    class Bubble(val message: Message, val last: Boolean, val smsReactions: List<String> = emptyList(), val smsMine: List<String> = emptyList(), val stamp: Boolean = false) : Row("m/${message.uid}")
+    class Bubble(val message: Message, val smsReactions: List<String> = emptyList(), val smsMine: List<String> = emptyList()) : Row("m/${message.uid}")
 }
 
 /** The conversations opened lately, as they were shown: reopened, one shows at once. */
@@ -822,20 +814,14 @@ private fun rowsOf(all: List<Message>): List<Row> {
     val list = folded.messages
     val out = ArrayList<Row>()
     var day: java.time.LocalDate? = null
-    val lastMine = list.lastOrNull { it.box != MessageBox.RECEIVED }?.id
-    list.forEachIndexed { i, m ->
+    list.forEach { m ->
         val d = Instant.ofEpochMilli(m.date).atZone(ZoneId.systemDefault()).toLocalDate()
         if (d != day) {
             day = d
             out += Row.Day(dayLabel(d), d.toString())
         }
-        // AOSP Messaging (ConversationMessageData.canClusterWithMessage, ConversationMessageView):
-        // a message shows its time when the next one is from the other side or more than a
-        // minute later, so each run of messages carries one time.
-        val next = list.getOrNull(i + 1)
-        val stamp = next == null || (next.box == MessageBox.RECEIVED) != (m.box == MessageBox.RECEIVED) ||
-            kotlin.math.abs(next.date - m.date) > android.text.format.DateUtils.MINUTE_IN_MILLIS
-        out += Row.Bubble(m, m.id == lastMine, folded.reactions[m.uid].orEmpty(), folded.mine[m.uid].orEmpty(), stamp)
+        // Each message carries its own time in its bubble (MessageBody's footer).
+        out += Row.Bubble(m, folded.reactions[m.uid].orEmpty(), folded.mine[m.uid].orEmpty())
     }
     return out
 }
@@ -1000,7 +986,6 @@ private fun BubbleGlass(shape: androidx.compose.ui.graphics.Shape, mine: Boolean
 @Composable
 private fun Bubble(
     m: Message,
-    last: Boolean,
     fresh: Boolean,
     rich: RichRef?,
     onReact: (String?) -> Unit,
@@ -1019,8 +1004,6 @@ private fun Bubble(
     /** Its media wait for a tap: from a stranger, when Settings asks so. */
     holdMedia: Boolean = stranger,
     highlight: String? = null,
-    /** Its time of day under it, when it ends a run of messages. */
-    stamp: String? = null,
     starred: Boolean = false,
     onStar: () -> Unit = {},
     sentEffect: com.yaz.sms.core.sms.Effects.Effect? = null,
@@ -1111,6 +1094,27 @@ private fun Bubble(
     val drop = remember { Animatable(if (fresh) 0f else 1f) }
     LaunchedEffect(fresh) { if (fresh) drop.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 320f)) }
     val ringColor = MaterialTheme.colorScheme.primary
+    // The pictures and films go in the bubble with the words and the time, as Element X's event row holds
+    // its media and caption (https://github.com/element-hq/element-x-android, TimelineItemEventRow.kt); sounds
+    // and files stay tiles above it. What each part is comes from its first bytes (MediaCheck), all at once.
+    val kinds by rememberKinds(remember(m.parts) { m.parts.map { it.uri } })
+    val inBubble = m.parts.indices.filter { m.parts[it].let { p -> isPicture(p, kinds.getOrNull(it)) || isFilm(p, kinds.getOrNull(it)) } }
+    val visual = remember(m.parts, inBubble) { inBubble.map { m.parts[it] } }
+    val visualKinds = remember(kinds, inBubble) { inBubble.map { kinds.getOrNull(it) } }
+    val tiles = remember(m.parts, inBubble) { m.parts.filterIndexed { i, _ -> i !in inBubble } }
+    // A message with neither words nor pictures (a voice message, a file, a card) has no bubble: its tile and a footer line.
+    val hasBubble = !m.waiting && (said.isNotEmpty() || visual.isNotEmpty() || m.parts.isEmpty())
+    val clock = remember(m.date) { clockOf(context, m.date) }
+    val delivery = if (!mine) null else when {
+        rich?.seen == true -> Delivery.Read
+        m.box == MessageBox.FAILED -> Delivery.Failed
+        m.box == MessageBox.SENDING -> Delivery.Sending
+        m.delivered -> Delivery.Delivered
+        else -> Delivery.Sent
+    }
+    val footer = @Composable { mismatched: Boolean, onMedia: Boolean ->
+        MessageFooter(clock, delivery, starred, onMedia = onMedia, mismatched = mismatched)
+    }
     Column(
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
         modifier = Modifier
@@ -1159,13 +1163,13 @@ private fun Bubble(
                 }
             }
         }
-        m.parts.forEach { part ->
-            // Only media: the tile stands where the bubble would, for the menu to lift it;
+        tiles.forEach { part ->
+            // Only a tile and no bubble: the tile stands where the bubble would, for the menu to lift it;
             // it steps aside while its lifted copy shows, as the text bubble does.
             Box(
                 Modifier
-                    .onGloballyPositioned { if (said.isEmpty()) bounds = it.boundsInWindow() }
-                    .graphicsLayer { alpha = if (menuOpen && said.isEmpty()) 0f else 1f }
+                    .onGloballyPositioned { if (!hasBubble) bounds = it.boundsInWindow() }
+                    .graphicsLayer { alpha = if (menuOpen && !hasBubble) 0f else 1f }
             ) {
                 MediaTile(part, mine, held = holdMedia && !mine, onMore = {
                     haptics.firm()
@@ -1187,9 +1191,10 @@ private fun Bubble(
             fx.animateTo(1f, androidx.compose.animation.core.tween(if (e == com.yaz.sms.core.sms.Effects.Effect.GENTLE) 1700 else 950, easing = androidx.compose.animation.core.LinearEasing))
         }
         LaunchedEffect(fx.value >= 0.35f) { if (bubbleEffect == com.yaz.sms.core.sms.Effects.Effect.SLAM && fx.value in 0.35f..0.5f) haptics.firm() }
-        if (!m.waiting && (said.isNotEmpty() || m.parts.isEmpty())) Box(
+        // Media bubbles take 0.78 of the list's width, as Element X's MessageEventBubble (BUBBLE_WIDTH_RATIO).
+        if (hasBubble) Box(
             Modifier
-                .fillMaxWidth(0.82f)
+                .fillMaxWidth(if (visual.isNotEmpty()) 0.78f else 0.82f)
                 .graphicsLayer {
                     val k = fx.value
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (mine) 1f else 0f, 1f)
@@ -1279,6 +1284,8 @@ private fun Bubble(
             )
             val held = Modifier
                     .then(if (poll != null) Modifier.fillMaxWidth() else Modifier)
+                    // At least 80 dp wide, as Element X's MIN_BUBBLE_WIDTH.
+                    .then(if (visual.isNotEmpty()) Modifier.widthIn(min = 80.dp) else Modifier)
                     .onGloballyPositioned { bounds = it.boundsInWindow() }
                     .graphicsLayer { alpha = if (menuOpen) 0f else 1f }
                     .drawWithContent {
@@ -1323,23 +1330,19 @@ private fun Bubble(
                 )
             if (big != null) BigEmojiRow(big, emojiPlay, if (inked) held.blur(14.dp, androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded) else held)
             else BubbleGlass(shape = shape, mine = mine, modifier = held) {
-              Column {
-                if (poll != null && rich != null) PollCard(poll, rich.counts, rich.myReactions, onVote = onReact)
-                // An edit changes the words in a soft blur, not at a stroke.
-                else androidx.compose.animation.AnimatedContent(
-                    text,
-                    transitionSpec = {
-                        androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(420, delayMillis = 120)) togetherWith
-                            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(260))
-                    },
-                    label = "words"
-                ) { words ->
-                    val blur by transition.animateDp(label = "blur") { if (it == androidx.compose.animation.EnterExitState.Visible) 0.dp else 6.dp }
-                    Text(words, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.blur(if (inked) 14.dp else blur).padding(horizontal = 16.dp, vertical = 10.dp))
-                }
-              }
+                MessageBody(
+                    words = text, plain = said, blurred = inked,
+                    poll = if (poll != null && rich != null) ({ PollCard(poll, rich.counts, rich.myReactions, onVote = onReact) }) else null,
+                    visual = visual, kinds = visualKinds, held = holdMedia && !mine, footer = footer,
+                    onMore = {
+                        haptics.firm()
+                        menuOpen = true
+                    }
+                )
             }
         }
+        // No bubble to hold the time (big emoji as Signal puts it, a tile alone, a message waiting): its line under it.
+        if (!hasBubble || big != null) Box(Modifier.padding(top = if (big != null) 0.dp else 2.dp)) { footer(false, false) }
         if (showingDetails) MessageDetailsDialog(m) { showingDetails = false }
         // Out of the bubble's block: a message of only media opens its menu too.
         if (menuOpen) MessageMenu(
@@ -1386,9 +1389,9 @@ private fun Bubble(
                 onMoreReactions = if (rich != null) ({ pickingEmoji = true }) else null
             ) {
                 if (big != null) BigEmojiRow(big, 0)
-                // A message of only media lifts its own tile.
-                else if (said.isEmpty() && m.parts.isNotEmpty()) MediaTile(m.parts.first(), mine, held = holdMedia && !mine)
-                // The bubble's own shape, its tail included.
+                // A message of only a tile (a sound, a file) lifts its own tile.
+                else if (!hasBubble && m.parts.isNotEmpty()) MediaTile(m.parts.first(), mine, held = holdMedia && !mine)
+                // The bubble's own shape, its tail included, with what it holds (tiles that open nothing).
                 else ZoneSurface(
                     shape = RoundedCornerShape(
                         topStart = 22.dp, topEnd = 22.dp,
@@ -1396,7 +1399,12 @@ private fun Bubble(
                     ),
                     accent = mine, shadowElevation = 8.dp
                 ) {
-                    Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                    MessageBody(
+                        words = text, plain = said, blurred = false,
+                        poll = null,
+                        visual = visual, kinds = visualKinds, held = holdMedia && !mine, footer = footer,
+                        onMore = null, interactive = false
+                    )
                 }
             }
         // A link not recognized: one capsule of glass just under the message, a tap tells where it goes.
@@ -1474,49 +1482,15 @@ private fun Bubble(
                 }
             }
         }
-        // Under the user's last message, and under any that failed: where it stands.
-        if (mine && (last || m.box == MessageBox.FAILED)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 5.dp, end = 14.dp, bottom = 6.dp)) {
-                val (icon, word, failed) = when {
-                    rich?.seen == true -> Triple(AppIcons.DoneAll, "Read · " + timeLabel(context, m.date), false)
-                    m.box == MessageBox.FAILED -> Triple(AppIcons.Error, if (m.mms) "Not sent" else "Not sent · tap to try again", true)
-                    m.box == MessageBox.SENDING -> Triple(AppIcons.Schedule, "Sending", false)
-                    m.delivered -> Triple(AppIcons.DoneAll, "Delivered · " + timeLabel(context, m.date), false)
-                    else -> Triple(AppIcons.Done, "Sent · " + timeLabel(context, m.date), false)
-                }
-                val tint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-                // Read draws itself, stroke by stroke, the moment it comes.
-                val read = rich?.seen == true
-                val draw = remember { Animatable(if (read) 1f else 0f) }
-                LaunchedEffect(read) { if (read) draw.animateTo(1f, androidx.compose.animation.core.tween(520)) }
-                Icon(
-                    icon, contentDescription = null,
-                    tint = if (read) MaterialTheme.colorScheme.primary else tint,
-                    modifier = Modifier.size(14.dp).drawWithContent {
-                        if (!read) drawContent() else clipRect(right = size.width * draw.value) { this@drawWithContent.drawContent() }
-                    }
-                )
+        // Under a message that failed: where it stands, and the way to send it again (its time and status are in its footer).
+        if (mine && m.box == MessageBox.FAILED) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp, end = 14.dp, bottom = 6.dp)) {
+                Icon(AppIcons.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(word, style = MaterialTheme.typography.labelSmall, color = tint)
-                if (starred) StarMark(Modifier.padding(start = 6.dp))
-            }
-        } else if (stamp != null || starred) {
-            // The last of a run carries its time, a starred message its star beside it.
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 5.dp, bottom = 6.dp)) {
-                if (stamp != null) Text(stamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (starred) StarMark(Modifier.padding(start = if (stamp != null) 6.dp else 0.dp))
+                Text(if (m.mms) "Not sent" else "Not sent · tap to try again", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             }
         }
     }
-}
-
-// A starred message's small filled star, drawn when it carries the flag, as Zulip does in
-// https://github.com/zulip/zulip-flutter/blob/main/lib/widgets/message_list.dart
-// (MessageWithPossibleSender: flags.contains(MessageFlag.starred) shows ZulipIcons.star_filled),
-// here beside the time or status line, as Google Messages places it.
-@Composable
-private fun StarMark(modifier: Modifier = Modifier) {
-    Icon(AppIcons.Star, contentDescription = "Starred", tint = MaterialTheme.colorScheme.primary, modifier = modifier.size(12.dp))
 }
 
 /** The text handed to this app's own new message screen, to choose who gets it. */

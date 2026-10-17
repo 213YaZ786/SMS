@@ -1,0 +1,51 @@
+# Unknown senders screened (iOS 26 Messages' Unknown Senders): a promotion, a parcel and a person
+# you don't know leave the list for Unknown, a code stays listed; Transactions and Promotions
+# sort them; Mark as known brings a sender back.
+# Seed first (debug build, Screen unknown senders on, the numbers in no contact):
+#   adb shell am broadcast -n com.yaz.sms.debug/com.yaz.sms.DebugBulkReceiver --es from +33799887766 --es body "'Soldes -50% sur tout le site. STOP au 36180'"
+#   adb shell am broadcast -n com.yaz.sms.debug/com.yaz.sms.DebugBulkReceiver --es from COLISSIMO --es body "'Votre colis 1Z999AA10123456784 est en livraison'"
+#   adb shell am broadcast -n com.yaz.sms.debug/com.yaz.sms.DebugBulkReceiver --es from GOOGLE --es body "'G-482913 est votre code de verification Google'"
+#   adb shell am broadcast -n com.yaz.sms.debug/com.yaz.sms.DebugBulkReceiver --es from +33788776655 --es body "'Salut, c est Paul'"
+# Commands from https://docs.maestro.dev/reference/commands-available.
+appId: com.yaz.sms.debug
+---
+- launchApp
+# The code stays in the main list (its card shows it grouped, "G-4 829 13").
+- extendedWaitUntil:
+    visible: "Code from GOOGLE.*"
+    timeout: 10000
+- assertNotVisible: "Soldes.*"
+- assertNotVisible: "Votre colis.*"
+- assertNotVisible: "Salut, c est Paul"
+- tapOn: "Archive"
+# The chip carries its unread count ("Unknown · 2").
+- assertVisible: "Unknown.*"
+- tapOn: "Unknown.*"
+- assertVisible: "Transactions"
+- assertVisible: "Promotions"
+- assertVisible: "Salut, c est Paul"
+- assertVisible: "Soldes.*"
+- assertVisible: "Votre colis.*"
+- tapOn: "Transactions"
+- assertVisible: "Votre colis.*"
+- assertNotVisible: "Soldes.*"
+- tapOn: "Promotions"
+- assertVisible: "Soldes.*"
+- assertNotVisible: "Votre colis.*"
+- tapOn: "All"
+- longPressOn: "Salut, c est Paul"
+- tapOn: "Mark as known"
+- assertNotVisible: "Salut, c est Paul"
+- tapOn: "Back to messages"
+- assertVisible: "Salut, c est Paul"
+- assertNotVisible: "Soldes.*"
+# Back as it was, so the flow can run again: Paul unknown once more (his person page).
+- tapOn: "Salut, c est Paul"
+- tapOn: "\\+33 7 88 77 66 55"
+- scrollUntilVisible:
+    element: "Mark as unknown"
+    direction: DOWN
+- tapOn: "Mark as unknown"
+- back
+- back
+- assertNotVisible: "Salut, c est Paul"

@@ -53,7 +53,10 @@ class SmsReceiver : BroadcastReceiver(), KoinComponent {
                 // Sales senders the user chose to keep quiet: kept, not shown.
                 val country = SalesCalls.country(app, subscription = sub)
                 val quiet = settings.current.quietSales && SalesCalls.isSalesCall(address, country) && !ContactLookup.isContact(app, address)
-                if (!quiet) MessageNotifier(app).show(thread)
+                // An unknown sender's promotion does not notify; a code, a parcel, an account
+                // alert or a person does (iOS 26 Screen Unknown Senders, Screening).
+                val promotion = Screening.verdictFor(app, thread, address, body, sub)?.category == Category.PROMOTIONS
+                if (!quiet && !promotion) MessageNotifier(app).show(thread)
             } finally {
                 done.finish()
             }

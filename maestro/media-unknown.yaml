@@ -18,6 +18,9 @@ appId: com.yaz.sms.debug
     direction: DOWN
 - tapOn: "Show media from unknown numbers"
 - back
+# An unknown sender lives in Archive > Unknown while screening is on.
+- tapOn: "Archive"
+- tapOn: "Unknown.*"
 - tapOn: "\\+33 7 99 88 77 66"
 - extendedWaitUntil:
     visible: "T-held-photo"
