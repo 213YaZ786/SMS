@@ -29,7 +29,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
@@ -157,13 +158,13 @@ fun PersonPage(
         title = { Text("Block $name?") },
         text = { Text("Calls and messages from this number will not reach you.") },
         confirmButton = {
-            TextButton(onClick = {
+            BoldButton(filled = true, onClick = {
                 confirmBlock = false
                 NumberActions.block(context, address)
                 blocked = NumberActions.isBlocked(context, address)
             }) { Text("Block") }
         },
-        dismissButton = { TextButton(onClick = { confirmBlock = false }) { Text("Cancel") } }
+        dismissButton = { QuietButton(onClick = { confirmBlock = false }) { Text("Cancel") } }
     )
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -314,7 +315,7 @@ fun PersonPage(
                         item(key = "head/$kind") {
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(top = 6.dp)) {
                                 Text("${kind.label} · ${these.size}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).padding(start = 6.dp))
-                                if (these.size > (if (kind == Kind.PICTURES) 6 else 3)) TextButton(onClick = {
+                                if (these.size > (if (kind == Kind.PICTURES) 6 else 3)) QuietButton(onClick = {
                                     seeAll = kind
                                     showAll = true
                                 }) { Text("See all") }

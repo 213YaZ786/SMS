@@ -33,10 +33,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.yaz.sms.ui.component.GlassRadio
+import com.yaz.sms.ui.component.GlassSwitch
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
@@ -419,7 +419,7 @@ private fun SwitchRow(title: String, summary: String, checked: Boolean, enabled:
         summary = summary,
         quiet = true,
         onClick = if (enabled) ({ change(!checked) }) else null,
-        trailing = { Switch(checked = checked, onCheckedChange = change, enabled = enabled) }
+        trailing = { GlassSwitch(checked = checked, onCheckedChange = change, enabled = enabled) }
     )
 }
 
@@ -450,13 +450,13 @@ private fun <T> ChoiceDialog(
                             .padding(vertical = 10.dp, horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        RadioButton(selected = value == selected, onClick = null)
+                        GlassRadio(selected = value == selected, onClick = null)
                         Text(label, modifier = Modifier.padding(start = 12.dp))
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 

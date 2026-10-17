@@ -36,7 +36,7 @@ fun MessageDetailsDialog(m: Message, onClose: () -> Unit) {
     val received = m.box == MessageBox.RECEIVED
     ZoneAlertDialog(
         onDismissRequest = onClose,
-        confirmButton = { androidx.compose.material3.TextButton(onClick = onClose) { Text("Close") } },
+        confirmButton = { com.yaz.sms.ui.component.BoldButton(filled = true, onClick = onClose) { Text("Close") } },
         title = { Text("Message details") },
         text = {
             Column {

@@ -24,7 +24,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -108,13 +109,13 @@ fun GroupDialogs(tools: GroupTools, ui: GroupUi) {
             title = { Text("Remove ${who.name}?") },
             text = { Text("They leave the group on every phone. They keep what they already received.") },
             confirmButton = {
-                TextButton(onClick = {
+                BoldButton(filled = true, onClick = {
                     ui.removing = null
                     haptics.firm()
                     tools.onRemove(who)
                 }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { ui.removing = null }) { Text("Cancel") } }
+            dismissButton = { QuietButton(onClick = { ui.removing = null }) { Text("Cancel") } }
         )
     }
     if (ui.leaving) ZoneAlertDialog(
@@ -122,26 +123,26 @@ fun GroupDialogs(tools: GroupTools, ui: GroupUi) {
         title = { Text("Leave this group?") },
         text = { Text("The others are told. You get nothing more from it and cannot write to it. Its messages stay here.") },
         confirmButton = {
-            TextButton(onClick = {
+            BoldButton(filled = true, onClick = {
                 ui.leaving = false
                 haptics.firm()
                 tools.onLeave()
             }) { Text("Leave", color = MaterialTheme.colorScheme.error) }
         },
-        dismissButton = { TextButton(onClick = { ui.leaving = false }) { Text("Cancel") } }
+        dismissButton = { QuietButton(onClick = { ui.leaving = false }) { Text("Cancel") } }
     )
     if (ui.clearing) ZoneAlertDialog(
         onDismissRequest = { ui.clearing = false },
         title = { Text("Remove the group picture?") },
         text = { Text("It goes for every member.") },
         confirmButton = {
-            TextButton(onClick = {
+            BoldButton(filled = true, onClick = {
                 ui.clearing = false
                 haptics.firm()
                 tools.onPicture(null)
             }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
         },
-        dismissButton = { TextButton(onClick = { ui.clearing = false }) { Text("Cancel") } }
+        dismissButton = { QuietButton(onClick = { ui.clearing = false }) { Text("Cancel") } }
     )
     if (ui.chatOnly) ZoneAlertDialog(
         onDismissRequest = { ui.chatOnly = false },
@@ -152,7 +153,7 @@ fun GroupDialogs(tools: GroupTools, ui: GroupUi) {
                 else "A group picture, taking someone out and leaving need every member on the encrypted chat. This group goes by SMS and MMS."
             )
         },
-        confirmButton = { TextButton(onClick = { ui.chatOnly = false }) { Text("OK") } }
+        confirmButton = { BoldButton(filled = true, onClick = { ui.chatOnly = false }) { Text("OK") } }
     )
 }
 

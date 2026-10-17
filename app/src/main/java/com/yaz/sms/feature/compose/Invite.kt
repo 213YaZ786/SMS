@@ -18,7 +18,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -123,7 +123,7 @@ fun InviteDialog(onDismiss: () -> Unit, onJoined: (String) -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { BoldButton(filled = true, onClick = onDismiss) { Text("Close") } }
     )
 }
 
@@ -168,7 +168,7 @@ fun JoinQuestion(link: String, onDismiss: () -> Unit, onJoined: (String) -> Unit
             )
         },
         confirmButton = {
-            TextButton(enabled = !joining, onClick = {
+            BoldButton(filled = true, enabled = !joining, onClick = {
                 joining = true
                 scope.launch {
                     val address = chat.joinByLink(link)
@@ -183,6 +183,6 @@ fun JoinQuestion(link: String, onDismiss: () -> Unit, onJoined: (String) -> Unit
                 }
             }) { Text(if (joining) "Joining…" else "Start") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Not now") } }
+        dismissButton = { QuietButton(onClick = onDismiss) { Text("Not now") } }
     )
 }

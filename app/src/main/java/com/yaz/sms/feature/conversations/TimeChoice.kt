@@ -7,7 +7,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,7 +59,7 @@ fun TimeChoice(title: String, onPick: (Long) -> Unit, onDismiss: () -> Unit, exp
                 )
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
@@ -95,20 +96,20 @@ private fun DayAndTime(onPick: (Long) -> Unit, onDismiss: () -> Unit) {
                 colors = androidx.compose.material3.DatePickerDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
             )
         },
-        confirmButton = { TextButton(onClick = { haptics.tick(); day = dayState.selectedDateMillis ?: today }) { Text("Next") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { BoldButton(filled = true, onClick = { haptics.tick(); day = dayState.selectedDateMillis ?: today }) { Text("Next") } },
+        dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )
     else ZoneAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("At what time?") },
         text = { androidx.compose.material3.TimePicker(timeState, colors = androidx.compose.material3.TimePickerDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)) },
         confirmButton = {
-            TextButton(onClick = {
+            BoldButton(filled = true, onClick = {
                 val date = java.time.Instant.ofEpochMilli(day!!).atZone(java.time.ZoneOffset.UTC).toLocalDate()
                 val at = date.atTime(timeState.hour, timeState.minute).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
                 if (at <= System.currentTimeMillis() + 60_000) haptics.reject() else { haptics.done(); onPick(at) }
             }) { Text("Done") }
         },
-        dismissButton = { TextButton(onClick = { day = null }) { Text("Back") } }
+        dismissButton = { QuietButton(onClick = { day = null }) { Text("Back") } }
     )
 }

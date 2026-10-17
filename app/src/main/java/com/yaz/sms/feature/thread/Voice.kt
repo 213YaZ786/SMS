@@ -308,11 +308,11 @@ internal fun SpeechModelPanel(model: com.yaz.sms.core.voice.SpeechModel, modifie
                         Text("Getting it · ${(s.done * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
                         androidx.compose.material3.LinearProgressIndicator(progress = { s.done }, modifier = Modifier.padding(top = 6.dp).fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)))
                     }
-                    androidx.compose.material3.TextButton(onClick = { haptics.tick(); model.cancel() }) { Text("Stop") }
+                    com.yaz.sms.ui.component.QuietButton(onClick = { haptics.tick(); model.cancel() }) { Text("Stop") }
                 }
                 com.yaz.sms.core.voice.SpeechModel.State.Ready -> {
                     Text(if (model.usesSystem) "Ready, nothing to fetch" else "${model.pin.label} on the phone", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    if (!model.usesSystem) androidx.compose.material3.TextButton(onClick = { haptics.reject(); model.remove() }) { Text("Remove") }
+                    if (!model.usesSystem) com.yaz.sms.ui.component.QuietButton(onClick = { haptics.reject(); model.remove() }) { Text("Remove") }
                 }
                 else -> {
                     Text(
@@ -347,18 +347,18 @@ internal fun SpeechModelDialog(model: com.yaz.sms.core.voice.SpeechModel, onDism
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton(onClick = {
+            com.yaz.sms.ui.component.BoldButton(filled = true, onClick = {
                 haptics.done()
                 if (state != com.yaz.sms.core.voice.SpeechModel.State.Ready) model.fetch()
                 onDismiss()
             }) { Text(if (state == com.yaz.sms.core.voice.SpeechModel.State.Ready) "Done" else "Get it") }
         },
         dismissButton = {
-            if (state == com.yaz.sms.core.voice.SpeechModel.State.Ready) androidx.compose.material3.TextButton(onClick = {
+            if (state == com.yaz.sms.core.voice.SpeechModel.State.Ready) com.yaz.sms.ui.component.QuietButton(onClick = {
                 haptics.reject()
                 model.remove()
                 onDismiss()
-            }) { Text("Remove") } else androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Not now") }
+            }) { Text("Remove") } else com.yaz.sms.ui.component.QuietButton(onClick = onDismiss) { Text("Not now") }
         }
     )
 }

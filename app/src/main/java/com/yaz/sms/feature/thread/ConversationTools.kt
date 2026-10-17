@@ -26,7 +26,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -92,7 +93,7 @@ fun EncryptionDialog(phone: String, onDismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } }
+        confirmButton = { BoldButton(filled = true, onClick = onDismiss) { Text("OK") } }
     )
 }
 
@@ -145,7 +146,7 @@ fun SilenceDialog(until: Long?, onPick: (Long?) -> Unit, onDismiss: () -> Unit) 
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
@@ -256,7 +257,7 @@ fun SelectTextDialog(text: String, onDismiss: () -> Unit) {
                 Text(text, style = MaterialTheme.typography.bodyLarge)
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+        confirmButton = { BoldButton(filled = true, onClick = onDismiss) { Text("Done") } }
     )
 }
 

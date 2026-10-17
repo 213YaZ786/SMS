@@ -28,7 +28,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -226,14 +227,14 @@ internal fun Peek(
                 title = { Text("Move this conversation to Trash?") },
                 text = { Text("Messages with $title are kept 30 days.") },
                 confirmButton = {
-                    TextButton(onClick = {
+                    BoldButton(filled = true, onClick = {
                         confirmDelete = false
                         haptics.firm()
                         onDelete()
                         onDismiss()
                     }) { Text("Move to trash") }
                 },
-                dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
+                dismissButton = { QuietButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
             )
         }
     }

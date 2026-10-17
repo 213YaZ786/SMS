@@ -224,7 +224,7 @@ private fun WelcomeZone(
                 )
                 Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 12.dp).weight(1f))
                 toggle?.let { on ->
-                    androidx.compose.material3.Switch(checked = on, onCheckedChange = {
+                    com.yaz.sms.ui.component.GlassSwitch(checked = on, onCheckedChange = {
                         haptics.tick()
                         onToggle(it)
                     })

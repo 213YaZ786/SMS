@@ -23,11 +23,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.BoldIconButton
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -79,14 +80,14 @@ internal fun PollDialog(onSend: (String, List<String>) -> Unit, onDismiss: () ->
                             leadingIcon = { Text(Polls.keys[i]) },
                             modifier = Modifier.weight(1f)
                         )
-                        if (options.size > 2) IconButton(onClick = {
+                        if (options.size > 2) BoldIconButton(onClick = {
                             haptics.tick()
                             options.removeAt(i)
                         }) { Icon(AppIcons.Close, contentDescription = "Remove") }
                     }
                 }
                 AnimatedVisibility(options.size < Polls.MAX, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                    TextButton(onClick = {
+                    QuietButton(onClick = {
                         haptics.tick()
                         options.add("")
                     }) {
@@ -98,12 +99,12 @@ internal fun PollDialog(onSend: (String, List<String>) -> Unit, onDismiss: () ->
             }
         },
         confirmButton = {
-            TextButton(enabled = ready, onClick = {
+            BoldButton(filled = true, enabled = ready, onClick = {
                 haptics.done()
                 onSend(question, options.toList())
             }) { Text("Send") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 

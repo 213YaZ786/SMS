@@ -32,7 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.runtime.collectAsState
@@ -605,14 +606,14 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             title = { Text(if (taken.size == 1) "Move this conversation to Trash?" else "Move ${taken.size} conversations to Trash?") },
             text = { Text("They are kept 30 days.") },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
+                BoldButton(filled = true, onClick = {
                     confirmTrashMany = false
                     rememberedHaptics.done()
                     moveToTrash(all.filter { it.threadId in taken })
                     picked = null
                 }) { Text("Move to trash") }
             },
-            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmTrashMany = false }) { Text("Cancel") } }
+            dismissButton = { QuietButton(onClick = { confirmTrashMany = false }) { Text("Cancel") } }
         )
     }
     // Deleting for good asks first (Google Messages), one conversation, several, or all of the Trash.
@@ -623,14 +624,14 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             title = { Text(if (emptying) "Empty Trash?" else if (threads.size == 1) "Delete this conversation forever?" else "Delete ${threads.size} conversations forever?") },
             text = { Text("All their messages are deleted from this phone.") },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
+                BoldButton(filled = true, onClick = {
                     close()
                     rememberedHaptics.firm()
                     deleteForever(threads)
                     picked = null
                 }) { Text(if (emptying) "Empty trash" else "Delete forever") }
             },
-            dismissButton = { androidx.compose.material3.TextButton(onClick = close) { Text("Cancel") } }
+            dismissButton = { QuietButton(onClick = close) { Text("Cancel") } }
         )
     }
     // A trashed conversation is restored before it is read.
@@ -640,13 +641,13 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             title = { Text(nameOf(c) ?: Numbers.format(context, c.address)) },
             text = { Text("Restore this conversation to read it.") },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
+                BoldButton(filled = true, onClick = {
                     rememberedHaptics.done()
                     trash.restore(listOf(c.threadId))
                     restoring = null
                 }) { Text("Restore") }
             },
-            dismissButton = { androidx.compose.material3.TextButton(onClick = { restoring = null }) { Text("Cancel") } }
+            dismissButton = { QuietButton(onClick = { restoring = null }) { Text("Cancel") } }
         )
     }
     if (confirmBlockMany) {
@@ -656,14 +657,14 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             title = { Text(if (those.size == 1) "Block this number?" else "Block ${those.size} numbers?") },
             text = { Text("Calls and messages from them will not reach you.") },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
+                BoldButton(filled = true, onClick = {
                     confirmBlockMany = false
                     rememberedHaptics.done()
                     those.forEach { NumberActions.block(context, it.address) }
                     picked = null
                 }) { Text("Block") }
             },
-            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmBlockMany = false }) { Text("Cancel") } }
+            dismissButton = { QuietButton(onClick = { confirmBlockMany = false }) { Text("Cancel") } }
         )
     }
     peeking?.let { c ->
@@ -708,13 +709,13 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             title = { Text("Block this number?") },
             text = { Text("Calls and messages from them will not reach you.") },
             confirmButton = {
-                TextButton(onClick = {
+                BoldButton(filled = true, onClick = {
                     blocking = null
                     rememberedHaptics.done()
                     NumberActions.block(context, c.address)
                 }) { Text("Block") }
             },
-            dismissButton = { TextButton(onClick = { blocking = null }) { Text("Cancel") } }
+            dismissButton = { QuietButton(onClick = { blocking = null }) { Text("Cancel") } }
         )
     }
     // Report spam asks first; the number may be blocked with it.

@@ -5,9 +5,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.material3.Checkbox
+import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.GlassCheck
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,12 +43,12 @@ fun ReportSpamDialog(name: String, canBlock: Boolean, onDismiss: () -> Unit, onC
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
                         .toggleable(value = block, role = Role.Checkbox, onValueChange = { block = it })
                 ) {
-                    Checkbox(checked = block, onCheckedChange = null)
+                    GlassCheck(checked = block, onCheckedChange = null)
                     Text("Block this number")
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(canBlock && block) }) { Text("Report spam") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { BoldButton(filled = true, onClick = { onConfirm(canBlock && block) }) { Text("Report spam") } },
+        dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

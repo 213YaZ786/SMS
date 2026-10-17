@@ -53,7 +53,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.GlassRadio
+import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -1014,13 +1016,13 @@ private fun PersonPill(title: String, address: String, contactId: Long?, group: 
             title = { Text("Block $title?") },
             text = { Text("Calls and messages from this number will not reach you.") },
             confirmButton = {
-                TextButton(onClick = {
+                BoldButton(filled = true, onClick = {
                     confirmBlock = false
                     NumberActions.block(context, address)
                     blocked = NumberActions.isBlocked(context, address)
                 }) { Text("Block") }
             },
-            dismissButton = { TextButton(onClick = { confirmBlock = false }) { Text("Cancel") } }
+            dismissButton = { QuietButton(onClick = { confirmBlock = false }) { Text("Cancel") } }
         )
     }
 }
@@ -1148,12 +1150,12 @@ private fun Bubble(
             title = { Text("Delete for everyone?") },
             text = { Text("The message goes from this conversation, here and on the other phone.") },
             confirmButton = {
-                TextButton(onClick = {
+                BoldButton(filled = true, onClick = {
                     confirmDeleteAll = false
                     onDeleteForAll(chatId)
                 }) { Text("Delete") }
             },
-            dismissButton = { TextButton(onClick = { confirmDeleteAll = false }) { Text("Cancel") } }
+            dismissButton = { QuietButton(onClick = { confirmDeleteAll = false }) { Text("Cancel") } }
         )
     }
     val code = remember(said) { if (mine) null else Codes.find(said) }
@@ -1612,8 +1614,8 @@ internal fun GroupNameDialog(current: String, onDone: (String) -> Unit, onDismis
                 placeholder = { Text("Family, Friday team…") }
             )
         },
-        confirmButton = { TextButton(onClick = { onDone(name) }) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { BoldButton(filled = true, onClick = { onDone(name) }) { Text("Save") } },
+        dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
@@ -1647,14 +1649,14 @@ internal fun VanishDialog(current: Int, onPick: (Int) -> Unit, onDismiss: () -> 
                             onDismiss()
                         }.padding(vertical = 10.dp)
                     ) {
-                        androidx.compose.material3.RadioButton(selected = current == seconds, onClick = null)
+                        GlassRadio(selected = current == seconds, onClick = null)
                         Spacer(Modifier.width(12.dp))
                         Text(if (seconds == 0) "Off" else vanishLabel(seconds), style = MaterialTheme.typography.bodyLarge)
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
@@ -1831,9 +1833,9 @@ internal fun RiskyLinkDialog(url: String, verdict: com.yaz.sms.core.link.LinkChe
                 Text("Goes to $host", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } },
         dismissButton = {
-            TextButton(onClick = {
+            BoldButton(onClick = {
                 onDismiss()
                 runCatching {
                     context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(LinkCleaner.clean(url))).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -1910,14 +1912,14 @@ internal fun SignatureDialog(address: String, onDismiss: () -> Unit) {
                             store.update { s -> s.copy(signatures = if (name == null) s.signatures - key else s.signatures + (key to name)) }
                         }.padding(vertical = 10.dp)
                     ) {
-                        androidx.compose.material3.RadioButton(selected = current == name, onClick = null)
+                        GlassRadio(selected = current == name, onClick = null)
                         Spacer(Modifier.width(12.dp))
                         Text(name ?: "As usual", style = MaterialTheme.typography.bodyLarge)
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+        confirmButton = { BoldButton(filled = true, onClick = onDismiss) { Text("Done") } }
     )
 }
 
