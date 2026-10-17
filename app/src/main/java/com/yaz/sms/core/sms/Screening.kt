@@ -5,11 +5,16 @@ import android.provider.Telephony
 import com.yaz.sms.core.dial.ContactLookup
 import com.yaz.sms.core.dial.SalesCalls
 import com.yaz.sms.data.settings.KnownStore
+import com.yaz.sms.core.spam.SpamFilter
 import com.yaz.sms.data.settings.SettingsStore
+import com.yaz.sms.data.settings.SpamStore
 import com.yaz.sms.data.sms.Conversation
 
-/** What an unknown sender's conversation is, as Messages in iOS 26 sorts it. */
-enum class Category { TRANSACTIONS, PROMOTIONS, UNKNOWN }
+/**
+ * What an unknown sender's conversation is, as Messages in iOS 26 sorts it, and Spam as Google
+ * Messages keeps it (https://support.google.com/messages/answer/9061432: Spam & blocked).
+ */
+enum class Category { TRANSACTIONS, PROMOTIONS, UNKNOWN, SPAM }
 
 /** The answer of the checkers: the category, and which checker gave it. */
 data class Verdict(val category: Category, val by: String) {
@@ -86,6 +91,8 @@ object Screening {
     const val BY_OPT_OUT = "opt-out"
     const val BY_SALES = "sales number"
     const val BY_DEFAULT = "default"
+    const val BY_REPORTED = "reported"
+    const val BY_LEARNED = "learned"
 
     /** iOS 26: "Message filtering doesn't apply to any sender you've replied to three times or more." */
     const val REPLIES_TO_KNOW = 3
@@ -176,11 +183,41 @@ object Screening {
         override fun check(case: Case): Verdict = Verdict(Category.UNKNOWN, BY_DEFAULT)
     }
 
+    /**
+     * A number the user reported answers before any content is read, as SpamBlocker's SpamDB
+     * checker answers for a number of its list (Checker.SpamDB, service/checker/Checker.kt, the
+     * highest priority of the content-free checkers).
+     */
+    private class ReportedChecker(private val spam: SpamFilter) : Checker {
+        override val priority = 70
+        override fun check(case: Case): Verdict? =
+            if (spam.reported(senderKey(case.address)) == true) Verdict(Category.SPAM, BY_REPORTED) else null
+    }
+
+    /**
+     * The classifier trained on the messages the user labelled: SpamBlocker's Checker.NaiveBayes
+     * with checkSpam = true (service/checker/Checker.kt), after the checkers that know what a
+     * message is (a code, a parcel, an account alert) and before the promotions, since a spam
+     * message often carries an opt-out line. A sender the user cleared with Not spam is let by,
+     * as SpamBlocker lets a number of its Contact checker by.
+     */
+    private class LearnedChecker(private val spam: SpamFilter) : Checker {
+        override val priority = 35
+        override fun check(case: Case): Verdict? =
+            if (spam.reported(senderKey(case.address)) != false && spam.isSpam(case.text)) Verdict(Category.SPAM, BY_LEARNED) else null
+    }
+
     private val Checkers: List<Checker> =
         listOf(CodeChecker, ParcelChecker, AccountChecker, OptOutChecker, SalesNumberChecker, ByDefault).sortedByDescending { it.priority }
 
-    /** SpamBlocker's Checker.checkSms: the first checker, from the highest priority, that answers. */
-    fun check(case: Case): Verdict = Checkers.firstNotNullOf { it.check(case) }
+    /**
+     * SpamBlocker's Checker.checkSms: the first checker, from the highest priority, that answers.
+     * With a [spam] filter the reported-number and learned checkers join the chain.
+     */
+    fun check(case: Case, spam: SpamFilter? = null): Verdict {
+        val chain = if (spam == null) Checkers else (Checkers + ReportedChecker(spam) + LearnedChecker(spam)).sortedByDescending { it.priority }
+        return chain.firstNotNullOf { it.check(case) }
+    }
 
     /**
      * Who a sender is, for the lists of the known: a number by its last nine digits (as
@@ -205,11 +242,15 @@ object Screening {
      * The verdict on a conversation of the list, or null when it is not screened: a group, a
      * person met over the encrypted chat (an address with no number), a known sender, or a
      * conversation whose newest message is the user's own (writing to someone is not receiving
-     * from an unknown sender; iOS lists a conversation the user started).
+     * from an unknown sender; iOS lists a conversation the user started). A sender the user
+     * reported is spam whoever they are, since it is the user's own word (Google Messages' Report
+     * spam moves the conversation whatever it was).
      */
-    fun verdict(c: Conversation, known: Boolean, country: String?): Verdict? {
-        if (c.group || known || c.fromMe || c.address.isBlank() || '@' in c.address) return null
-        return check(Case(c.address, c.snippet, country))
+    fun verdict(c: Conversation, known: Boolean, country: String?, spam: SpamFilter? = null): Verdict? {
+        if (c.group || c.address.isBlank() || '@' in c.address) return null
+        val reported = spam?.reported(senderKey(c.address)) == true
+        if (!reported && (known || c.fromMe)) return null
+        return check(Case(c.address, c.snippet, country), spam)
     }
 
     /** iOS 26: a time sensitive message stays in the conversation list for eight hours. */
@@ -251,14 +292,18 @@ object Screening {
 
     /**
      * The verdict on a message that has just arrived, for the moment before it notifies (the
-     * lists use [verdict]): null when the setting is off or the sender is known.
+     * lists use [verdict]): null when the setting is off or the sender is known; a sender the
+     * user reported is spam even then. Off the main thread: the classifier may be trained here.
      */
     fun verdictFor(context: Context, threadId: Long, address: String, text: String, subscription: Int): Verdict? {
         if (address.isBlank() || '@' in address) return null
         val koin = runCatching { org.koin.core.context.GlobalContext.get() }.getOrNull() ?: return null
         if (!koin.get<SettingsStore>().current.screenUnknown) return null
-        val marked = koin.get<KnownStore>().known.value
-        if (isKnown(ContactLookup.isContact(context, address), marked, address, sentIn(context, threadId))) return null
-        return check(Case(address, text, SalesCalls.country(context, subscription = subscription)))
+        val spam = koin.get<SpamStore>().filter()
+        if (spam.reported(senderKey(address)) != true) {
+            val marked = koin.get<KnownStore>().known.value
+            if (isKnown(ContactLookup.isContact(context, address), marked, address, sentIn(context, threadId))) return null
+        }
+        return check(Case(address, text, SalesCalls.country(context, subscription = subscription)), spam)
     }
 }

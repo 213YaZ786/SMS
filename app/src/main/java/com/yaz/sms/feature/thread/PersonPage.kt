@@ -37,8 +37,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -87,9 +89,13 @@ fun PersonPage(
     onEncryption: () -> Unit,
     onName: (String) -> Unit,
     onVanish: (Int) -> Unit,
+    /** A group's picture, members, leaving and mentions (Delta Chat Android's group profile); null for one person. */
+    groupTools: GroupTools? = null,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
+    val groupUi = remember { GroupUi() }
+    if (groupTools != null) GroupDialogs(groupTools, groupUi)
     // Mark as known (iOS 26 Messages: an unknown sender's conversation moves to the list), kept in
     // KnownStore. Koin is read the way MessageNotifier reads it, so a screen drawn without the
     // app's container (the screenshot tests) simply has no such button.
@@ -101,11 +107,41 @@ fun PersonPage(
     val canMark = knownStore != null && koin?.get<com.yaz.sms.data.settings.SettingsStore>()?.current?.screenUnknown == true && !group &&
         contactId == null && address.isNotBlank() && '@' !in address &&
         messages.count { it.box != com.yaz.sms.data.sms.Box.RECEIVED } < com.yaz.sms.core.sms.Screening.REPLIES_TO_KNOW
+    // Report spam and Not spam on the person's page, as Google Messages has them in a conversation's
+    // details (https://support.google.com/messages/answer/9061432); the store and the training are
+    // SpamBlocker's (https://github.com/aj3423/SpamBlocker, LocalAI.kt updateCategory), as the list's.
+    val spamStore = remember(koin) { koin?.get<com.yaz.sms.data.settings.SpamStore>() }
+    val spamFlow = remember(spamStore) { spamStore?.data ?: kotlinx.coroutines.flow.MutableStateFlow(com.yaz.sms.data.settings.SpamFile()) }
+    val spamData by spamFlow.collectAsState()
+    val canSpam = spamStore != null && !group && address.isNotBlank() && '@' !in address
+    val isSpam = spamData.senders[senderKey] == true
+    var reporting by remember { mutableStateOf(false) }
+    // Read here, before Report spam may block (Compose's state recipe, https://developer.android.com/develop/ui/compose/state).
+    var blocked by remember(address) { mutableStateOf(NumberActions.isBlocked(context, address)) }
+    val spamScope = androidx.compose.runtime.rememberCoroutineScope()
+    fun labelSpam(spam: Boolean, block: Boolean = false) {
+        val store = spamStore ?: return
+        spamScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val received = com.yaz.sms.data.settings.Spams.received(messages)
+            if (spam) store.report(senderKey, received) else store.notSpam(senderKey, received)
+            if (block) {
+                NumberActions.block(context, address)
+                blocked = NumberActions.isBlocked(context, address)
+            }
+        }
+    }
+    if (reporting) com.yaz.sms.feature.conversations.ReportSpamDialog(
+        name = name,
+        canBlock = !blocked && address.count(Char::isDigit) >= 3 && NumberActions.canBlock(context),
+        onDismiss = { reporting = false }
+    ) { block ->
+        reporting = false
+        labelSpam(true, block)
+    }
     val items = remember(messages) { gather(messages, stranger) }
     var seeAll by remember { mutableStateOf<Kind?>(null) }
     var showAll by remember { mutableStateOf(false) }
     if (showAll) SharedPage(name, messages, stranger, holdMedia, start = seeAll) { showAll = false }
-    var blocked by remember(address) { mutableStateOf(NumberActions.isBlocked(context, address)) }
     var confirmBlock by remember { mutableStateOf(false) }
     var choosingSignature by remember { mutableStateOf(false) }
     var choosingVanish by remember { mutableStateOf(false) }
@@ -143,7 +179,10 @@ fun PersonPage(
                     // Who they are.
                     item {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
-                            ContactAvatar(name, if (group) null else photo, 112.dp, look = if (group) null else com.yaz.sms.ui.component.rememberLook(address).value)
+                            if (group && groupTools != null) Box(
+                                Modifier.clip(CircleShape).clickable(onClickLabel = "Group picture") { groupUi.needsChat(groupTools) { groupUi.pick?.invoke() } }
+                            ) { GroupFace(groupTools.picture, name, 112.dp) }
+                            else ContactAvatar(name, if (group) null else photo, 112.dp, look = if (group) null else com.yaz.sms.ui.component.rememberLook(address).value)
                             Spacer(Modifier.height(14.dp))
                             Text(name, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             number?.takeIf { it != name }?.let {
@@ -204,18 +243,38 @@ fun PersonPage(
                                 val isMarked = senderKey in marked
                                 Row(AppIcons.CheckCircle, if (isMarked) "Mark as unknown" else "Mark as known") {
                                     if (isMarked) knownStore?.unmark(senderKey) else knownStore?.mark(senderKey)
+                                    if (!isMarked && isSpam) labelSpam(false)
                                 }
                             }
                             if (digits && NumberActions.canShowCalls(context)) Row(AppIcons.Recents, "Calls with them") { NumberActions.showCalls(context, address) }
                             // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
-                            if (contactId != null && contactId > 0) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
+                            if (!group && contactId != null && contactId > 0) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
                             if (!group) Row(AppIcons.Copy, "Copy number") { NumberActions.copy(context, address) }
                             // Kept in the contact by the Contacts app when it is on the phone; here otherwise.
                             if (!group) Row(AppIcons.Vibration, "Vibration") {
                                 if (contactId == null || contactId < 0 || !com.yaz.sms.core.dial.ContactLook.openInContacts(context, contactId)) choosingSignature = true
                             }
                             if (group) Row(AppIcons.Create, "Name the group") { naming = true }
+                            // A group's own: its picture, who is in it, leaving it, mentions. Delta Chat Android's group profile
+                            // (ProfileActivity / ProfileFragment); the picture, removing and leaving go by the encrypted chat only.
+                            if (group && groupTools != null) {
+                                val hint = if (groupTools.chat && !groupTools.left) null else if (groupTools.left) "You left" else "Encrypted chat only"
+                                Row(AppIcons.AddPhoto, "Group picture", hint = hint) { groupUi.needsChat(groupTools) { groupUi.pick?.invoke() } }
+                                if (groupTools.picture != null && groupTools.chat && !groupTools.left) {
+                                    Row(AppIcons.Delete, "Remove picture") { groupUi.clearing = true }
+                                }
+                                Row(AppIcons.AlternateEmail, if (groupTools.mentionsOn) "Mentions · Notify me" else "Mentions · Don't notify") {
+                                    groupTools.onMentions(!groupTools.mentionsOn)
+                                }
+                                Row(AppIcons.ExitToApp, "Leave group", danger = true, hint = hint) { groupUi.needsChat(groupTools) { groupUi.leaving = true } }
+                            }
                             if (vanish != null) Row(AppIcons.Timer, if (vanish > 0) "Vanishing messages · ${vanishLabel(vanish)}" else "Vanishing messages") { choosingVanish = true }
+                            // Report spam beside Block, as Google Messages' conversation details
+                            // (https://support.google.com/messages/answer/9061432), SpamBlocker's labelling.
+                            if (canSpam) {
+                                if (isSpam) Row(AppIcons.ReportOff, "Not spam") { labelSpam(false) }
+                                else Row(AppIcons.Report, "Report spam", danger = true) { reporting = true }
+                            }
                             if (!group && NumberActions.canBlock(context)) Row(AppIcons.Block, if (blocked) "Unblock" else "Block", danger = !blocked) {
                                 if (blocked) {
                                     NumberActions.unblock(context, address)
@@ -223,6 +282,27 @@ fun PersonPage(
                                 } else confirmBlock = true
                             }
                         }
+                        }
+                    }
+                    // The people of a group, each one a line: a swipe left, a long press or the button takes them
+                    // out (over the encrypted chat; after the question). Delta Chat Android's ProfileFragment members list.
+                    if (group && groupTools != null) {
+                        item(key = "members") {
+                            Column(verticalArrangement = MemberSpacing, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(top = 6.dp)) {
+                                Text(
+                                    "Members · ${groupTools.members.size}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)
+                                )
+                                groupTools.members.forEach { member ->
+                                    MemberLine(
+                                        member,
+                                        number = com.yaz.sms.core.dial.Numbers.format(context, member.phone),
+                                        onRemove = if (groupTools.chat && !groupTools.left) ({ groupUi.removing = member }) else null
+                                    )
+                                }
+                            }
                         }
                     }
                     // What they and the user sent each other, by kind, under every action: Apple's
@@ -291,7 +371,7 @@ private fun androidx.compose.foundation.layout.FlowRowScope.Tile(icon: ImageVect
 /** A line of glass for something about the person. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun androidx.compose.foundation.layout.FlowRowScope.Row(icon: ImageVector, label: String, danger: Boolean = false, onClick: () -> Unit) {
+private fun androidx.compose.foundation.layout.FlowRowScope.Row(icon: ImageVector, label: String, danger: Boolean = false, hint: String? = null, onClick: () -> Unit) {
     val haptics = rememberHaptics()
     val tint = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     ZoneSurface(shape = RoundedCornerShape(24.dp), modifier = Modifier.weight(1f).fillMaxRowHeight().heightIn(min = 100.dp), onClick = {
@@ -312,6 +392,8 @@ private fun androidx.compose.foundation.layout.FlowRowScope.Row(icon: ImageVecto
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 maxLines = 2
             )
+            // Said under the action when it is not available here (a group by SMS has no server for it).
+            if (hint != null) Text(hint, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 1)
         }
     }
 }

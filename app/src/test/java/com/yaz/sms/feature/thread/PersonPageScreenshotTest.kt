@@ -88,6 +88,42 @@ class PersonPageScreenshotTest {
         )
     }
 
+    // A group over the encrypted chat and one by SMS: the picture, the members, leaving, mentions
+    // (Delta Chat Android's group profile, https://github.com/deltachat/deltachat-android, ProfileFragment).
+    private fun group(chat: Boolean, left: Boolean = false) = GroupTools(
+        members = listOf(
+            GroupMember("+33612345678", "Marie-Christine Delacroix-Beaumont"),
+            GroupMember("+33699887766", "Ahmed"),
+            GroupMember("+33611223344", "Joëlle Martin")
+        ),
+        chat = chat, left = left, picture = null, mentionsOn = true,
+        onMentions = {}, onPicture = {}, onRemove = {}, onLeave = {}
+    )
+
+    @Test
+    fun groupChat() = capture("person_group_chat") {
+        PersonPage(
+            name = "Marie-Christine, Ahmed, Joëlle", number = null, address = "+33612345678",
+            photo = null, contactId = null, group = true, encrypted = true, vanish = 0,
+            messages = talk, stranger = { false },
+            calls = CallChoices(phone = null, encrypted = null, video = null), silencedUntil = null,
+            onSearch = {}, onSilence = {}, onBackground = {}, onEncryption = {}, onName = {}, onVanish = {},
+            groupTools = group(chat = true), onClose = {}
+        )
+    }
+
+    @Test
+    fun groupSms() = capture("person_group_sms") {
+        PersonPage(
+            name = "Marie-Christine, Ahmed, Joëlle", number = null, address = "+33612345678",
+            photo = null, contactId = null, group = true, encrypted = false, vanish = null,
+            messages = talk, stranger = { false },
+            calls = CallChoices(phone = null, encrypted = null, video = null), silencedUntil = null,
+            onSearch = {}, onSilence = {}, onBackground = {}, onEncryption = {}, onName = {}, onVanish = {},
+            groupTools = group(chat = false), onClose = {}
+        )
+    }
+
     @Test
     fun stranger() = capture("person_stranger") {
         PersonPage(

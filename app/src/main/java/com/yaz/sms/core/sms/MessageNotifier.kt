@@ -37,7 +37,7 @@ class MessageNotifier(private val context: Context) {
     /** The unread messages of [threadId], or nothing when all were read. */
     fun show(threadId: Long) {
         val unread = unread(threadId)
-        if (unread.isEmpty() || silenced(threadId)) {
+        if (unread.isEmpty() || (silenced(threadId) && !breaksThrough(threadId, unread.map { it.second }))) {
             cancel(threadId)
             return
         }
@@ -147,6 +147,19 @@ class MessageNotifier(private val context: Context) {
                 .build()
             manager.notify(threadId.toInt(), note)
         }
+    }
+
+    /**
+     * A message naming the user rings even in a silenced conversation unless "Mentions" is off for it.
+     * Signal's NotificationStateProvider (AGPL-3.0, https://github.com/signalapp/Signal-Android,
+     * notifications/v2/NotificationStateProvider.kt): includeMessage lets a message through a muted
+     * thread when breaksThroughMute(), which is hasSelfMention() with mentionSetting ALWAYS_NOTIFY.
+     * The user is named by their own name, as the chat and a group's SMS carry mentions ("@Name").
+     */
+    private fun breaksThrough(threadId: Long, bodies: List<String>): Boolean {
+        if (!com.yaz.sms.core.chat.MentionSetting.of(context).notifies(threadId)) return false
+        val mine = com.yaz.sms.core.chat.MentionSetting.myNames(context)
+        return mine.isNotEmpty() && bodies.any { com.yaz.sms.core.chat.Mentions.mentions(it, mine) }
     }
 
     /** The user silenced this conversation for now. */

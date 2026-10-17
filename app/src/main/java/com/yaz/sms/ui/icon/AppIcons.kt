@@ -230,6 +230,26 @@ object AppIcons {
         )
     }
 
+    /** Take someone out of a group (Material Icons person_remove, github.com/google/material-design-icons, Apache-2.0). */
+    val PersonRemove: ImageVector by lazy {
+        build("PersonRemove", "M14,8c0-2.21-1.79-4-4-4S6,5.79,6,8s1.79,4,4,4S14,10.21,14,8z M17,10v2h6v-2H17z M2,18v2h16v-2c0-2.66-5.33-4-8-4 S2,15.34,2,18z")
+    }
+
+    /** Leave a group (Material Icons exit_to_app, github.com/google/material-design-icons, Apache-2.0). */
+    val ExitToApp: ImageVector by lazy {
+        build("ExitToApp", "M10.09 15.59L11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5c-1.11 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z")
+    }
+
+    /** Mentions, the @ (Material Icons alternate_email, github.com/google/material-design-icons, Apache-2.0). */
+    val AlternateEmail: ImageVector by lazy {
+        build(
+            "AlternateEmail",
+            "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10h5v-2h-5c-4.34 0-8-3.66-8-8s3.66-8 8-8 8 3.66 8 8v1.43c0 .79-.71 1.57-1.5 1.57s-1.5-.78-1.5-1.57V12" +
+                "c0-2.76-2.24-5-5-5s-5 2.24-5 5 2.24 5 5 5c1.38 0 2.64-.56 3.54-1.47.65.89 1.77 1.47 2.96 1.47 1.97 0 3.5-1.6 3.5-3.57V12c0-5.52-4.48-10-10-10z" +
+                "m0 13c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"
+        )
+    }
+
     /** The people of a conference call. */
     val Group: ImageVector by lazy {
         build(
@@ -445,6 +465,22 @@ object AppIcons {
             "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 " +
                 "1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L1" +
                 "8.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z"
+        )
+    }
+
+    /** Report spam: Material Icons "report" (google/material-design-icons, src/content/report/materialicons). */
+    val Report: ImageVector by lazy {
+        build(
+            "Report",
+            "M15.73 3H8.27L3 8.27v7.46L8.27 21h7.46L21 15.73V8.27L15.73 3zM12 17.3c-.72 0-1.3-.58-1.3-1.3 0-.72.58-1.3 1.3-1.3.72 0 1.3.58 1.3 1.3 0 .72-.58 1.3-1.3 1.3zm1-4.3h-2V7h2v6z"
+        )
+    }
+
+    /** Not spam: Material Icons "report_off" (google/material-design-icons, src/content/report_off/materialicons). */
+    val ReportOff: ImageVector by lazy {
+        build(
+            "ReportOff",
+            "M11 7h2v2.92l6.91 6.91 1.09-1.1V8.27L15.73 3H8.27L7.18 4.1 11 7.92zm11.27 14.73l-20-20.01L1 2.99l3.64 3.64L3 8.27v7.46L8.27 21h7.46l1.64-1.63L21 23l1.27-1.27zM12 17.3c-.72 0-1.3-.58-1.3-1.3s.58-1.3 1.3-1.3 1.3.58 1.3 1.3-.58 1.3-1.3 1.3z"
         )
     }
 

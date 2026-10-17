@@ -1,0 +1,38 @@
+# Mentions in a group (Signal's, https://github.com/signalapp/Signal-Android): typing @ in a group's field
+# offers its members, a tap puts "@Name" in the words, taking away a letter of it takes all of it
+# (the @ stays), a received "@Name" shows in its bubble. One device: the notification that breaks through
+# silence needs a Me contact and a second phone, not here.
+# Seed first with maestro/run-groups.sh (group Marie-Christine Delacroix-Beaumont, Joëlle Martin, Valentina Ivanova).
+# Commands from https://docs.maestro.dev/reference/commands-available.
+appId: com.yaz.sms.debug
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "@Joëlle Martin lunch?"
+    timeout: 10000
+- tapOn: "@Joëlle Martin lunch?"
+- assertVisible: "@Joëlle Martin lunch?"
+- tapOn: "Message"
+# A bare @ offers everyone.
+- inputText: "@"
+- assertVisible: "Marie-Christine Delacroix-Beaumont"
+- assertVisible: "Valentina Ivanova"
+- assertVisible: "Joëlle Martin"
+# Letters narrow the list, whatever the case.
+- inputText: "val"
+- assertVisible: "Valentina Ivanova"
+- assertNotVisible: "Joëlle Martin"
+- tapOn: "Valentina Ivanova"
+- assertVisible: "@Valentina Ivanova.*"
+# Words go on after the mention.
+- inputText: "tu viens ?"
+- assertVisible: "@Valentina Ivanova tu viens ?"
+# A letter of the name taken away: the name goes, the @ stays.
+- eraseText: 11
+- eraseText: 1
+- assertNotVisible: "@Valentina Ivanova.*"
+# An address is no mention: no list opens.
+- eraseText: 20
+- inputText: "write anna@Jo"
+- assertNotVisible: "Joëlle Martin"
+- eraseText: 20

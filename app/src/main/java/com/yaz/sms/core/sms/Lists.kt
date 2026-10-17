@@ -4,7 +4,7 @@ import com.yaz.sms.data.settings.Trashed
 import com.yaz.sms.data.sms.Conversation
 
 /** Which conversations the list shows. */
-enum class Filter { ALL, UNREAD, UNKNOWN, TRANSACTIONS, PROMOTIONS, ARCHIVED, TRASH }
+enum class Filter { ALL, UNREAD, UNKNOWN, TRANSACTIONS, PROMOTIONS, SPAM, ARCHIVED, TRASH }
 
 /** How the list of conversations is put together, apart from the screen. */
 object Lists {
@@ -49,12 +49,13 @@ object Lists {
             when (filter) {
                 Filter.ALL -> !isArchived(c, archived) && !gone && !away
                 Filter.UNREAD -> c.unread > 0 && !isArchived(c, archived) && !gone && !away
-                // Screened: every unknown sender. Otherwise people not in the contacts: no group, no bank or delivery service.
+                // Screened: every unknown sender but spam, which has its own place. Otherwise people not in the contacts: no group, no bank or delivery service.
                 Filter.UNKNOWN ->
-                    if (screened != null) c.threadId in screened && !isArchived(c, archived) && !gone
+                    if (screened != null) screened[c.threadId].let { it != null && it.category != Category.SPAM } && !isArchived(c, archived) && !gone
                     else !c.group && !isService(c) && !known(c) && !isArchived(c, archived) && !gone
                 Filter.TRANSACTIONS -> screened?.get(c.threadId)?.category == Category.TRANSACTIONS && !isArchived(c, archived) && !gone
                 Filter.PROMOTIONS -> screened?.get(c.threadId)?.category == Category.PROMOTIONS && !isArchived(c, archived) && !gone
+                Filter.SPAM -> screened?.get(c.threadId)?.category == Category.SPAM && !isArchived(c, archived) && !gone
                 Filter.ARCHIVED -> isArchived(c, archived) && !gone
                 Filter.TRASH -> gone
             }

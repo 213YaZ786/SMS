@@ -37,6 +37,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -95,6 +97,8 @@ fun Composer(
     /** Media shared from another app, dropped into the attachments once (Bugle's share-intent way in). */
     incoming: List<Attachment>? = null,
     onIncomingTaken: () -> Unit = {},
+    /** The other members of a group: typing @ offers them (Signal's mentions picker); empty for one person. */
+    mentionNames: List<String> = emptyList(),
     onSend: (String, Int, List<Attachment>) -> Boolean
 ) {
     val context = LocalContext.current
@@ -277,6 +281,32 @@ fun Composer(
                 }
             }
         }
+        // The members offered while an @ is being typed: a tap puts "@Name " in its place. Signal's
+        // MentionsPickerFragmentV2 over the composer, the query from ComposeText (core/chat/Mentions.kt).
+        val mentionQuery = if (mentionNames.isEmpty() || sel.length > 0 || take != null || editing != null) null else com.yaz.sms.core.chat.Mentions.queryAt(text, sel.end)
+        val mentionMatches = mentionQuery?.let { com.yaz.sms.core.chat.Mentions.search(mentionNames, it.text) }.orEmpty()
+        androidx.compose.animation.AnimatedVisibility(visible = mentionMatches.isNotEmpty()) {
+            var shown by remember { mutableStateOf(mentionMatches) }
+            if (mentionMatches.isNotEmpty()) shown = mentionMatches
+            FloatingPane(shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                Column(Modifier.padding(vertical = 6.dp)) {
+                    shown.forEach { who ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable(onClickLabel = "Mention $who") {
+                                haptics.tick()
+                                val (t, c) = com.yaz.sms.core.chat.Mentions.insert(text, sel.end, who)
+                                text = t
+                                sel = androidx.compose.ui.text.TextRange(c)
+                            }.padding(horizontal = 16.dp, vertical = 10.dp)
+                        ) {
+                            Icon(AppIcons.AlternateEmail, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                            Text(who, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp))
+                        }
+                    }
+                }
+            }
+        }
         val drops = Drop.entries.filter { (it != Drop.POLL || onPoll != null) && (it != Drop.EFFECTS || onSendEffect != null) }
         // What the + offers, above the bar, on the + side: round buttons of glass.
         androidx.compose.animation.AnimatedVisibility(
@@ -408,21 +438,32 @@ fun Composer(
                 }
               Box {
                 Box(Modifier.padding(start = 18.dp, end = if (text.isNotEmpty()) 44.dp else 18.dp, top = 15.dp, bottom = 15.dp)) {
-                    if (text.isEmpty()) Text(if (locating) "Finding where you are…" else if (lost) "Not found: is location on?" else if (attachments.isNotEmpty()) "Add a message, or send" else if (armed != null) "Your message, with its effect" else "Message", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val hint = if (locating) "Finding where you are…" else if (lost) "Not found: is location on?" else if (attachments.isNotEmpty()) "Add a message, or send" else if (armed != null) "Your message, with its effect" else "Message"
+                    if (text.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val faded = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    val mentionInk = MaterialTheme.colorScheme.primary
                     BasicTextField(
                         value = androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(sel.start.coerceIn(0, text.length), sel.end.coerceIn(0, text.length))),
                         onValueChange = {
-                            text = it.text
-                            sel = it.selection
+                            // Part of a mention taken away: all of it goes, the @ stays (Signal's MentionDeleter).
+                            val cut = if (mentionNames.isEmpty()) null else com.yaz.sms.core.chat.Mentions.afterEdit(text, it.text, mentionNames)
+                            if (cut != null) {
+                                text = cut.first
+                                sel = androidx.compose.ui.text.TextRange(cut.second)
+                            } else {
+                                text = it.text
+                                sel = it.selection
+                            }
                         },
-                        // The styles show as they are written, their marks faint.
-                        visualTransformation = { raw -> androidx.compose.ui.text.input.TransformedText(markupHint(raw.text, faded), androidx.compose.ui.text.input.OffsetMapping.Identity) },
+                        // The styles show as they are written, their marks faint; the members named stand out.
+                        visualTransformation = { raw -> androidx.compose.ui.text.input.TransformedText(markupHint(raw.text, faded, mentionInk, mentionNames), androidx.compose.ui.text.input.OffsetMapping.Identity) },
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         maxLines = 6,
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                        modifier = Modifier.fillMaxWidth().widthIn(min = 40.dp)
+                        // The field named by its hint for TalkBack and tests: a text field's label in its semantics,
+                        // https://developer.android.com/develop/ui/compose/accessibility/key-steps (content descriptions).
+                        modifier = Modifier.fillMaxWidth().widthIn(min = 40.dp).semantics { contentDescription = hint }
                     )
                 }
                 // Aa: the styles, shown or put away.
@@ -610,9 +651,24 @@ private fun contactCard(context: android.content.Context, picked: android.net.Ur
 }.getOrNull()
 
 /** The text being written with its styles shown and their marks faint, the marks kept in place. */
-private fun markupHint(text: String, faint: androidx.compose.ui.graphics.Color): androidx.compose.ui.text.AnnotatedString =
+private fun markupHint(
+    text: String,
+    faint: androidx.compose.ui.graphics.Color,
+    mention: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
+    names: List<String> = emptyList()
+): androidx.compose.ui.text.AnnotatedString =
     androidx.compose.ui.text.buildAnnotatedString {
         append(text)
+        // A member named: the @ and the name stand out, the way Signal draws a mention in the field
+        // (components/mention/MentionRendererDelegate), here by colour and weight.
+        if (names.isNotEmpty() && mention != androidx.compose.ui.graphics.Color.Unspecified) {
+            com.yaz.sms.core.chat.Mentions.find(text, names).forEach {
+                addStyle(
+                    androidx.compose.ui.text.SpanStyle(color = mention, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium, background = mention.copy(alpha = 0.14f)),
+                    it.start, it.end
+                )
+            }
+        }
         val marks = Regex("(?<![\\p{L}\\p{N}])(__|[*_~])(?=\\S)(.+?)(?<=\\S)\\1(?![\\p{L}\\p{N}])")
         marks.findAll(text).forEach { m ->
             val mark = m.groupValues[1]

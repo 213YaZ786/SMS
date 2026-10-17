@@ -244,9 +244,13 @@ private fun ThreadContent(
     val index = remember(contacts, com.yaz.sms.core.dial.PrivateNames.version.intValue) { PhoneIndex(contacts) }
     val to = people.firstOrNull().orEmpty()
     val group = people.size > 1
+    // A group's people still in it, and whether the user left (the chat's group follows its members).
+    val groupsNow by chat.groups.collectAsState()
+    val members = remember(groupsNow, people) { if (group) chat.membersOf(people) else people }
+    val left = remember(groupsNow, people) { group && chat.groupOf(people)?.left == true }
     val entry = remember(index, to) { index.find(T9.clean(to)) }
     val prefs by koinInject<SettingsStore>().settings.collectAsState()
-    val title = if (group) thread?.let { prefs.groupNames[it] } ?: people.joinToString(", ") { index.find(T9.clean(it))?.name?.substringBefore(' ') ?: Numbers.format(context, it) }
+    val title = if (group) thread?.let { prefs.groupNames[it] } ?: members.joinToString(", ") { index.find(T9.clean(it))?.name?.substringBefore(' ') ?: Numbers.format(context, it) }
     else if ('@' in to) chat.nameFor(to) ?: to.substringBefore('@')
     else entry?.name ?: Numbers.format(context, to)
     val canCall = !group && to.count(Char::isDigit) >= 3
@@ -255,6 +259,30 @@ private fun ThreadContent(
     // A group goes over the encrypted chat when each of its members does.
     val encrypted = remember(links, people) { linked != null || (group && chat.groupReady(people)) }
     LaunchedEffect(encrypted, chatChanges, shown) { if (encrypted && shown) chat.markSeen(people) }
+    // Mentions in a group (Signal's): the others offered when @ is typed; "@Name" is the mention, in the chat and over SMS.
+    val mentionSetting = remember { com.yaz.sms.core.chat.MentionSetting.of(context) }
+    val mentionsOff by mentionSetting.off.collectAsState()
+    val chatNames by androidx.compose.runtime.produceState<Map<String, String>>(emptyMap(), members, encrypted, group) {
+        value = if (group && encrypted) chat.chatNames(members) else emptyMap()
+    }
+    val myNames by androidx.compose.runtime.produceState<List<String>>(emptyList(), group) {
+        value = if (group) withContext(Dispatchers.IO) { com.yaz.sms.core.chat.MentionSetting.myNames(context) } else emptyList()
+    }
+    // The name each member goes by on this phone, and the number it stands for.
+    val localNames = remember(members, index, group) {
+        if (!group) emptyMap() else members.associateBy { p -> index.find(T9.clean(p))?.name ?: Numbers.format(context, p) }.mapKeys { it.key.trim() }.filterKeys { it.isNotEmpty() }
+    }
+    val mentionWords = remember(localNames, chatNames, myNames) { (localNames.keys + chatNames.values + myNames).distinct() }
+    /** The words as the others must read them: each name given here replaced by the one the member chose in the chat. */
+    fun mentionsWire(text: String): String? {
+        if (!group || !encrypted || com.yaz.sms.core.chat.Mentions.STARTER !in text) return null
+        val found = com.yaz.sms.core.chat.Mentions.find(text, localNames.keys)
+        if (found.isEmpty()) return null
+        return com.yaz.sms.core.chat.Mentions.replace(text, found) { f ->
+            val phone = localNames.entries.firstOrNull { it.key.equals(f.name, ignoreCase = true) }?.value
+            com.yaz.sms.core.chat.Mentions.STARTER + (phone?.let { chatNames[it] } ?: f.name)
+        }.first
+    }
 
     val density = LocalDensity.current
     var composerHeight by remember { mutableStateOf(0.dp) }
@@ -321,7 +349,10 @@ private fun ThreadContent(
             // Over the rich chat when the number has it, quote included;
             // else a group or a picture as a picture message, the rest as SMS.
             // The effect travels over the encrypted chat; an SMS stays plain (and cheap).
-            if (encrypted && chat.send(people, p.effect?.let { com.yaz.sms.core.sms.Effects.mark(p.text, it) } ?: p.text, attachments, p.quoted)) return@launch
+            // A group the user left sends nothing, not even by SMS to the same people.
+            if (left) return@launch
+            val wire = mentionsWire(p.text)?.let { w -> p.effect?.let { com.yaz.sms.core.sms.Effects.mark(w, it) } ?: w }
+            if (encrypted && chat.send(people, p.effect?.let { com.yaz.sms.core.sms.Effects.mark(p.text, it) } ?: p.text, attachments, p.quoted, wire)) return@launch
             // Someone with no number has the chat only: never an SMS to an address.
             if (people.any { '@' in it }) {
                 withContext(Dispatchers.Main) {
@@ -477,6 +508,10 @@ private fun ThreadContent(
         if (until != null) com.yaz.sms.core.sms.MessageNotifier(context).cancel(t)
     }) { silenceOpen = false }
     if (encryptionOpen) EncryptionDialog(to) { encryptionOpen = false }
+    // The group's picture as the chat has it, read when its page is open and after any change of the chat.
+    val groupPicture by androidx.compose.runtime.produceState<String?>(null, personOpen, group, encrypted, chatChanges, groupsNow) {
+        value = if (personOpen && group && encrypted) chat.groupPicture(people) else null
+    }
     if (personOpen) PersonPage(
         name = if (group) title else entry?.name ?: Numbers.format(context, to),
         number = if (group) null else Numbers.format(context, to),
@@ -502,6 +537,20 @@ private fun ThreadContent(
             }
         },
         onVanish = { seconds -> scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds } },
+        groupTools = if (group) GroupTools(
+            members = members.map { p ->
+                val e = index.find(T9.clean(p))
+                GroupMember(p, e?.name ?: Numbers.format(context, p), e?.photo)
+            },
+            chat = encrypted,
+            left = left,
+            picture = groupPicture,
+            mentionsOn = thread?.let { it !in mentionsOff } ?: true,
+            onMentions = { on -> thread?.let { mentionSetting.set(it, on) } },
+            onPicture = { jpeg -> scope.launch { if (chat.setGroupPicture(people, jpeg)) haptics.done() else haptics.reject() } },
+            onRemove = { who -> scope.launch { if (chat.removeMember(people, who.phone)) haptics.done() else haptics.reject() } },
+            onLeave = { scope.launch { if (chat.leaveGroup(people)) haptics.done() else haptics.reject() } }
+        ) else null,
         onClose = { personOpen = false }
     )
     LaunchedEffect(personOpen) { if (personOpen && window < 5000) window = 5000 }
@@ -587,8 +636,18 @@ private fun ThreadContent(
                 usedFor = newest?.uid
                 restore = reply
             }
-            Composer(
+            // A group the user left can be read, not written to (Delta Chat's chat that can no longer send).
+            if (left) FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(
+                    "You left this group",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 15.dp)
+                )
+            } else Composer(
                 initial = draft,
+                mentionNames = remember(localNames) { localNames.keys.toList() },
                 quote = quote,
                 onClearQuote = { quote = null },
                 modifier = Modifier,
@@ -750,6 +809,7 @@ private fun ThreadContent(
                         stranger = row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
                         holdMedia = !prefs.showStrangerMedia && row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
                         highlight = if (searching) query.trim().takeIf { it.isNotEmpty() } else null,
+                        mentionWords = mentionWords,
                         starred = row.message.uid in stars,
                         onStar = {
                             haptics.tick()
@@ -1004,6 +1064,8 @@ private fun Bubble(
     /** Its media wait for a tap: from a stranger, when Settings asks so. */
     holdMedia: Boolean = stranger,
     highlight: String? = null,
+    /** The names of a group's members and the user: "@Name" with one of them stands out in the words. */
+    mentionWords: List<String> = emptyList(),
     starred: Boolean = false,
     onStar: () -> Unit = {},
     sentEffect: com.yaz.sms.core.sms.Effects.Effect? = null,
@@ -1084,8 +1146,13 @@ private fun Bubble(
     var risky by remember { mutableStateOf<Pair<String, com.yaz.sms.core.link.LinkCheck.Verdict>?>(null) }
     risky?.let { (url, verdict) -> RiskyLinkDialog(url, verdict, onDismiss = { risky = null }) }
     val found = MaterialTheme.colorScheme.tertiary
-    val text = remember(said, accent, checks, highlight) {
-        marked(linked(said, accent, danger, checks) { url, verdict ->
+    // A mention stands out: in the accent on a received bubble, in bold on one's own (the accent is its ground).
+    val mentionStyle = remember(mine, accent) {
+        if (mine) SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+        else SpanStyle(color = accent, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium, background = accent.copy(alpha = 0.14f))
+    }
+    val text = remember(said, accent, checks, highlight, mentionWords, mentionStyle) {
+        marked(linked(said, accent, danger, checks, mentionWords, mentionStyle) { url, verdict ->
             haptics.reject()
             risky = url to verdict
         }, highlight, found)
@@ -1622,10 +1689,15 @@ private fun linked(
     accent: androidx.compose.ui.graphics.Color,
     danger: androidx.compose.ui.graphics.Color = accent,
     checks: Map<String, com.yaz.sms.core.link.LinkCheck.Verdict> = emptyMap(),
+    mentions: List<String> = emptyList(),
+    mentionStyle: SpanStyle = SpanStyle(),
     onRisky: (String, com.yaz.sms.core.link.LinkCheck.Verdict) -> Unit = { _, _ -> }
 ): AnnotatedString = buildAnnotatedString {
     val read = com.yaz.sms.core.sms.Markup.read(body)
     append(read.text)
+    // The mentions of a group, found by its members' names (Signal draws them with MentionRendererDelegate;
+    // here the words "@Name" are all the message carries, core/chat/Mentions.kt).
+    if (mentions.isNotEmpty()) com.yaz.sms.core.chat.Mentions.find(read.text, mentions).forEach { addStyle(mentionStyle, it.start, it.end) }
     read.spans.forEach { span ->
         val style = when (span.style) {
             com.yaz.sms.core.sms.Markup.Style.BOLD -> SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)

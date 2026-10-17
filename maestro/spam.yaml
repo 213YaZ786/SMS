@@ -1,0 +1,84 @@
+# Spam (Google Messages' Report spam, Not spam and Spam & blocked,
+# https://support.google.com/messages/answer/9061432; classifier ported from SpamBlocker,
+# https://github.com/aj3423/SpamBlocker): Report spam from the long press with the block box,
+# the Spam place, Not spam, and the classifier trained by both (a new message that looks like the
+# reported ones lands in Spam by itself, one that looks like the cleared ones does not).
+# Seed first with maestro/run-spam.sh (debug build, Screen unknown senders on, numbers in no contact).
+# Commands from https://docs.maestro.dev/reference/commands-available.
+appId: com.yaz.sms.debug
+---
+- launchApp
+- tapOn: "Archive"
+- tapOn: "Unknown.*"
+- assertVisible: "Gagnez un cadeau gratuit, cliquez maintenant"
+- assertVisible: "A demain, bonne nuit"
+- assertVisible: "Cliquez ici pour reclamer votre prix gratuit maintenant"
+- assertVisible: "Salut, tu peux m appeler ce soir"
+# Nothing is spam yet: the model has no sample.
+- tapOn: "Spam"
+- assertVisible: "No spam"
+- tapOn: "Unknown.*"
+# Report spam asks first and offers to block; unchecked here so the flow can run again.
+- longPressOn: "Gagnez un cadeau gratuit, cliquez maintenant"
+- assertVisible: "Not spam|Report spam"
+- tapOn: "Report spam"
+- assertVisible: "Report spam?"
+- assertVisible: "Block this number"
+- tapOn: "Block this number"
+- tapOn: "Report spam"
+- assertNotVisible: "Gagnez un cadeau gratuit, cliquez maintenant"
+- tapOn: "Spam"
+- assertVisible: "Gagnez un cadeau gratuit, cliquez maintenant"
+# Cancel leaves it as it was.
+- tapOn: "Unknown.*"
+- longPressOn: "A demain, bonne nuit"
+- tapOn: "Report spam"
+- tapOn: "Cancel"
+- assertVisible: "A demain, bonne nuit"
+# Reported, then cleared: its five messages become examples of what is fine.
+- longPressOn: "A demain, bonne nuit"
+- tapOn: "Report spam"
+- tapOn: "Block this number"
+- tapOn: "Report spam"
+- tapOn: "Spam"
+- assertVisible: "A demain, bonne nuit"
+- longPressOn: "A demain, bonne nuit"
+- tapOn: "Not spam"
+- assertNotVisible: "A demain, bonne nuit"
+- assertVisible: "Gagnez un cadeau gratuit, cliquez maintenant"
+# Ten examples, both classes: the message that looks like the reported ones moves to Spam by itself.
+- extendedWaitUntil:
+    visible: "Cliquez ici pour reclamer votre prix gratuit maintenant"
+    timeout: 10000
+- assertNotVisible: "Salut, tu peux m appeler ce soir"
+- tapOn: "Unknown.*"
+- assertVisible: "A demain, bonne nuit"
+- assertVisible: "Salut, tu peux m appeler ce soir"
+- assertNotVisible: "Cliquez ici pour reclamer votre prix gratuit maintenant"
+- assertNotVisible: "Gagnez un cadeau gratuit, cliquez maintenant"
+# In Spam, a conversation selected offers Not spam, Block and Trash.
+- tapOn: "Spam"
+- longPressOn: "Gagnez un cadeau gratuit, cliquez maintenant"
+- assertVisible: "Not spam"
+- assertVisible: "Trash"
+- tapOn: "Select"
+- assertVisible: "Not spam"
+- tapOn: "Leave the selection"
+# The person's page has them too, beside Block: Report spam then Not spam, left as found.
+- tapOn: "Unknown.*"
+- tapOn: "Salut, tu peux m appeler ce soir"
+- tapOn: "(\\+33 7 66 55 44 33|0766554433|07 66 55 44 33)"
+- scrollUntilVisible:
+    element: "Report spam"
+- tapOn: "Report spam"
+- assertVisible: "Report spam?"
+- tapOn: "Block this number"
+- tapOn: "Report spam"
+- assertVisible: "Block"
+- scrollUntilVisible:
+    element: "Not spam"
+- tapOn: "Not spam"
+- assertVisible: "Report spam"
+- back
+- back
+- tapOn: "Back to messages"

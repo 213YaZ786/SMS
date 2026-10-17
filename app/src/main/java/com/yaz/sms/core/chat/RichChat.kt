@@ -84,9 +84,15 @@ sealed class CallSignal {
     data class TakenElsewhere(val msgId: Int) : CallSignal()
 }
 
-/** An encrypted group of several proven numbers, and its chat. */
+/**
+ * An encrypted group of several proven numbers, and its chat. [phones] are the people of its
+ * conversation in Android's store (they never change, or the conversation would become another
+ * thread); [gone] are those since removed from the chat or who left it, and [left] says the user
+ * left it, which Delta Chat Android shows as a chat that can no longer send
+ * (https://github.com/deltachat/deltachat-android, ConversationActivity.handleLeaveGroup).
+ */
 @Serializable
-data class ChatGroup(val chatId: Int, val phones: List<String>)
+data class ChatGroup(val chatId: Int, val phones: List<String>, val gone: List<String> = emptyList(), val left: Boolean = false)
 
 /** A message of Android's store that went over the rich chat: where it is, what the chat says of it. */
 @Serializable
@@ -140,6 +146,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     /** The encrypted groups, by their members' numbers. */
     private val _groups = MutableStateFlow(loadGroups())
+
+    /** The same, read by the screens (who is still in a group, whether the user left it). */
+    val groups: StateFlow<Map<String, ChatGroup>> = _groups.asStateFlow()
 
     /** The rich chat's messages in Android's store, by the chat's message id. */
     private val refStore = RefStore(context)
@@ -638,6 +647,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             // A group renamed by one of its members: the name here follows.
             "ChatModified" -> event.data["chatId"]?.jsonPrimitive?.intOrNull?.let { chat ->
                 val group = _groups.value.values.firstOrNull { it.chatId == chat } ?: return@let
+                // Members added, taken out, or the user taken out by another: the group follows.
+                syncGroup(group)
                 val name = runCatching { engine.call("get_basic_chat_info", account, chat).jsonObject["name"]?.jsonPrimitive?.contentOrNull }.getOrNull()
                 if (!name.isNullOrBlank() && name != DEFAULT_GROUP_NAME) {
                     val thread = runCatching { Telephony.Threads.getOrCreateThreadId(context, group.phones.toSet()) }.getOrNull() ?: return@let
@@ -714,14 +725,17 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
      * each kept in Android's store as going out; the chat's reports turn
      * it sent, read or failed.
      */
-    suspend fun send(phones: List<String>, text: String, attachments: List<Attachment>, quote: String?): Boolean {
+    suspend fun send(phones: List<String>, text: String, attachments: List<Attachment>, quote: String?, wire: String? = null): Boolean {
+        // A group the user left sends nothing (Delta Chat's chat that can no longer send); [wire] is the
+        // words as the others must read them (their mentions), [text] as kept here.
+        if (groupOf(phones)?.left == true) return false
         if (phones.isEmpty() || (phones.size == 1 && linkFor(phones[0]) == null) || (phones.size > 1 && !groupReady(phones))) return false
         if (!start()) return false
         val chatId = chatOf(phones) ?: return false
         val phone = phones[0]
         return runCatching {
             if (attachments.isEmpty()) {
-                val id = engine.call("send_msg", account, chatId, mapOf("text" to text, "quotedText" to quote)).jsonPrimitive.int
+                val id = engine.call("send_msg", account, chatId, mapOf("text" to (wire ?: text), "quotedText" to quote)).jsonPrimitive.int
                 _outgoing.update { it + id }
                 if (phones.size == 1) {
                     SmsStore.saveSending(context, phone, text)?.let { saveRef(id, withExpiry(id, RichRef(false, it, mine = true, chat = chatId))) }
@@ -740,9 +754,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                         else -> "File"
                     }
                     val caption = if (i == 0) text else ""
+                    val sentCaption = if (i == 0) (wire ?: text) else ""
                     val id = engine.call(
                         "send_msg", account, chatId,
-                        mapOf("text" to caption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (i == 0) quote else null)
+                        mapOf("text" to sentCaption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (i == 0) quote else null)
                     ).jsonPrimitive.int
                     _outgoing.update { it + id }
                     MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy)?.let { saveRef(id, withExpiry(id, RichRef(true, it, mine = true, chat = chatId))) }
@@ -810,6 +825,119 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         if (!groupReady(phones) || !start()) return
         val chat = chatOf(phones) ?: return
         runCatching { engine.call("set_chat_name", account, chat, name.take(80)) }
+    }
+
+    /** The group of these numbers, once it has a chat (the first message makes it). */
+    fun groupOf(phones: List<String>): ChatGroup? = _groups.value[groupKey(phones)]
+
+    /** The numbers of a group still in it: its people less those removed or gone. */
+    fun membersOf(phones: List<String>): List<String> {
+        val gone = groupOf(phones)?.gone.orEmpty().map(::key).toSet()
+        return phones.filter { key(it) !in gone }
+    }
+
+    /**
+     * The group's picture as the chat has it (a file of the engine's, the member's own or ours), or
+     * null. Delta Chat Android's ProfileActivity reads dcChat.getProfileImage(); chatmail core
+     * deltachat-jsonrpc get_full_chat_by_id, field profileImage. Shown only through the isolated decoder.
+     */
+    suspend fun groupPicture(phones: List<String>): String? {
+        val chat = groupOf(phones)?.chatId ?: return null
+        if (!start()) return null
+        return runCatching {
+            engine.call("get_full_chat_by_id", account, chat).jsonObject["profileImage"]?.jsonPrimitive?.contentOrNull
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * A new picture for the group, for all its members, or none (null takes it away). Delta Chat
+     * Android's AvatarHelper.setGroupAvatar: the JPEG written to a file of the cache, its path handed to
+     * the chat (deltachat-jsonrpc set_chat_profile_image copies it into the engine and recodes it), the
+     * file deleted.
+     */
+    suspend fun setGroupPicture(phones: List<String>, jpeg: ByteArray?): Boolean {
+        if (!groupReady(phones) || groupOf(phones)?.left == true || !start()) return false
+        val chat = chatOf(phones) ?: return false
+        val file = jpeg?.let {
+            withContext(Dispatchers.IO) { File.createTempFile("groupavatar", ".jpg", context.cacheDir).also { f -> f.writeBytes(it) } }
+        }
+        return try {
+            runCatching { engine.call("set_chat_profile_image", account, chat, file?.path) }.isSuccess.also { if (it) _changes.value++ }
+        } finally {
+            file?.delete()
+        }
+    }
+
+    /**
+     * Takes [phone] out of the group, for all its members. Delta Chat Android's ProfileFragment
+     * (ActionMode delete: the question "Remove %1$s from group?", then dcContext.removeContactFromChat);
+     * chatmail core's remove_contact_from_chat tells the others by a message of the group.
+     */
+    suspend fun removeMember(phones: List<String>, phone: String): Boolean {
+        val group = groupOf(phones)
+        if (!groupReady(phones) || group?.left == true || !start()) return false
+        val chat = chatOf(phones) ?: return false
+        val listed = (groupOf(phones) ?: return false).phones.firstOrNull { key(it) == key(phone) } ?: return false
+        return runCatching {
+            val contact = contactOf(listed) ?: return@runCatching false
+            engine.call("remove_contact_from_chat", account, chat, contact)
+            val now = groupOf(phones) ?: return@runCatching false
+            saveGroup(now.copy(gone = (now.gone + listed).distinct()))
+            _changes.value++
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
+     * The user leaves the group: the others are told and nothing more comes from it. Delta Chat
+     * Android's ConversationActivity.handleLeaveGroup (removeContactFromChat of the user themselves,
+     * after the question "Are you sure you want to leave?"); chatmail core's leave_group does the same.
+     * The conversation stays to be read and no longer sends.
+     */
+    suspend fun leaveGroup(phones: List<String>): Boolean {
+        if (!groupReady(phones) || !start()) return false
+        val chat = chatOf(phones) ?: return false
+        return runCatching {
+            engine.call("leave_group", account, chat)
+            val now = groupOf(phones) ?: return@runCatching false
+            saveGroup(now.copy(left = true))
+            _changes.value++
+            true
+        }.getOrDefault(false)
+    }
+
+    /** The engine's id of a proven number's contact: the other person of their chat of two. */
+    private suspend fun contactOf(phone: String): Int? {
+        val one = linkFor(phone)?.chatId ?: return null
+        return engine.call("get_chat_contacts", account, one).jsonArray.map { it.jsonPrimitive.int }.firstOrNull { it != SELF }
+    }
+
+    /**
+     * The names the members chose for themselves, by number: what they are called in the chat, which
+     * is what a mention must say for them to be named on their own phone (chatmail core has no
+     * mention field: the words "@Name" are the mention).
+     */
+    suspend fun chatNames(phones: List<String>): Map<String, String> {
+        if (!start()) return emptyMap()
+        return phones.mapNotNull { p -> cardOf(p)?.name?.takeIf { it.isNotBlank() }?.let { p to it } }.toMap()
+    }
+
+    /**
+     * Who is in the group and whether the user is, as the engine says it now, after a change by
+     * anyone (Delta Chat Android's ProfileFragment shows the members of dcContext.getChatContacts and
+     * refreshes on DC_EVENT_CHAT_MODIFIED; deltachat-jsonrpc FullChat contactIds, selfInGroup).
+     */
+    private suspend fun syncGroup(group: ChatGroup) {
+        val full = runCatching { engine.call("get_full_chat_by_id", account, group.chatId).jsonObject }.getOrNull() ?: return
+        val inside = (full["contactIds"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.intOrNull }?.toSet() ?: return
+        val self = full["selfInGroup"]?.jsonPrimitive?.booleanOrNull ?: true
+        val here = inside.mapNotNull { id ->
+            runCatching { engine.call("get_contact", account, id).jsonObject["address"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+        }.toSet()
+        // A number whose address is unknown is left as it was.
+        val gone = group.phones.filter { p -> _links.value[key(p)]?.address?.takeIf { it.isNotBlank() }?.let { it !in here } == true }
+        val now = _groups.value[groupKey(group.phones)] ?: return
+        if (now.gone.toSet() != gone.toSet() || now.left != !self) saveGroup(now.copy(gone = gone, left = !self))
     }
 
     /** Our own message, changed for both sides. */

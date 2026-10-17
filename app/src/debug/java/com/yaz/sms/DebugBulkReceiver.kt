@@ -38,6 +38,13 @@ class DebugBulkReceiver : BroadcastReceiver() {
             android.util.Log.d("DebugBulk", "file message $saved")
             return
         }
+        // --es group "+3361...,+3362..." with --es body: one received group message (an MMS from `from` to the
+        // others), for a group conversation to look at (Modules/tools media seeds follow the same call).
+        intent.getStringExtra("group")?.let { others ->
+            val saved = com.yaz.sms.core.mms.MmsStore.saveReceivedParts(context, from, intent.getStringExtra("body").orEmpty(), null, null, others.split(',').map { it.trim() }.filter { it.isNotEmpty() })
+            android.util.Log.d("DebugBulk", "group message $saved")
+            return
+        }
         // --ez waiting true: a picture message announced, not downloaded (the tap-to-download tile).
         if (intent.getBooleanExtra("waiting", false)) {
             val ind = com.yaz.sms.core.mms.pdu.NotificationInd().apply {

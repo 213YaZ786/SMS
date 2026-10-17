@@ -64,6 +64,8 @@ import com.yaz.sms.data.settings.KnownStore
 import com.yaz.sms.data.contacts.PhoneBook
 import com.yaz.sms.data.contacts.PhoneIndex
 import com.yaz.sms.data.settings.SettingsStore
+import com.yaz.sms.data.settings.SpamStore
+import com.yaz.sms.data.settings.Spams
 import com.yaz.sms.data.settings.Trash
 import com.yaz.sms.data.settings.TrashStore
 import com.yaz.sms.data.sms.Conversation
@@ -131,17 +133,24 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // reads only what moved.
     val knownStore: KnownStore = koinInject()
     val marked by knownStore.known.collectAsState()
+    // Spam: the senders reported or cleared answer at once, the classifier trained on the labelled
+    // messages follows off the main thread (SpamStore.filter).
+    val spamStore: SpamStore = koinInject()
+    val spamData by spamStore.data.collectAsState()
+    val spamFilter by androidx.compose.runtime.produceState(spamStore.filter(spamData, withModel = false), spamData) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { spamStore.filter(spamData) }
+    }
     val chatLinks by chat.links.collectAsState()
     val country = remember { com.yaz.sms.core.dial.SalesCalls.country(context) }
     val kept = remember { HashMap<Long, Pair<List<Any>, Verdict?>>() }
-    val screened: Map<Long, Verdict>? = remember(all, index, marked, chatLinks, settings.screenUnknown) {
+    val screened: Map<Long, Verdict>? = remember(all, index, marked, chatLinks, settings.screenUnknown, spamFilter) {
         if (!settings.screenUnknown) null else buildMap {
             for (c in all) {
                 val isKnown = Screening.isKnown(index.find(T9.clean(c.address)) != null, marked, c.address, c.sent) ||
                     (!c.group && chat.linkFor(c.address) != null)
-                val key = listOf<Any>(c.date, c.snippet, c.fromMe, isKnown, country ?: "")
+                val key = listOf<Any>(c.date, c.snippet, c.fromMe, isKnown, country ?: "", spamFilter)
                 val verdict = kept[c.threadId]?.takeIf { it.first == key }?.second
-                    ?: Screening.verdict(c, isKnown, country).also { kept[c.threadId] = key to it }
+                    ?: Screening.verdict(c, isKnown, country, spamFilter).also { kept[c.threadId] = key to it }
                 if (verdict != null) put(c.threadId, verdict)
             }
         }
@@ -217,6 +226,24 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // and the move is Fossify Messages' moveMessageToRecycleBin (https://github.com/FossifyOrg/Messages, extensions/Context.kt).
     fun moveToTrash(those: Collection<Conversation>) = trash.trash(those.associate { it.threadId to it.date })
 
+    // Report spam and Not spam on a conversation, as Google Messages offers them
+    // (https://support.google.com/messages/answer/9061432): the sender is reported or cleared and the
+    // messages received from it train the classifier (SpamStore, SpamBlocker's LocalAI.kt updateCategory:
+    // spam or ham). Report spam may block the number too, a box of its confirmation.
+    var reporting by remember { mutableStateOf<Conversation?>(null) }
+    var blocking by remember { mutableStateOf<Conversation?>(null) }
+    fun reportSpam(c: Conversation, block: Boolean) {
+        scope.launch {
+            spamStore.report(Screening.senderKey(c.address), Spams.received(messages.thread(c.threadId, Spams.MAX_PER_REPORT * 2)))
+            if (block) NumberActions.block(context, c.address)
+        }
+    }
+    fun notSpam(c: Conversation) {
+        scope.launch { spamStore.notSpam(Screening.senderKey(c.address), Spams.received(messages.thread(c.threadId, Spams.MAX_PER_REPORT * 2))) }
+    }
+    // A person with a number or a name, not a group nor someone met over the chat: what Screening can sort.
+    fun canReport(c: Conversation) = settings.screenUnknown && !c.group && c.address.isNotBlank() && '@' !in c.address
+
     // Deleted for good, from the Trash: the messages up to each cutoff (Messages.deleteUpTo, AOSP
     // Messaging's MmsUtils.deleteThread), then the chat side of them and the entry go. An entry
     // whose deletion the store refused stays, as Aves' deleteExpiredTrash keeps what it could not delete
@@ -289,11 +316,16 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // Unknown, with its Transactions and Promotions, is a place of the same kind (iOS 26 Messages'
     // Unknown Senders filter and its categories).
     val inUnknown = filter == Filter.UNKNOWN || filter == Filter.TRANSACTIONS || filter == Filter.PROMOTIONS
-    // The Archive, the Trash and Unknown are places side by side, away from the inbox.
-    val apart = archive || inTrash || inUnknown
-    // Unknown shows what waits in it: the unread conversations screened away.
+    // Spam is a place of its own beside Unknown (Google Messages' Spam & blocked).
+    val inSpam = filter == Filter.SPAM
+    // The Archive, the Trash, Unknown and Spam are places side by side, away from the inbox.
+    val apart = archive || inTrash || inUnknown || inSpam
+    // Unknown shows what waits in it: the unread conversations screened away, spam apart.
     val unknownUnread = remember(screened, all, settings.archived, trashed) {
-        if (screened == null) 0 else all.count { it.threadId in screened && it.unread > 0 && !Lists.isArchived(it, settings.archived) && !Lists.isTrashed(it, trashed) }
+        if (screened == null) 0 else all.count {
+            screened[it.threadId].let { v -> v != null && v.category != com.yaz.sms.core.sms.Category.SPAM } &&
+                it.unread > 0 && !Lists.isArchived(it, settings.archived) && !Lists.isTrashed(it, trashed)
+        }
     }
     // One line at the top (the user, 2026-10-16): the search behind a magnifier that
     // opens into the field, as Material 3's search from an app bar icon, and one
@@ -379,7 +411,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 listOfNotNull(
                     Filter.ARCHIVED to "Archive",
                     Filter.TRASH to "Trash",
-                    if (settings.screenUnknown) Filter.UNKNOWN to (if (unknownUnread > 0) "Unknown · $unknownUnread" else "Unknown") else null
+                    if (settings.screenUnknown) Filter.UNKNOWN to (if (unknownUnread > 0) "Unknown · $unknownUnread" else "Unknown") else null,
+                    if (settings.screenUnknown) Filter.SPAM to "Spam" else null
                 ),
                 selected = { value -> if (value == Filter.UNKNOWN) inUnknown else value == filter }
             ) {
@@ -432,6 +465,12 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                                 store.update { s ->
                                     s.copy(archived = if (archive) s.archived - taken else s.archived + those.map { it.threadId to it.date })
                                 }
+                                picked = null
+                            })
+                            // In Spam: Not spam for what was taken, beside Block and Move to trash.
+                            if (inSpam) com.yaz.sms.ui.component.FloatingAction(AppIcons.ReportOff, "Not spam", {
+                                rememberedHaptics.done()
+                                those.forEach(::notSpam)
                                 picked = null
                             })
                             if (those.isNotEmpty() && those.all { !it.group && it.address.count(Char::isDigit) >= 3 } && NumberActions.canBlock(context))
@@ -503,6 +542,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     filter == Filter.UNKNOWN -> "No one unknown"
                     filter == Filter.TRANSACTIONS -> "No transactions"
                     filter == Filter.PROMOTIONS -> "No promotions"
+                    filter == Filter.SPAM -> "No spam"
                     else -> "No messages yet"
                 },
                 message = when {
@@ -510,9 +550,14 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     filter == Filter.ALL -> "Write to someone with the button below."
                     filter == Filter.TRASH -> "Conversations you trash stay here 30 days."
                     inUnknown -> "Messages from numbers you don't know come here."
+                    inSpam -> "Report a conversation as spam to put it here."
                     else -> "Archive a conversation with a long press; it comes back with its next message."
                 },
-                icon = if (filter == Filter.TRASH) AppIcons.Delete else AppIcons.Message,
+                icon = when (filter) {
+                    Filter.TRASH -> AppIcons.Delete
+                    Filter.SPAM -> AppIcons.Report
+                    else -> AppIcons.Message
+                },
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
             else -> LazyColumn(
@@ -643,13 +688,52 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 peeking = null
             },
             onDelete = { moveToTrash(listOf(c)) },
-            // Only for an unknown sender: its conversation comes back to the list.
-            onKnown = if (screened?.containsKey(c.threadId) == true) ({ knownStore.mark(Screening.senderKey(c.address)) }) else null
+            // Only for an unknown sender, and not in Spam: its conversation comes back to the list,
+            // and its messages teach the classifier they are fine.
+            onKnown = if (screened?.get(c.threadId).let { it != null && it.category != com.yaz.sms.core.sms.Category.SPAM }) ({
+                knownStore.mark(Screening.senderKey(c.address))
+                notSpam(c)
+            }) else null,
+            onReportSpam = if (canReport(c) && screened?.get(c.threadId)?.category != com.yaz.sms.core.sms.Category.SPAM) ({ reporting = c }) else null,
+            onNotSpam = if (screened?.get(c.threadId)?.category == com.yaz.sms.core.sms.Category.SPAM) ({ notSpam(c) }) else null,
+            // In Spam: Block asks first, as the selection's Block does.
+            onBlock = if (screened?.get(c.threadId)?.category == com.yaz.sms.core.sms.Category.SPAM && !c.group &&
+                c.address.count(Char::isDigit) >= 3 && NumberActions.canBlock(context)
+            ) ({ blocking = c }) else null
         )
+    }
+    // The Block of a conversation in Spam asks first, as the selection's Block does.
+    blocking?.let { c ->
+        ZoneAlertDialog(
+            onDismissRequest = { blocking = null },
+            title = { Text("Block this number?") },
+            text = { Text("Calls and messages from them will not reach you.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    blocking = null
+                    rememberedHaptics.done()
+                    NumberActions.block(context, c.address)
+                }) { Text("Block") }
+            },
+            dismissButton = { TextButton(onClick = { blocking = null }) { Text("Cancel") } }
+        )
+    }
+    // Report spam asks first; the number may be blocked with it.
+    reporting?.let { c ->
+        ReportSpamDialog(
+            name = nameOf(c) ?: Numbers.format(context, c.address),
+            canBlock = !c.group && c.address.count(Char::isDigit) >= 3 && NumberActions.canBlock(context),
+            onDismiss = { reporting = null }
+        ) { block ->
+            reporting = null
+            rememberedHaptics.done()
+            reportSpam(c, block)
+        }
     }
 }
 
 /** The search and, as in Dialer's calls, the places to switch between on the same line, in glass (the Archive and the Trash). */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun Filters(
     query: String, onQuery: (String) -> Unit, filter: Filter, chips: List<Pair<Filter, String>>,
@@ -662,12 +746,7 @@ private fun Filters(
     if (stacked) Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
         SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(), floating = true)
     }
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
-    ) {
-        if (!stacked) SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).weight(1f, fill = false).fillMaxWidth(), floating = true)
+    val chipsRow: @Composable () -> Unit = {
         chips.forEach { (value, label) ->
             FloatingPane(
                 shape = CircleShape,
@@ -680,6 +759,22 @@ private fun Filters(
                 Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp))
             }
         }
+    }
+    if (stacked) {
+        // Four places (Archive, Trash, Unknown, Spam) wrap onto a second line when a phone is too narrow, never sideways
+        // (Jetpack Compose FlowRow, https://developer.android.com/develop/ui/compose/layouts/flow).
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+        ) { chipsRow() }
+    } else Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).weight(1f, fill = false).fillMaxWidth(), floating = true)
+        chipsRow()
     }
 }
 

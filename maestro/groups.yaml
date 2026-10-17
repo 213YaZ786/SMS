@@ -1,0 +1,46 @@
+# A group by SMS and MMS, on one device (Google Messages' group details,
+# https://support.google.com/messages/answer/16287429): its page lists the members, says where an action
+# needs the encrypted chat (picture, taking someone out, leaving) and answers when it is touched; the
+# chat between two phones cannot run on one device, so the chat side is not here.
+# Seed first with maestro/run-groups.sh (a group message from Marie-Christine Delacroix-Beaumont to
+# Joëlle Martin and Valentina Ivanova).
+# Commands from https://docs.maestro.dev/reference/commands-available.
+appId: com.yaz.sms.debug
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "(Group-Seed hello|@Joëlle Martin lunch\\?)"
+    timeout: 10000
+- tapOn: "(Group-Seed hello|@Joëlle Martin lunch\\?)"
+# The name pill (the members' first names) opens the group's page.
+- tapOn: "\\S+, \\S+, \\S+"
+# A group has no single contact to open.
+- assertNotVisible: "Contact"
+- scrollUntilVisible:
+    element: "Members · 3"
+- scrollUntilVisible:
+    element: "Marie-Christine Delacroix-Beaumont"
+- assertVisible: "Joëlle Martin"
+- assertVisible: "Valentina Ivanova"
+# By SMS no line offers to remove anyone.
+- assertNotVisible: "Remove Marie-Christine Delacroix-Beaumont"
+- scrollUntilVisible:
+    element: "Group picture"
+    direction: UP
+- assertVisible: "Encrypted chat only"
+- assertVisible: "Mentions · Notify me"
+# Each chat-only action answers instead of staying mute.
+- tapOn: "Group picture"
+- assertVisible: "A group picture, taking someone out and leaving need every member on the encrypted chat. This group goes by SMS and MMS."
+- tapOn: "OK"
+- tapOn: "Leave group"
+- assertVisible: "Encrypted chat only"
+- tapOn: "OK"
+# Mentions: the switch turns over and back.
+- tapOn: "Mentions · Notify me"
+- assertVisible: "Mentions · Don't notify"
+- tapOn: "Mentions · Don't notify"
+- assertVisible: "Mentions · Notify me"
+# The page is left as it was found.
+- tapOn: "Back"
+- assertVisible: "Message"

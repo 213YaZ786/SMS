@@ -11,6 +11,10 @@ pkg=com.yaz.sms.debug
 export MAESTRO_CLI_NO_ANALYTICS=true MAESTRO_DISABLE_UPDATE_CHECK=true MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
 export JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}
 
+# Nothing learned as spam (run-spam.sh trains the classifier): the app stopped, its spam file removed.
+"${adb[@]}" shell am force-stop $pkg
+"${adb[@]}" shell run-as $pkg rm -f files/spam.json
+
 # The body goes through adb's shell once: double quotes keep it whole, no quote left in the text.
 seed() { "${adb[@]}" shell "am broadcast -n $pkg/com.yaz.sms.DebugBulkReceiver --es from '$1' --es body \"$2\"" >/dev/null; sleep 1; }
 seed +33799000111 "Soldes -50% sur tout le site. STOP au 36180"
