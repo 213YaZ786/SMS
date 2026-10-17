@@ -15,6 +15,12 @@ class OpenRequests {
     /** A conversation to open on its encryption's keys (the Contacts app's "verified" mark), by number. */
     val keysFor = MutableStateFlow<String?>(null)
 
+    /**
+     * A message (its uid) the open conversation scrolls to once, set by the starred
+     * list; the same one-shot request the keys use, cleared when taken.
+     */
+    val showMessage = MutableStateFlow<String?>(null)
+
     /** A chat invite link from outside (a code read by the camera, a link tapped): asked, never joined unasked. */
     val invite = MutableStateFlow<String?>(null)
 

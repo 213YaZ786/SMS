@@ -16,6 +16,7 @@ import org.koin.dsl.module
 /** Single composition root. */
 val appModule = module {
     single { SettingsStore(androidContext()) }
+    single { com.yaz.sms.data.settings.StarStore(androidContext()) }
     single { PhoneBook(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)) }
     single { Messages(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)) }
     single { OpenRequests() }

@@ -227,20 +227,58 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
      */
     suspend fun thread(threadId: Long, limit: Int = PAGE): List<Message> = withContext(Dispatchers.IO) {
         runCatching {
+            rowsWhere(
+                "${Telephony.Sms.THREAD_ID} = ? AND ${Telephony.Sms.TYPE} != ${Telephony.Sms.MESSAGE_TYPE_DRAFT}", arrayOf(threadId.toString()),
+                "${Telephony.Mms.THREAD_ID} = ? AND ${Telephony.Mms.MESSAGE_BOX} != ${Telephony.Mms.MESSAGE_BOX_DRAFTS}", arrayOf(threadId.toString()),
+                limit
+            )
+        }.getOrDefault(emptyList())
+    }
+
+    /**
+     * The messages named by [uids] ("sms/7", "mms/45"), oldest first, each with its own thread
+     * id; null when the store cannot be read, so that nothing is taken for deleted. Rows asked
+     * by _id in batches, under SQLite's limit of variables (developer.android.com, Telephony.Sms
+     * and Telephony.Mms; the starred messages view of Zulip, zulip-flutter lib/model/narrow.dart
+     * StarredMessagesNarrow, which lists exactly the messages carrying the flag).
+     */
+    suspend fun byUid(uids: Collection<String>): List<Message>? = withContext(Dispatchers.IO) {
+        if (!canRead()) return@withContext null
+        runCatching {
+            val sms = uids.filter { it.startsWith("sms/") }.mapNotNull { it.substringAfter('/').toLongOrNull() }
+            val mms = uids.filter { it.startsWith("mms/") }.mapNotNull { it.substringAfter('/').toLongOrNull() }
+            val out = ArrayList<Message>()
+            val batches = maxOf(sms.chunked(BATCH).size, mms.chunked(BATCH).size)
+            for (i in 0 until batches) {
+                val s = sms.chunked(BATCH).getOrElse(i) { emptyList() }
+                val m = mms.chunked(BATCH).getOrElse(i) { emptyList() }
+                out += rowsWhere(
+                    if (s.isEmpty()) "0" else "${Telephony.Sms._ID} IN (${s.joinToString(",") { "?" }})", s.map { it.toString() }.toTypedArray(),
+                    if (m.isEmpty()) "0" else "${Telephony.Mms._ID} IN (${m.joinToString(",") { "?" }})", m.map { it.toString() }.toTypedArray(),
+                    Int.MAX_VALUE
+                )
+            }
+            out.sortedBy { it.date }
+        }.getOrNull()
+    }
+
+    /** The SMS and the picture messages matching the two selections, oldest first, the newest [limit] of them. */
+    private fun rowsWhere(smsWhere: String, smsArgs: Array<String>, mmsWhere: String, mmsArgs: Array<String>, limit: Int): List<Message> {
+        run {
             val out = ArrayList<Message>()
             context.contentResolver.query(
                 Telephony.Sms.CONTENT_URI,
                 arrayOf(
                     Telephony.Sms._ID, Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE, Telephony.Sms.TYPE,
-                    Telephony.Sms.READ, Telephony.Sms.STATUS, Telephony.Sms.SUBSCRIPTION_ID
+                    Telephony.Sms.READ, Telephony.Sms.STATUS, Telephony.Sms.SUBSCRIPTION_ID, Telephony.Sms.THREAD_ID
                 ),
-                "${Telephony.Sms.THREAD_ID} = ? AND ${Telephony.Sms.TYPE} != ${Telephony.Sms.MESSAGE_TYPE_DRAFT}",
-                arrayOf(threadId.toString()), "${Telephony.Sms.DATE} DESC LIMIT $limit"
+                smsWhere,
+                smsArgs, "${Telephony.Sms.DATE} DESC" + if (limit < Int.MAX_VALUE) " LIMIT $limit" else ""
             )?.use { c ->
                 while (c.moveToNext()) {
                     out += Message(
                         id = c.getLong(0),
-                        threadId = threadId,
+                        threadId = c.getLong(8),
                         address = c.getString(1).orEmpty(),
                         body = c.getString(2).orEmpty(),
                         date = c.getLong(3),
@@ -253,13 +291,13 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             }
             context.contentResolver.query(
                 Telephony.Mms.CONTENT_URI,
-                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID, Telephony.Mms.MESSAGE_TYPE),
-                "${Telephony.Mms.THREAD_ID} = ? AND ${Telephony.Mms.MESSAGE_BOX} != ${Telephony.Mms.MESSAGE_BOX_DRAFTS}",
-                arrayOf(threadId.toString()), "${Telephony.Mms.DATE} DESC LIMIT $limit"
+                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID, Telephony.Mms.MESSAGE_TYPE, Telephony.Mms.THREAD_ID),
+                mmsWhere,
+                mmsArgs, "${Telephony.Mms.DATE} DESC" + if (limit < Int.MAX_VALUE) " LIMIT $limit" else ""
             )?.use { c ->
                 // The rows first, then all their parts in one query.
                 val rows = ArrayList<LongArray>()
-                while (c.moveToNext()) rows += longArrayOf(c.getLong(0), c.getLong(1), c.getInt(2).toLong(), c.getInt(3).toLong(), c.getInt(4).toLong(), c.getInt(5).toLong())
+                while (c.moveToNext()) rows += longArrayOf(c.getLong(0), c.getLong(1), c.getInt(2).toLong(), c.getInt(3).toLong(), c.getInt(4).toLong(), c.getInt(5).toLong(), c.getLong(6))
                 val parts = MmsStore.parts(context, rows.map { it[0] })
                 rows.forEach { r ->
                     val (id, date, box, read, sub) = r
@@ -268,7 +306,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     val waiting = r[5].toInt() == 130
                     out += Message(
                         id = id,
-                        threadId = threadId,
+                        threadId = r[6],
                         address = if (box.toInt() == Telephony.Mms.MESSAGE_BOX_INBOX) senderOf(id, date) else "",
                         body = text,
                         date = date * 1000,
@@ -287,8 +325,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     )
                 }
             }
-            out.sortedBy { it.date }.takeLast(limit)
-        }.getOrDefault(emptyList())
+            return out.sortedBy { it.date }.takeLast(limit)
+        }
     }
 
     // Who sent a picture message never changes: read once per message (by its date too, as Android reuses a deleted row's number).
@@ -318,6 +356,9 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
     companion object {
         /** How many messages a conversation reads at a time. */
         const val PAGE = 200
+
+        /** Ids asked at once by [byUid], under SQLite's limit of 999 variables. */
+        private const val BATCH = 400
 
         fun boxOf(type: Int): Box = when (type) {
             Telephony.Sms.MESSAGE_TYPE_INBOX -> Box.RECEIVED

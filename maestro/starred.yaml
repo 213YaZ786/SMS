@@ -1,0 +1,24 @@
+# Starred messages (Zulip's starred flag and narrow): star from the long press menu,
+# find it in the list's search, open its conversation, unstar.
+# Seed first: DebugBulkReceiver --es from +33611223344 --es body "Star-me 4242".
+# Commands from https://docs.maestro.dev/reference/commands-available.
+appId: com.yaz.sms.debug
+---
+- launchApp
+- tapOn: "Amélie Poulain"
+- extendedWaitUntil:
+    visible: "Star-me 4242"
+    timeout: 10000
+- longPressOn: "Star-me 4242"
+- tapOn: "Star"
+- assertVisible: "Starred"
+- back
+- tapOn: "Search"
+- tapOn: "Starred"
+- assertVisible: "Starred messages"
+- assertVisible: "Star-me 4242"
+- tapOn: "Star-me 4242"
+- assertVisible: "Star-me 4242"
+- longPressOn: "Star-me 4242"
+- tapOn: "Unstar"
+- assertNotVisible: "Starred"

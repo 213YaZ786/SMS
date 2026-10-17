@@ -215,6 +215,23 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // Unread toggle; no title on the list, as Google Messages shows none.
     var searching by rememberSaveable { mutableStateOf(false) }
     val canFilter = messages.canRead() && all.isNotEmpty()
+    var starredOpen by rememberSaveable { mutableStateOf(false) }
+    val openRequests: com.yaz.sms.core.sms.OpenRequests = koinInject()
+    if (starredOpen) com.yaz.sms.feature.thread.StarredPage(
+        thread = null,
+        titleOf = { m ->
+            val c = all.firstOrNull { it.threadId == m.threadId }
+            (c?.let { nameOf(it) }) ?: Numbers.format(context, c?.address ?: m.address)
+        },
+        onOpen = { m ->
+            starredOpen = false
+            searching = false
+            query = ""
+            openRequests.showMessage.value = m.uid
+            onOpenThread(m.threadId, all.firstOrNull { it.threadId == m.threadId }?.addresses?.joinToString(",") ?: m.address)
+        },
+        onClose = { starredOpen = false }
+    )
     // The search folded away: the list back at its top, where the keyboard had pushed it from.
     var wasSearching by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(searching || query.isNotEmpty()) {
@@ -267,6 +284,10 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         controls = {
             // In the archive, the search stays on its own line under its name.
             if (archive && canFilter) Filters(query, { query = it }, null, { filter = it })
+            // The starred messages of every conversation, where the search lives (Google Messages).
+            if (!archive && canFilter && (searching || query.isNotEmpty())) Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
+                com.yaz.sms.feature.thread.StarredEntry { starredOpen = true }
+            }
         },
         overlay = {
             // Several conversations taken: their actions in one pill, as AOSP

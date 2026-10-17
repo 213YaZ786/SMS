@@ -195,6 +195,9 @@ private fun ThreadContent(
     val chatChanges by chat.changes.collectAsState()
     val links by chat.links.collectAsState()
     val refs by chat.refs.collectAsState()
+    // The starred messages, by uid (Zulip's starredMessages set, see StarStore).
+    val starStore: com.yaz.sms.data.settings.StarStore = koinInject()
+    val stars by starStore.stars.collectAsState()
 
     // The thread is found from the numbers when only they are known, and the
     // numbers from the thread when only it is known (a notification).
@@ -442,6 +445,36 @@ private fun ThreadContent(
         val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
         runCatching { listState.animateScrollToItem(before + rows.size - 1 - row) }
     }
+    // Opened at a starred message: the conversation scrolls to it once, the way Zulip opens a
+    // conversation anchored at the message tapped in its starred list
+    // (https://github.com/zulip/zulip-flutter/blob/main/lib/widgets/message_list.dart,
+    // tapOpensConversation / initAnchorMessageId). Further back than the page, it reads further.
+    val showUid by requests.showMessage.collectAsState()
+    var starredOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(showUid, rows, thread) {
+        val uid = showUid ?: return@LaunchedEffect
+        if (stars[uid] != thread) return@LaunchedEffect
+        val row = rows.indexOfFirst { it.key == "m/$uid" }
+        if (row < 0) {
+            if (window < 5000) window = 5000
+            return@LaunchedEffect
+        }
+        val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
+        runCatching { listState.animateScrollToItem(before + rows.size - 1 - row) }
+        requests.showMessage.value = null
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { requests.showMessage.value = null } }
+    if (starredOpen) StarredPage(
+        thread = thread,
+        titleOf = { title },
+        onOpen = { m ->
+            starredOpen = false
+            searching = false
+            query = ""
+            requests.showMessage.value = m.uid
+        },
+        onClose = { starredOpen = false }
+    )
     if (silenceOpen && thread != null) SilenceDialog(silencedUntil, onPick = { until ->
         val t = thread ?: return@SilenceDialog
         store.update { s -> s.copy(silenced = if (until == null) s.silenced - t else s.silenced.filterValues { it > System.currentTimeMillis() } + (t to until)) }
@@ -509,7 +542,7 @@ private fun ThreadContent(
             }
 
             androidx.compose.animation.AnimatedVisibility(visible = searching) {
-                SearchBar(query, { query = it }, matches.size, at, onOlder = { if (matches.isNotEmpty()) at = (at + 1) % matches.size }, onNewer = { if (matches.isNotEmpty()) at = (at - 1 + matches.size) % matches.size }, onClose = {
+                SearchBar(query, { query = it }, matches.size, at, onOlder = { if (matches.isNotEmpty()) at = (at + 1) % matches.size }, onNewer = { if (matches.isNotEmpty()) at = (at - 1 + matches.size) % matches.size }, onStarred = if (thread != null) ({ starredOpen = true }) else null, onClose = {
                     searching = false
                     query = ""
                 })
@@ -706,6 +739,8 @@ private fun ThreadContent(
                             }
                         },
                         onDelete = {
+                            // A message that is gone loses its star (zulip-flutter handleDeleteMessageEvent).
+                            starStore.remove(row.message.uid)
                             val gone = messages.deleteMessage(row.message)
                             scope.launch {
                                 gone.join()
@@ -720,6 +755,13 @@ private fun ThreadContent(
                         stranger = row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
                         holdMedia = !prefs.showStrangerMedia && row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
                         highlight = if (searching) query.trim().takeIf { it.isNotEmpty() } else null,
+                        // The last of a run carries its time, unless its status line already says it.
+                        stamp = if (row.stamp && !(mineRow && row.last) && row.message.box != MessageBox.FAILED) clockOf(context, row.message.date) else null,
+                        starred = row.message.uid in stars,
+                        onStar = {
+                            haptics.tick()
+                            starStore.toggle(row.message.uid, row.message.threadId)
+                        },
                         sentEffect = sentEffects[com.yaz.sms.core.sms.Effects.plain(row.message.body)]?.takeIf { (_, at) -> row.message.box != MessageBox.RECEIVED && row.message.date >= at - 10_000 }?.first,
                         onReplay = { e, words -> playing = Triple(e, words, null) },
                         onPeek = { dx ->
@@ -729,13 +771,6 @@ private fun ThreadContent(
                             }
                         }
                     )
-                      // The last of a run carries its time, unless its status line already says it.
-                      if (row.stamp && !(mineRow && row.last) && row.message.box != MessageBox.FAILED) Text(
-                          clockOf(context, row.message.date),
-                          style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant,
-                          modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 4.dp)
-                      )
                       }
                     }
                 }
@@ -984,6 +1019,10 @@ private fun Bubble(
     /** Its media wait for a tap: from a stranger, when Settings asks so. */
     holdMedia: Boolean = stranger,
     highlight: String? = null,
+    /** Its time of day under it, when it ends a run of messages. */
+    stamp: String? = null,
+    starred: Boolean = false,
+    onStar: () -> Unit = {},
     sentEffect: com.yaz.sms.core.sms.Effects.Effect? = null,
     onReplay: (com.yaz.sms.core.sms.Effects.Effect, String) -> Unit = { _, _ -> },
     onPollShown: () -> Unit = {},
@@ -1332,6 +1371,10 @@ private fun Bubble(
                         }.start()
                     } else null,
                     if (m.parts.size == 1) MessageAction(AppIcons.Share, "Share") { shareOutside(context, m.parts.first()) } else null,
+                    // Star and Unstar in the held message's menu, as Google Messages offers
+                    // (https://support.google.com/messages/answer/10930955) and Zulip's StarButton
+                    // flips its label (zulip-flutter lib/widgets/action_sheet.dart).
+                    MessageAction(if (starred) AppIcons.StarOutline else AppIcons.Star, if (starred) "Unstar" else "Star") { onStar() },
                     MessageAction(AppIcons.Info, "Details") { showingDetails = true },
                     if (chatId != null) MessageAction(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin") { onPin(chatId, rich?.pinned != true) } else null,
                     if (m.box == MessageBox.FAILED) MessageAction(AppIcons.Send, "Try again") { onRetry() } else null,
@@ -1433,7 +1476,7 @@ private fun Bubble(
         }
         // Under the user's last message, and under any that failed: where it stands.
         if (mine && (last || m.box == MessageBox.FAILED)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp, end = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 5.dp, end = 14.dp, bottom = 6.dp)) {
                 val (icon, word, failed) = when {
                     rich?.seen == true -> Triple(AppIcons.DoneAll, "Read · " + timeLabel(context, m.date), false)
                     m.box == MessageBox.FAILED -> Triple(AppIcons.Error, if (m.mms) "Not sent" else "Not sent · tap to try again", true)
@@ -1455,9 +1498,25 @@ private fun Bubble(
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(word, style = MaterialTheme.typography.labelSmall, color = tint)
+                if (starred) StarMark(Modifier.padding(start = 6.dp))
+            }
+        } else if (stamp != null || starred) {
+            // The last of a run carries its time, a starred message its star beside it.
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 5.dp, bottom = 6.dp)) {
+                if (stamp != null) Text(stamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (starred) StarMark(Modifier.padding(start = if (stamp != null) 6.dp else 0.dp))
             }
         }
     }
+}
+
+// A starred message's small filled star, drawn when it carries the flag, as Zulip does in
+// https://github.com/zulip/zulip-flutter/blob/main/lib/widgets/message_list.dart
+// (MessageWithPossibleSender: flags.contains(MessageFlag.starred) shows ZulipIcons.star_filled),
+// here beside the time or status line, as Google Messages places it.
+@Composable
+private fun StarMark(modifier: Modifier = Modifier) {
+    Icon(AppIcons.Star, contentDescription = "Starred", tint = MaterialTheme.colorScheme.primary, modifier = modifier.size(12.dp))
 }
 
 /** The text handed to this app's own new message screen, to choose who gets it. */

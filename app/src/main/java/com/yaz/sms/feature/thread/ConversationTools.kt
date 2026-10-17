@@ -154,9 +154,10 @@ fun SilenceDialog(until: Long?, onPick: (Long?) -> Unit, onDismiss: () -> Unit) 
  * how many messages hold the words, and the way from one to the next.
  */
 @Composable
-fun SearchBar(query: String, onQuery: (String) -> Unit, found: Int, at: Int, onOlder: () -> Unit, onNewer: () -> Unit, onClose: () -> Unit) {
+fun SearchBar(query: String, onQuery: (String) -> Unit, found: Int, at: Int, onOlder: () -> Unit, onNewer: () -> Unit, onClose: () -> Unit, onStarred: (() -> Unit)? = null) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
     FloatingPane(shape = CircleShape, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 16.dp, end = 4.dp)) {
             Icon(AppIcons.Search, contentDescription = null, modifier = Modifier.size(20.dp))
@@ -182,6 +183,29 @@ fun SearchBar(query: String, onQuery: (String) -> Unit, found: Int, at: Int, onO
             RoundIcon(AppIcons.ArrowUp, "Older", enabled = found > 0, onClick = onOlder)
             RoundIcon(AppIcons.ArrowDown, "Newer", enabled = found > 0, onClick = onNewer)
             RoundIcon(AppIcons.Close, "Close search", enabled = true, onClick = onClose)
+        }
+    }
+    // The conversation's starred messages, where its search lives: the same pill as the list's Unread.
+    if (onStarred != null && query.isBlank()) StarredEntry(onStarred)
+    }
+}
+
+// The entry to the starred messages: a filter chip (Jetpack Compose,
+// https://developer.android.com/develop/ui/compose/components/chip) made as a pill of glass with
+// a star and its name, drawn as the conversation list's Unread toggle
+// (feature/conversations/ConversationsScreen.kt), placed with the search as Google Messages
+// places its Starred entry (https://support.google.com/messages/answer/10930955).
+@Composable
+internal fun StarredEntry(onClick: () -> Unit) {
+    val haptics = rememberHaptics()
+    FloatingPane(shape = CircleShape, onClick = {
+        haptics.tick()
+        onClick()
+    }) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Icon(AppIcons.Star, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Starred", style = MaterialTheme.typography.labelLarge)
         }
     }
 }
