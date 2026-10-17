@@ -25,8 +25,8 @@ android {
         applicationId = "com.yaz.sms"
         minSdk = 31
         targetSdk = 37
-        versionCode = 40
-        versionName = "0.15.0"
+        versionCode = 41
+        versionName = "0.15.1"
         // Voice messages written out on the phone: whisper.cpp, for 64-bit ARM phones.
         externalNativeBuild {
             cmake {
@@ -129,6 +129,8 @@ dependencies {
     // A message of only emoji shows them big and moving: Lottie by Airbnb (Apache-2.0)
     // playing Google's Noto animated emoji (CC BY 4.0) kept in assets/emoji.
     implementation("com.airbnb.android:lottie-compose:6.7.1")
+    // Material 3 Expressive's shapes (the Sunny star of an empty state): Jetpack graphics-shapes (Apache-2.0).
+    implementation("androidx.graphics:graphics-shapes:1.1.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

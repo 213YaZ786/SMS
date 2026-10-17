@@ -558,6 +558,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     Filter.SPAM -> AppIcons.Report
                     else -> AppIcons.Message
                 },
+                iconShape = if (filter == Filter.SPAM) com.yaz.sms.ui.component.SunnyShape else null,
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
             else -> LazyColumn(

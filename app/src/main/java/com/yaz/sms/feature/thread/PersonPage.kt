@@ -206,13 +206,14 @@ fun PersonPage(
                         // Someone not saved yet: adding them comes first, at hand.
                         val unsaved = !group && address.count(Char::isDigit) >= 3 && contactId == null
                         val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onBackground).size + 2 + (if (unsaved) 1 else 0)
-                        // Cards in two columns, as the rest of the page; the calls in their colour.
+                        // Cards in two columns, as the rest of the page and as wide as it (560 dp, the members and
+                        // the media below); the calls in their colour.
                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                             maxItemsInEachRow = 2,
-                            modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth()
+                            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
                         ) {
                             if (unsaved) Tile(AppIcons.PersonAdd, "Add contact", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary) { NumberActions.addContact(context, address) }
                             calls.phone?.let { Tile(AppIcons.Call, "Call", CallGreen, Color.White, it) }
@@ -236,7 +237,7 @@ fun PersonPage(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                             maxItemsInEachRow = 2,
-                            modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth()
+                            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
                         ) {
                             // An unknown sender first: its messages come back to the list, or leave it again.
                             if (canMark) {
