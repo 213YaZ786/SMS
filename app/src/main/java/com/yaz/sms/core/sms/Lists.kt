@@ -1,9 +1,10 @@
 package com.yaz.sms.core.sms
 
+import com.yaz.sms.data.settings.Trashed
 import com.yaz.sms.data.sms.Conversation
 
 /** Which conversations the list shows. */
-enum class Filter { ALL, UNREAD, UNKNOWN, ARCHIVED }
+enum class Filter { ALL, UNREAD, UNKNOWN, ARCHIVED, TRASH }
 
 /** How the list of conversations is put together, apart from the screen. */
 object Lists {
@@ -13,15 +14,29 @@ object Lists {
     /** Archived: put away after its last message. A newer message brings it back. */
     fun isArchived(c: Conversation, archived: Map<Long, Long>): Boolean = archived[c.threadId]?.let { c.date <= it } == true
 
+    /**
+     * In the Trash: only the messages up to the date of the newest one when it was trashed are
+     * trashed, as AOSP Messaging's DeleteConversationAction deletes up to a cutoffTimestamp
+     * and leaves newer messages (https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/datamodel/action/DeleteConversationAction.java).
+     * A newer message shows the conversation in the inbox again, as Google Messages does.
+     */
+    fun isTrashed(c: Conversation, trashed: Map<Long, Trashed>): Boolean = trashed[c.threadId]?.let { c.date <= it.cutoff } == true
+
     /** The conversations of [filter], pinned ones first, then newest first. */
-    fun shown(all: List<Conversation>, filter: Filter, pinned: List<Long>, archived: Map<Long, Long>, known: (Conversation) -> Boolean = { true }): List<Conversation> {
+    fun shown(
+        all: List<Conversation>, filter: Filter, pinned: List<Long>, archived: Map<Long, Long>,
+        known: (Conversation) -> Boolean = { true },
+        trashed: Map<Long, Trashed> = emptyMap()
+    ): List<Conversation> {
         val kept = all.filter { c ->
+            val gone = isTrashed(c, trashed)
             when (filter) {
-                Filter.ALL -> !isArchived(c, archived)
-                Filter.UNREAD -> c.unread > 0 && !isArchived(c, archived)
+                Filter.ALL -> !isArchived(c, archived) && !gone
+                Filter.UNREAD -> c.unread > 0 && !isArchived(c, archived) && !gone
                 // People not in the contacts: no group, no bank or delivery service.
-                Filter.UNKNOWN -> !c.group && !isService(c) && !known(c) && !isArchived(c, archived)
-                Filter.ARCHIVED -> isArchived(c, archived)
+                Filter.UNKNOWN -> !c.group && !isService(c) && !known(c) && !isArchived(c, archived) && !gone
+                Filter.ARCHIVED -> isArchived(c, archived) && !gone
+                Filter.TRASH -> gone
             }
         }
         return kept.sortedWith(compareByDescending<Conversation> { it.threadId in pinned }.thenByDescending { it.date })
@@ -64,7 +79,7 @@ object Lists {
 
 /** What a swipe on a conversation does, chosen for each side in Settings. */
 enum class SwipeAction(val label: String) {
-    ARCHIVE("Archive"), DELETE("Delete"), READ("Mark as read"), PIN("Pin"), REPLY("Reply"), NONE("Nothing");
+    ARCHIVE("Archive"), DELETE("Move to trash"), READ("Mark as read"), PIN("Pin"), REPLY("Reply"), NONE("Nothing");
 
     companion object {
         fun of(name: String, fallback: SwipeAction): SwipeAction = entries.firstOrNull { it.name == name } ?: fallback

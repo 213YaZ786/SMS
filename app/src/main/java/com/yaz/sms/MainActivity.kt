@@ -25,6 +25,8 @@ class MainActivity : ComponentActivity() {
 
     private val requests: OpenRequests by inject()
     private val settings: SettingsStore by inject()
+    private val trash: com.yaz.sms.data.settings.TrashStore by inject()
+    private val messages: com.yaz.sms.data.sms.Messages by inject()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -32,6 +34,19 @@ class MainActivity : ComponentActivity() {
         // Only on a real launch: a recreated activity already took it.
         if (savedInstanceState == null) receive(intent)
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) { com.yaz.sms.core.sms.Tapbacks.warm() }
+        // Conversations past their 30 days in the Trash are deleted as the app opens, at most once a
+        // day, with no job and no alarm: Fossify Messages' checkAndDeleteOldRecycleBinMessages called
+        // from MainActivity.onCreate (https://github.com/FossifyOrg/Messages, extensions/Context.kt),
+        // Aves deleteExpiredTrash called when the source loads
+        // (https://github.com/deckerst/aves/blob/develop/lib/model/source/media_store_source.dart);
+        // the messages go up to their cutoff as AOSP Messaging's MmsUtils.deleteThread does.
+        if (savedInstanceState == null) lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val gone = trash.sweep(System.currentTimeMillis()) { thread, cutoff -> messages.deleteUpTo(thread, cutoff) }
+            if (gone.isNotEmpty()) {
+                org.koin.java.KoinJavaComponent.get<com.yaz.sms.core.chat.RichChat>(com.yaz.sms.core.chat.RichChat::class.java).prune()
+                settings.update { s -> s.copy(pinned = s.pinned - gone.toSet(), archived = s.archived - gone.toSet()) }
+            }
+        }
         setContent {
             AppSurface { SmsApp() }
         }

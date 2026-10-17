@@ -56,7 +56,8 @@ off in Settings.
 
 ## Licence
 
-MIT. Icons from Google's Material Icons, Apache License 2.0. Picture
+GPL-3.0 (MIT up to 0.14.14). Starred messages port Zulip's, Apache
+License 2.0. Icons from Google's Material Icons, Apache License 2.0. Picture
 messages use code from AOSP Messaging, Apache License 2.0. The encrypted
 chat runs chatmail core (github.com/chatmail/core), Mozilla Public
 License 2.0, downloaded unchanged at build time. Calls use WebRTC's

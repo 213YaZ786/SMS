@@ -61,6 +61,8 @@ import com.yaz.sms.core.sms.Lists
 import com.yaz.sms.data.contacts.PhoneBook
 import com.yaz.sms.data.contacts.PhoneIndex
 import com.yaz.sms.data.settings.SettingsStore
+import com.yaz.sms.data.settings.Trash
+import com.yaz.sms.data.settings.TrashStore
 import com.yaz.sms.data.sms.Conversation
 import com.yaz.sms.data.sms.Messages
 import com.yaz.sms.feature.main.TabFrame
@@ -99,8 +101,13 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         onPauseOrDispose { }
     }
     val all by messages.conversations.collectAsState()
+    // The Trash keeps conversations apart, 30 days (data/settings/TrashStore.kt); a trashed
+    // conversation is not read, warmed, answered or announced while it is there.
+    val trash: TrashStore = koinInject()
+    val trashed by trash.items.collectAsState()
+    val live = remember(all, trashed) { all.filterNot { Lists.isTrashed(it, trashed) } }
     // The newest conversations ready before a tap (their latest messages laid out), while this list shows.
-    val ahead = all.take(6).map { it.threadId to it.date }
+    val ahead = live.take(6).map { it.threadId to it.date }
     androidx.compose.runtime.LaunchedEffect(ahead) {
         ahead.forEach { (t, date) -> if (warmed[t] != date) { com.yaz.sms.feature.thread.ThreadsAhead.forget(t); warmed[t] = date } }
         com.yaz.sms.feature.thread.ThreadsAhead.warm(messages, ahead.map { it.first })
@@ -125,30 +132,38 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         // Someone with no number goes by the name they chose in the chat.
         else if ('@' in c.address) chat.nameFor(c.address) ?: c.address.substringBefore('@')
         else index.find(T9.clean(c.address))?.name
-    // Deleted by a swipe, waiting its few seconds to be taken back.
-    var deleting by remember { mutableStateOf<Conversation?>(null) }
+    // Put in the Trash by a swipe, waiting its few seconds to be taken back.
+    var swiped by remember { mutableStateOf<Conversation?>(null) }
+    // A trashed conversation tapped: it is restored to be read.
+    var restoring by remember { mutableStateOf<Conversation?>(null) }
     val rememberedHaptics = rememberHaptics()
-    val shown = remember(all, filter, settings.pinned, settings.archived, query, index, deleting) {
+    val shown = remember(all, filter, settings.pinned, settings.archived, trashed, query, index) {
         val q = query.trim().lowercase()
-        Lists.shown(all, filter, settings.pinned, settings.archived, known = { c -> index.find(T9.clean(c.address)) != null }).filter { c ->
-            c.threadId != deleting?.threadId &&
-            (q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q))
+        Lists.shown(all, filter, settings.pinned, settings.archived, known = { c -> index.find(T9.clean(c.address)) != null }, trashed = trashed).filter { c ->
+            q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
         }
     }
-    val code = remember(all) { Lists.latestCode(all, System.currentTimeMillis()) }
+    val code = remember(live) { Lists.latestCode(live, System.currentTimeMillis()) }
+    // Conversations the store no longer holds leave the Trash's list.
+    androidx.compose.runtime.LaunchedEffect(all) {
+        if (all.isNotEmpty()) trash.keepThreads(all.mapTo(HashSet()) { it.threadId })
+    }
     var servicesOpen by rememberSaveable { mutableStateOf(false) }
     var peeking by remember { mutableStateOf<Conversation?>(null) }
     // Several conversations taken at once (AOSP Messaging's multi select,
     // MultiSelectActionModeCallback): archive, read, block or delete in one go.
     var picked by remember { mutableStateOf<Set<Long>?>(null) }
-    var confirmDeleteMany by remember { mutableStateOf(false) }
+    var confirmTrashMany by remember { mutableStateOf(false) }
     var confirmBlockMany by remember { mutableStateOf(false) }
+    // Conversations to delete for good, taken from the Trash; emptying says it was all of it.
+    var forever by remember { mutableStateOf<Set<Long>?>(null) }
+    var emptying by remember { mutableStateOf(false) }
     androidx.activity.compose.BackHandler(picked != null) { picked = null }
     // To answer: each card once. The cards already shown are read when the
     // screen comes back, and the ones shown now are kept as seen when it goes.
     var seenAtOpen by remember { mutableStateOf(store.current.answerSeen) }
-    val waiting = remember(all, settings.archived, filter, query, seenAtOpen) {
-        if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.toAnswer(all, settings.archived, seenAtOpen)
+    val waiting = remember(live, settings.archived, filter, query, seenAtOpen) {
+        if (filter != Filter.ALL || query.isNotBlank()) emptyList() else Lists.toAnswer(live, settings.archived, seenAtOpen)
     }
     val shownCards by androidx.compose.runtime.rememberUpdatedState(waiting)
     // A new card to answer comes in on top: in sight when the list was at its top.
@@ -168,6 +183,32 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         }
     }
 
+    // Into the Trash: nothing is deleted, the date of each conversation's newest message is kept
+    // as its cutoff. Same cutoff rule as AOSP Messaging's DeleteConversationAction
+    // (https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/datamodel/action/DeleteConversationAction.java);
+    // the time to keep and the list of what waits are Aves' bin (https://github.com/deckerst/aves/blob/develop/lib/model/source/trash.dart),
+    // and the move is Fossify Messages' moveMessageToRecycleBin (https://github.com/FossifyOrg/Messages, extensions/Context.kt).
+    fun moveToTrash(those: Collection<Conversation>) = trash.trash(those.associate { it.threadId to it.date })
+
+    // Deleted for good, from the Trash: the messages up to each cutoff (Messages.deleteUpTo, AOSP
+    // Messaging's MmsUtils.deleteThread), then the chat side of them and the entry go. An entry
+    // whose deletion the store refused stays, as Aves' deleteExpiredTrash keeps what it could not delete
+    // (https://github.com/deckerst/aves/blob/develop/lib/model/source/trash.dart); one, several or
+    // all of the Trash is Fossify Messages' emptyMessagesRecycleBin and
+    // emptyMessagesRecycleBinForConversation (https://github.com/FossifyOrg/Messages, extensions/Context.kt).
+    fun deleteForever(threads: Set<Long>) {
+        val entries = trashed.filterKeys { it in threads }
+        scope.launch {
+            val gone = entries.filter { (thread, t) -> messages.deleteUpTo(thread, t.cutoff) }.keys
+            if (gone.size < entries.size) rememberedHaptics.reject()
+            if (gone.isEmpty()) return@launch
+            // The chat side of its messages goes too, before their numbers are reused.
+            chat.prune()
+            store.update { s -> s.copy(pinned = s.pinned - gone, archived = s.archived - gone) }
+            trash.forget(gone)
+        }
+    }
+
     // Conversations over the encrypted chat carry a lock in the list.
     val links by chat.links.collectAsState()
     fun encrypted(c: Conversation): Boolean = if (c.group) chat.groupReady(c.addresses) else chat.linkFor(c.address) != null
@@ -180,17 +221,21 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             pinned = c.threadId in settings.pinned,
             onOpen = {
                 val taking = picked
-                if (taking == null) onOpenThread(c.threadId, c.addresses.joinToString(","))
+                // A trashed conversation is restored to be read (Google Messages).
+                if (taking == null && filter == Filter.TRASH) restoring = c
+                else if (taking == null) onOpenThread(c.threadId, c.addresses.joinToString(","))
                 else picked = (if (c.threadId in taking) taking - c.threadId else taking + c.threadId).ifEmpty { null }
             },
             onPeek = {
                 val taking = picked
-                if (taking == null) peeking = c
-                else picked = (if (c.threadId in taking) taking - c.threadId else taking + c.threadId).ifEmpty { null }
+                // In the Trash a long press selects; a glance would read what is not to be read.
+                if (taking == null && filter != Filter.TRASH) peeking = c
+                else picked = (if (taking != null && c.threadId in taking) taking - c.threadId else (taking ?: emptySet()) + c.threadId).ifEmpty { null }
             },
             encrypted = remember(links, c.threadId) { encrypted(c) },
-            left = if (picked != null) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE),
-            right = if (picked != null) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE),
+            left = if (picked != null || filter == Filter.TRASH) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE),
+            right = if (picked != null || filter == Filter.TRASH) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE),
+            note = if (filter == Filter.TRASH) trashed[c.threadId]?.let { Trash.daysLabel(Trash.daysLeft(it, System.currentTimeMillis())) } else null,
             archived = Lists.isArchived(c, settings.archived),
             onSwipe = { action ->
                 when (action) {
@@ -198,7 +243,10 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                         val on = !Lists.isArchived(c, settings.archived)
                         store.update { s -> s.copy(archived = if (on) s.archived + (c.threadId to c.date) else s.archived - c.threadId) }
                     }
-                    com.yaz.sms.core.sms.SwipeAction.DELETE -> deleting = c
+                    com.yaz.sms.core.sms.SwipeAction.DELETE -> {
+                        moveToTrash(listOf(c))
+                        swiped = c
+                    }
                     com.yaz.sms.core.sms.SwipeAction.READ -> messages.markRead(c.threadId)
                     com.yaz.sms.core.sms.SwipeAction.PIN -> store.update { s -> s.copy(pinned = if (c.threadId in s.pinned) s.pinned - c.threadId else s.pinned + c.threadId) }
                     com.yaz.sms.core.sms.SwipeAction.REPLY -> onOpenThread(c.threadId, c.addresses.joinToString(","))
@@ -210,6 +258,9 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     }
 
     val archive = filter == Filter.ARCHIVED
+    val inTrash = filter == Filter.TRASH
+    // The Archive and the Trash are two places side by side, away from the inbox.
+    val apart = archive || inTrash
     // One line at the top (the user, 2026-10-16): the search behind a magnifier that
     // opens into the field, as Material 3's search from an app bar icon, and one
     // Unread toggle; no title on the list, as Google Messages shows none.
@@ -224,11 +275,15 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             (c?.let { nameOf(it) }) ?: Numbers.format(context, c?.address ?: m.address)
         },
         onOpen = { m ->
-            starredOpen = false
-            searching = false
-            query = ""
-            openRequests.showMessage.value = m.uid
-            onOpenThread(m.threadId, all.firstOrNull { it.threadId == m.threadId }?.addresses?.joinToString(",") ?: m.address)
+            val there = all.firstOrNull { it.threadId == m.threadId }
+            if (there != null && Lists.isTrashed(there, trashed)) restoring = there
+            else {
+                starredOpen = false
+                searching = false
+                query = ""
+                openRequests.showMessage.value = m.uid
+                onOpenThread(m.threadId, there?.addresses?.joinToString(",") ?: m.address)
+            }
         },
         onClose = { starredOpen = false }
     )
@@ -240,21 +295,22 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         wasSearching = open
     }
     TabFrame(
-        title = if (archive) "Archive" else null,
+        title = if (archive) "Archive" else if (inTrash) "Trash" else null,
         onOpenSettings = onOpenSettings,
-        // Top left, facing Settings: the archive, and back from it.
+        // Top left, facing Settings: the archive, and back from it or from the Trash.
         leading = {
             com.yaz.sms.ui.component.FloatingAction(
-                if (archive) AppIcons.ArrowBack else AppIcons.Archive,
-                if (archive) "Back to messages" else "Archive",
+                if (apart) AppIcons.ArrowBack else AppIcons.Archive,
+                if (apart) "Back to messages" else "Archive",
                 {
                     searching = false
                     query = ""
-                    filter = if (archive) Filter.ALL else Filter.ARCHIVED
+                    picked = null
+                    filter = if (apart) Filter.ALL else Filter.ARCHIVED
                 }
             )
         },
-        center = if (archive || !canFilter) null else ({
+        center = if (apart || !canFilter) null else ({
             androidx.compose.animation.AnimatedContent(searching || query.isNotEmpty(), label = "search") { open ->
                 if (open) SearchPill(
                     query, { query = it }, hint = "Search",
@@ -282,10 +338,14 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             }
         }),
         controls = {
-            // In the archive, the search stays on its own line under its name.
-            if (archive && canFilter) Filters(query, { query = it }, null, { filter = it })
+            // In the archive and the Trash, the search stays on its own line under the name, with
+            // the way from one to the other beside it.
+            if (apart && canFilter) Filters(query, { query = it }, filter, listOf(Filter.ARCHIVED to "Archive", Filter.TRASH to "Trash")) {
+                picked = null
+                filter = it
+            }
             // The starred messages of every conversation, where the search lives (Google Messages).
-            if (!archive && canFilter && (searching || query.isNotEmpty())) Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
+            if (!apart && canFilter && (searching || query.isNotEmpty())) Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
                 com.yaz.sms.feature.thread.StarredEntry { starredOpen = true }
             }
         },
@@ -306,27 +366,37 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
                         com.yaz.sms.ui.component.FloatingAction(AppIcons.Close, "Leave the selection", { picked = null })
                         Text("${taken.size}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 6.dp))
-                        com.yaz.sms.ui.component.FloatingAction(AppIcons.DoneAll, "Mark read", {
-                            rememberedHaptics.done()
-                            those.forEach { messages.markRead(it.threadId) }
-                            picked = null
-                        })
-                        com.yaz.sms.ui.component.FloatingAction(if (archive) AppIcons.Unarchive else AppIcons.Archive, if (archive) "Unarchive" else "Archive", {
-                            rememberedHaptics.done()
-                            store.update { s ->
-                                s.copy(archived = if (archive) s.archived - taken else s.archived + those.map { it.threadId to it.date })
-                            }
-                            picked = null
-                        })
-                        if (those.isNotEmpty() && those.all { !it.group && it.address.count(Char::isDigit) >= 3 } && NumberActions.canBlock(context))
-                            com.yaz.sms.ui.component.FloatingAction(AppIcons.Block, "Block", { confirmBlockMany = true })
-                        com.yaz.sms.ui.component.FloatingAction(AppIcons.Delete, "Delete", { confirmDeleteMany = true }, tint = MaterialTheme.colorScheme.error)
+                        if (inTrash) {
+                            // Restore or delete for good what was taken (Google Messages' Trash).
+                            com.yaz.sms.ui.component.FloatingAction(AppIcons.RestoreFromTrash, "Restore", {
+                                rememberedHaptics.done()
+                                trash.restore(taken)
+                                picked = null
+                            })
+                            com.yaz.sms.ui.component.FloatingAction(AppIcons.DeleteForever, "Delete forever", { forever = taken }, tint = MaterialTheme.colorScheme.error)
+                        } else {
+                            com.yaz.sms.ui.component.FloatingAction(AppIcons.DoneAll, "Mark read", {
+                                rememberedHaptics.done()
+                                those.forEach { messages.markRead(it.threadId) }
+                                picked = null
+                            })
+                            com.yaz.sms.ui.component.FloatingAction(if (archive) AppIcons.Unarchive else AppIcons.Archive, if (archive) "Unarchive" else "Archive", {
+                                rememberedHaptics.done()
+                                store.update { s ->
+                                    s.copy(archived = if (archive) s.archived - taken else s.archived + those.map { it.threadId to it.date })
+                                }
+                                picked = null
+                            })
+                            if (those.isNotEmpty() && those.all { !it.group && it.address.count(Char::isDigit) >= 3 } && NumberActions.canBlock(context))
+                                com.yaz.sms.ui.component.FloatingAction(AppIcons.Block, "Block", { confirmBlockMany = true })
+                            com.yaz.sms.ui.component.FloatingAction(AppIcons.Delete, "Move to trash", { confirmTrashMany = true }, tint = MaterialTheme.colorScheme.error)
+                        }
                     }
                 }
             }
-            // A conversation deleted by a swipe can be taken back for a few seconds.
+            // A conversation put in the Trash by a swipe can be taken back for a few seconds.
             androidx.compose.animation.AnimatedVisibility(
-                visible = deleting != null,
+                visible = swiped != null,
                 enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),
                 exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -335,12 +405,35 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             ) {
                 FloatingPane(shape = CircleShape) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 20.dp, end = 6.dp, top = 4.dp, bottom = 4.dp)) {
-                        Text("Conversation deleted", style = MaterialTheme.typography.bodyLarge)
+                        Text("Moved to Trash", style = MaterialTheme.typography.bodyLarge)
                         Spacer(Modifier.width(8.dp))
                         androidx.compose.material3.TextButton(onClick = {
                             rememberedHaptics.done()
-                            deleting = null
+                            swiped?.let { trash.restore(listOf(it.threadId)) }
+                            swiped = null
                         }) { Text("Undo") }
+                    }
+                }
+            }
+            // In the Trash with nothing taken: all of it at once.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = inTrash && picked == null && query.isBlank() && shown.isNotEmpty(),
+                enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
+                    .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
+                    .padding(bottom = 16.dp)
+            ) {
+                FloatingPane(shape = CircleShape) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
+                        androidx.compose.material3.TextButton(onClick = {
+                            rememberedHaptics.done()
+                            trash.restore(shown.map { it.threadId })
+                        }) { Text("Restore all") }
+                        androidx.compose.material3.TextButton(onClick = {
+                            emptying = true
+                            forever = shown.mapTo(HashSet()) { it.threadId }
+                        }) { Text("Empty trash", color = MaterialTheme.colorScheme.error) }
                     }
                 }
             }
@@ -359,15 +452,17 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     query.isNotBlank() -> "Nothing found"
                     filter == Filter.UNREAD -> "All read"
                     filter == Filter.ARCHIVED -> "Nothing in the archive"
+                    filter == Filter.TRASH -> "Trash is empty"
                     filter == Filter.UNKNOWN -> "No one unknown"
                     else -> "No messages yet"
                 },
                 message = when {
                     query.isNotBlank() -> "No name, number or message matches \"$query\"."
                     filter == Filter.ALL -> "Write to someone with the button below."
+                    filter == Filter.TRASH -> "Conversations you trash stay here 30 days."
                     else -> "Archive a conversation with a long press; it comes back with its next message."
                 },
-                icon = AppIcons.Message,
+                icon = if (filter == Filter.TRASH) AppIcons.Delete else AppIcons.Message,
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
             else -> LazyColumn(
@@ -401,35 +496,63 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         }
     }
 
-    // The conversation deleted by a swipe goes after a few seconds, unless taken back.
-    deleting?.let { c ->
+    // The offer to take back a swiped conversation lasts a few seconds.
+    swiped?.let { c ->
         androidx.compose.runtime.LaunchedEffect(c.threadId) {
             kotlinx.coroutines.delay(5_000)
-            val gone = messages.delete(c.threadId)
-            scope.launch {
-                gone.join()
-                chat.prune()
-            }
-            store.update { s -> s.copy(pinned = s.pinned - c.threadId, archived = s.archived - c.threadId) }
-            deleting = null
+            swiped = null
         }
     }
 
-    if (confirmDeleteMany) {
+    if (confirmTrashMany) {
         val taken = picked.orEmpty()
         com.yaz.sms.ui.component.ZoneAlertDialog(
-            onDismissRequest = { confirmDeleteMany = false },
-            title = { Text("Delete ${taken.size} conversations?") },
+            onDismissRequest = { confirmTrashMany = false },
+            title = { Text(if (taken.size == 1) "Move this conversation to Trash?" else "Move ${taken.size} conversations to Trash?") },
+            text = { Text("They are kept 30 days.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    confirmTrashMany = false
+                    rememberedHaptics.done()
+                    moveToTrash(all.filter { it.threadId in taken })
+                    picked = null
+                }) { Text("Move to trash") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmTrashMany = false }) { Text("Cancel") } }
+        )
+    }
+    // Deleting for good asks first (Google Messages), one conversation, several, or all of the Trash.
+    forever?.let { threads ->
+        val close = { forever = null; emptying = false }
+        com.yaz.sms.ui.component.ZoneAlertDialog(
+            onDismissRequest = close,
+            title = { Text(if (emptying) "Empty Trash?" else if (threads.size == 1) "Delete this conversation forever?" else "Delete ${threads.size} conversations forever?") },
             text = { Text("All their messages are deleted from this phone.") },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
-                    confirmDeleteMany = false
-                    rememberedHaptics.done()
-                    taken.forEach { messages.delete(it) }
+                    close()
+                    rememberedHaptics.firm()
+                    deleteForever(threads)
                     picked = null
-                }) { Text("Delete") }
+                }) { Text(if (emptying) "Empty trash" else "Delete forever") }
             },
-            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmDeleteMany = false }) { Text("Cancel") } }
+            dismissButton = { androidx.compose.material3.TextButton(onClick = close) { Text("Cancel") } }
+        )
+    }
+    // A trashed conversation is restored before it is read.
+    restoring?.let { c ->
+        com.yaz.sms.ui.component.ZoneAlertDialog(
+            onDismissRequest = { restoring = null },
+            title = { Text(nameOf(c) ?: Numbers.format(context, c.address)) },
+            text = { Text("Restore this conversation to read it.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    rememberedHaptics.done()
+                    trash.restore(listOf(c.threadId))
+                    restoring = null
+                }) { Text("Restore") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { restoring = null }) { Text("Cancel") } }
         )
     }
     if (confirmBlockMany) {
@@ -469,22 +592,14 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 picked = setOf(c.threadId)
                 peeking = null
             },
-            onDelete = {
-                val gone = messages.delete(c.threadId)
-                // The chat side of its messages goes too, before their numbers are reused.
-                scope.launch {
-                    gone.join()
-                    chat.prune()
-                }
-                store.update { s -> s.copy(pinned = s.pinned - c.threadId, archived = s.archived - c.threadId) }
-            }
+            onDelete = { moveToTrash(listOf(c)) }
         )
     }
 }
 
-/** The search and, as in Dialer's calls, All and Unread on the same line, in glass. */
+/** The search and, as in Dialer's calls, the places to switch between on the same line, in glass (the Archive and the Trash). */
 @Composable
-private fun Filters(query: String, onQuery: (String) -> Unit, filter: Filter?, onFilter: (Filter) -> Unit) {
+private fun Filters(query: String, onQuery: (String) -> Unit, filter: Filter, chips: List<Pair<Filter, String>>, onFilter: (Filter) -> Unit) {
     val haptics = rememberHaptics()
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
@@ -492,7 +607,7 @@ private fun Filters(query: String, onQuery: (String) -> Unit, filter: Filter?, o
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
         SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).weight(1f, fill = false).fillMaxWidth(), floating = true)
-        if (filter != null) listOf(Filter.ALL to "All", Filter.UNREAD to "Unread").forEach { (value, label) ->
+        chips.forEach { (value, label) ->
             FloatingPane(
                 shape = CircleShape,
                 accent = filter == value,
@@ -583,6 +698,8 @@ private fun ConversationLine(
     left: com.yaz.sms.core.sms.SwipeAction,
     right: com.yaz.sms.core.sms.SwipeAction,
     archived: Boolean,
+    /** In the Trash, what remains of the 30 days, in the place of the time. */
+    note: String? = null,
     onSwipe: (com.yaz.sms.core.sms.SwipeAction) -> Unit,
     /** Several at once (AOSP Messaging's multi select): null out of it, else whether this one is taken. */
     selected: Boolean? = null
@@ -744,7 +861,7 @@ private fun ConversationLine(
                         }
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            timeLabel(context, c.date),
+                            note ?: timeLabel(context, c.date),
                             style = MaterialTheme.typography.labelMedium,
                             color = if (unread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )

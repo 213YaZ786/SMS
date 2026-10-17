@@ -1,0 +1,27 @@
+# Trash kept 30 days (Google Messages' Trash): trash a conversation from its long press, find it in
+# Trash with its days left, tap it (restore to read), restore it.
+# Seed first: DebugBulkReceiver --es from +33611223344 --es body "Trash-me 4242".
+# Commands from https://docs.maestro.dev/reference/commands-available.
+appId: com.yaz.sms.debug
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "Amélie Poulain"
+    timeout: 10000
+- longPressOn: "Amélie Poulain"
+- tapOn: "Trash"
+- assertVisible: "Move this conversation to Trash?"
+- tapOn: "Move to trash"
+- assertNotVisible: "Amélie Poulain"
+- tapOn: "Archive"
+- tapOn: "Trash"
+- assertVisible: "Amélie Poulain"
+- assertVisible: "30 days left"
+- assertVisible: "Restore all"
+- assertVisible: "Empty trash"
+- tapOn: "Amélie Poulain"
+- assertVisible: "Restore this conversation to read it."
+- tapOn: "Restore"
+- assertVisible: "Trash is empty"
+- tapOn: "Back to messages"
+- assertVisible: "Amélie Poulain"

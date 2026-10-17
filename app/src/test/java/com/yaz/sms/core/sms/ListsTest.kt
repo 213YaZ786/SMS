@@ -1,5 +1,6 @@
 package com.yaz.sms.core.sms
 
+import com.yaz.sms.data.settings.Trashed
 import com.yaz.sms.data.sms.Conversation
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -24,6 +25,39 @@ class ListsTest {
         val archived = mapOf(1L to now - 2 * hour, 2L to now - 2 * hour)
         assertEquals(listOf(1L), Lists.shown(all, Filter.ALL, emptyList(), archived).map { it.threadId })
         assertEquals(listOf(2L), Lists.shown(all, Filter.ARCHIVED, emptyList(), archived).map { it.threadId })
+    }
+
+    // The cutoff rule of AOSP Messaging's DeleteConversationAction (messages up to the cutoff are
+    // the trashed ones, newer ones stay), shown to the list as Google Messages does.
+    @Test
+    fun aTrashedConversationLeavesTheInboxAndShowsInTheTrash() {
+        val all = listOf(c(1, 1), c(2, 5), c(3, 3))
+        val trashed = mapOf(2L to Trashed(now, now - 5 * hour))
+        assertEquals(listOf(1L, 3L), Lists.shown(all, Filter.ALL, emptyList(), emptyMap(), trashed = trashed).map { it.threadId })
+        assertEquals(listOf(2L), Lists.shown(all, Filter.TRASH, emptyList(), emptyMap(), trashed = trashed).map { it.threadId })
+        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.TRASH, emptyList(), emptyMap()).map { it.threadId })
+    }
+
+    @Test
+    fun aNewMessageBringsATrashedConversationBackToTheInbox() {
+        val trashed = mapOf(2L to Trashed(now, now - 5 * hour))
+        val newer = c(2, 0)
+        assertEquals(listOf(2L), Lists.shown(listOf(newer), Filter.ALL, emptyList(), emptyMap(), trashed = trashed).map { it.threadId })
+        assertEquals(emptyList<Long>(), Lists.shown(listOf(newer), Filter.TRASH, emptyList(), emptyMap(), trashed = trashed).map { it.threadId })
+        assertEquals(true, Lists.isTrashed(c(2, 5), trashed))
+        assertEquals(false, Lists.isTrashed(newer, trashed))
+    }
+
+    @Test
+    fun aTrashedConversationIsNeitherUnreadNorUnknownNorArchivedNorAnswered() {
+        val all = listOf(c(1, 1, unread = 2), c(2, 2, unread = 1, address = "0699999999"))
+        val trashed = mapOf(1L to Trashed(now, now - hour), 2L to Trashed(now, now - 2 * hour))
+        val archived = mapOf(1L to now - hour)
+        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.UNREAD, emptyList(), emptyMap(), trashed = trashed).map { it.threadId })
+        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.UNKNOWN, emptyList(), emptyMap(), trashed = trashed).map { it.threadId })
+        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.ARCHIVED, emptyList(), archived, trashed = trashed).map { it.threadId })
+        // Restored, the archived one is back in the archive.
+        assertEquals(listOf(1L), Lists.shown(all, Filter.ARCHIVED, emptyList(), archived).map { it.threadId })
     }
 
     @Test

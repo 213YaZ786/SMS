@@ -5,6 +5,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -195,7 +196,7 @@ internal fun Peek(
                         Action(if (archived) AppIcons.Unarchive else AppIcons.Archive, if (archived) "Unarchive" else "Archive") { onArchive(!archived); onDismiss() }
                         if (!c.group && c.address.count(Char::isDigit) >= 3) Action(AppIcons.Call, "Call") { NumberActions.dial(context, c.address); onDismiss() }
                         Action(AppIcons.SelectAll, "Select") { onSelect() }
-                        Action(AppIcons.Delete, "Delete") { confirmDelete = true }
+                        Action(AppIcons.Delete, "Trash") { confirmDelete = true }
                     }
                 }
             }
@@ -203,15 +204,15 @@ internal fun Peek(
         if (confirmDelete) {
             ZoneAlertDialog(
                 onDismissRequest = { confirmDelete = false },
-                title = { Text("Delete this conversation?") },
-                text = { Text("All messages with $title are deleted from this phone.") },
+                title = { Text("Move this conversation to Trash?") },
+                text = { Text("Messages with $title are kept 30 days.") },
                 confirmButton = {
                     TextButton(onClick = {
                         confirmDelete = false
                         haptics.firm()
                         onDelete()
                         onDismiss()
-                    }) { Text("Delete") }
+                    }) { Text("Move to trash") }
                 },
                 dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
             )
@@ -222,11 +223,20 @@ internal fun Peek(
 @Composable
 private fun Action(icon: ImageVector, label: String, onClick: () -> Unit) {
     val haptics = rememberHaptics()
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        FloatingPane(shape = CircleShape, onClick = {
-            haptics.tick()
-            onClick()
-        }, modifier = Modifier.size(48.dp)) {
+    // The icon and its name are one target, as Material 3's NavigationBarItem (AndroidX
+    // https://android.googlesource.com/platform/frameworks/support/+/refs/heads/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/NavigationBar.kt):
+    // a touch on the word acts too.
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = label) {
+                haptics.tick()
+                onClick()
+            }
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+    ) {
+        FloatingPane(shape = CircleShape, modifier = Modifier.size(48.dp)) {
             Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
         }
         Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))

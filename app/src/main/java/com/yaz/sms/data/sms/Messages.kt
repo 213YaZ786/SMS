@@ -340,10 +340,31 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
         scope.launch(Dispatchers.IO) { markRead(context, threadId) }
     }
 
-    fun delete(threadId: Long) = run {
-        scope.launch(Dispatchers.IO) {
-            runCatching { context.contentResolver.delete(Uri.withAppendedPath(Telephony.Threads.CONTENT_URI, threadId.toString()), null, null) }
-        }
+    /**
+     * Deletes the messages of [threadId] sent or received up to [cutoffMillis], the newer ones stay:
+     * AOSP Messaging's DeleteConversationAction (cutoffTimestamp, "to prevent us deleting new
+     * messages") and MmsUtils.deleteThread(threadId, cutOffTimestampInMillis), which deletes
+     * "date <= cutoff" in the thread
+     * (https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/datamodel/action/DeleteConversationAction.java
+     * and .../sms/MmsUtils.java). AOSP hands one selection to the threads URI, and a picture
+     * message keeps its date in seconds (Telephony.Mms.DATE), so SMS and MMS are deleted each
+     * with the cutoff in its own unit. True when both deletions went through, false when the store
+     * refused or this app is not the default SMS app (Android then ignores a write silently).
+     */
+    suspend fun deleteUpTo(threadId: Long, cutoffMillis: Long): Boolean = withContext(Dispatchers.IO) {
+        if (Telephony.Sms.getDefaultSmsPackage(context) != context.packageName) return@withContext false
+        runCatching {
+            val thread = threadId.toString()
+            context.contentResolver.delete(
+                Telephony.Sms.CONTENT_URI, "${Telephony.Sms.THREAD_ID} = ? AND ${Telephony.Sms.DATE} <= ?",
+                arrayOf(thread, cutoffMillis.toString())
+            )
+            context.contentResolver.delete(
+                Telephony.Mms.CONTENT_URI, "${Telephony.Mms.THREAD_ID} = ? AND ${Telephony.Mms.DATE} <= ?",
+                arrayOf(thread, (cutoffMillis / 1000).toString())
+            )
+            true
+        }.getOrDefault(false)
     }
 
     fun deleteMessage(message: Message) = run {
