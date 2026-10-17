@@ -19,6 +19,8 @@ import kotlin.math.max
  * Material 3 Expressive's "Sunny": an eight pointed star with round points. Its polygon from
  * androidx (Apache-2.0), compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/MaterialShapes.kt
  * (sunny(): RoundedPolygon.star(8, innerRadius .8, CornerRounding(.15))); material3 1.4.0 has no MaterialShapes yet.
+ *
+ * Shared across the apps of this base: edit Modules/shared, then run sync.sh.
  */
 val SunnyShape: Shape by lazy {
     RoundedPolygonShape(RoundedPolygon.star(numVerticesPerRadius = 8, innerRadius = .8f, rounding = CornerRounding(radius = .15f)))
