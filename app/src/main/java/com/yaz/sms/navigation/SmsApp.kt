@@ -199,7 +199,11 @@ private fun Main(onOpenSettings: () -> Unit, onOpenThread: (Long, String) -> Uni
     val store: SettingsStore = koinInject()
     var showWelcome by rememberSaveable { mutableStateOf(!store.current.welcomeSeen) }
     val settings by store.settings.collectAsState()
-    if (!showWelcome && !BuildConfig.DEBUG) UpdatePrompt(settings.updates, BuildConfig.VERSION_NAME)
+    // The update installs when the user leaves the app, never during a call, a sending or a voice message.
+    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    if (!showWelcome && !BuildConfig.DEBUG) {
+        UpdatePrompt(settings.updates, BuildConfig.VERSION_NAME, busy = { com.yaz.sms.core.update.AppBusy.busy(appContext) })
+    }
 
     val look = LocalGlass.current
     val backdrop = rememberGlassBackdrop()

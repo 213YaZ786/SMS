@@ -77,6 +77,9 @@ class VoiceTake(context: Context) {
         start()
     }
 
+    // Recording counts as busy for the update (AppBusy, update kit contract) until finish().
+    private var counted = true.also { com.yaz.sms.core.update.AppBusy.voiceStarted() }
+
     /** The voice's loudness now, 0 to 1. */
     fun level(): Float = runCatching { (recorder.maxAmplitude / 22_000f).coerceIn(0f, 1f) }.getOrDefault(0f)
 
@@ -85,6 +88,10 @@ class VoiceTake(context: Context) {
         val long = System.currentTimeMillis() - started >= MIN_MS
         runCatching { recorder.stop() }
         recorder.release()
+        if (counted) {
+            counted = false
+            com.yaz.sms.core.update.AppBusy.voiceStopped()
+        }
         if (keep && long && file.length() > 0) return file
         file.delete()
         return null
@@ -150,6 +157,11 @@ fun VoiceTile(part: MmsPart, mine: Boolean) {
     // Bars that do not change from one look to the next: drawn from the file's own bytes.
     val shape by produceState(List(28) { 0.4f }, part.uri) { value = withContext(Dispatchers.IO) { barsOf(context, part.uri) } }
     DisposableEffect(Unit) { onDispose { player?.release() } }
+    // Playing counts as busy for the update (AppBusy), while it plays and not after.
+    DisposableEffect(playing) {
+        if (playing) com.yaz.sms.core.update.AppBusy.voiceStarted()
+        onDispose { if (playing) com.yaz.sms.core.update.AppBusy.voiceStopped() }
+    }
     LaunchedEffect(playing) {
         while (playing) {
             val p = player ?: break
