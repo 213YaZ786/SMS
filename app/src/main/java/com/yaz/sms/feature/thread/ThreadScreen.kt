@@ -89,7 +89,6 @@ import androidx.compose.ui.unit.dp
 import com.yaz.sms.core.dial.NumberActions
 import com.yaz.sms.core.dial.Numbers
 import com.yaz.sms.core.dial.T9
-import com.yaz.sms.core.link.LinkCleaner
 import com.yaz.sms.core.sms.Codes
 import com.yaz.sms.core.sms.MessageNotifier
 import com.yaz.sms.core.sms.SmsSender
@@ -1170,8 +1169,9 @@ private fun Bubble(
             com.yaz.sms.core.link.LinkCheck.check(url, stranger) { host -> com.yaz.sms.core.link.BadHosts.listed(context, host) }
         }.filterValues { it != null }.mapValues { it.value!! }
     }
-    var risky by remember { mutableStateOf<Pair<String, com.yaz.sms.core.link.LinkCheck.Verdict>?>(null) }
-    risky?.let { (url, verdict) -> RiskyLinkDialog(url, verdict, onDismiss = { risky = null }) }
+    // A tapped link asks first: where it goes, what it may hide (LinkAsk), whatever the sender.
+    var tapped by remember { mutableStateOf<Pair<String, com.yaz.sms.core.link.LinkCheck.Verdict?>?>(null) }
+    tapped?.let { (url, verdict) -> LinkAsk(url, verdict, onDismiss = { tapped = null }) }
     val found = MaterialTheme.colorScheme.tertiary
     // A mention stands out: in the accent on a received bubble, in bold on one's own (the accent is its ground).
     val mentionStyle = remember(mine, accent) {
@@ -1180,8 +1180,8 @@ private fun Bubble(
     }
     val text = remember(said, accent, checks, highlight, mentionWords, mentionStyle) {
         marked(linked(said, accent, danger, checks, mentionWords, mentionStyle) { url, verdict ->
-            haptics.reject()
-            risky = url to verdict
+            if (verdict != null) haptics.reject() else haptics.tick()
+            tapped = url to verdict
         }, highlight, found)
     }
     // A message that just came in drops into place, a ring of glass spreading from it.
@@ -1506,7 +1506,7 @@ private fun Bubble(
         checks.entries.firstOrNull()?.let { (url, verdict) ->
             SuspiciousCapsule(several = checks.size > 1, dangerous = checks.values.any { it.risk == com.yaz.sms.core.link.LinkCheck.Risk.LISTED }) {
                 haptics.reject()
-                risky = url to verdict
+                tapped = url to verdict
             }
         }
         // A place: its card, opened in the user's map app; else a sound link: its preview on a tap, never fetched by itself.
@@ -1707,9 +1707,9 @@ private fun linkOf(found: String): String? {
 
 /**
  * The text with its styles (*bold*, _italic_, __underline__, ~struck~, the
- * marks taken away) and its web links tappable, each opened cleaned of
- * trackers; a doubtful one ([checks]) is in the caution tone and asks
- * first ([onRisky]).
+ * marks taken away) and its web links tappable: a tap asks first ([onLink],
+ * the link sheet shows where it goes) and a doubtful link ([checks]) is in
+ * the caution tone.
  */
 private fun linked(
     body: String,
@@ -1718,7 +1718,7 @@ private fun linked(
     checks: Map<String, com.yaz.sms.core.link.LinkCheck.Verdict> = emptyMap(),
     mentions: List<String> = emptyList(),
     mentionStyle: SpanStyle = SpanStyle(),
-    onRisky: (String, com.yaz.sms.core.link.LinkCheck.Verdict) -> Unit = { _, _ -> }
+    onLink: (String, com.yaz.sms.core.link.LinkCheck.Verdict?) -> Unit = { _, _ -> }
 ): AnnotatedString = buildAnnotatedString {
     val read = com.yaz.sms.core.sms.Markup.read(body)
     append(read.text)
@@ -1740,8 +1740,7 @@ private fun linked(
     while (matcher.find()) {
         val url = linkOf(matcher.group()) ?: continue
         val verdict = checks[url]
-        if (verdict == null) addLink(LinkAnnotation.Url(LinkCleaner.clean(url), sound), matcher.start(), matcher.end())
-        else addLink(LinkAnnotation.Clickable(url, doubtful) { onRisky(url, verdict) }, matcher.start(), matcher.end())
+        addLink(LinkAnnotation.Clickable(url, if (verdict == null) sound else doubtful) { onLink(url, verdict) }, matcher.start(), matcher.end())
     }
 }
 
@@ -1811,37 +1810,36 @@ private fun SuspiciousCapsule(several: Boolean, dangerous: Boolean, onClick: () 
 internal fun cautionColor(): Color = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.error, Color(0xFFE8890C), 0.4f)
 
 /**
- * A link not recognized, tapped: where it goes, and to open it only when
- * the sender is trusted; Cancel first, opening it is a choice made on purpose.
+ * A link tapped, in a message or in the shared tab: the links kit's sheet (LinkSheet, after URLCheck's
+ * intermediary, https://github.com/TrianguloY/URLCheck) shows where it goes and what it may hide, with
+ * SMS's own finding ([verdict]: a site on the public list, a bare address, a lookalike, a stranger's
+ * shortened link) beside the shared ones. Open goes out through Android's view intent, as the links
+ * always did here. Expand is not offered: SMS has no redirect resolver (the reader kit's), so a
+ * shortened link is not followed.
  */
 @Composable
-internal fun RiskyLinkDialog(url: String, verdict: com.yaz.sms.core.link.LinkCheck.Verdict, onDismiss: () -> Unit) {
+internal fun LinkAsk(url: String, verdict: com.yaz.sms.core.link.LinkCheck.Verdict?, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val host = remember(url) { runCatching { java.net.URI(url).host }.getOrNull() ?: url }
-    val listed = verdict.risk == com.yaz.sms.core.link.LinkCheck.Risk.LISTED
-    ZoneAlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(AppIcons.Warning, contentDescription = null, tint = if (listed) MaterialTheme.colorScheme.error else cautionColor()) },
-        title = { Text(if (listed) "Dangerous link" else "Unrecognized link") },
-        text = {
-            Column {
-                Text(
-                    if (listed) "This site is on a public list of dangerous sites." else "Open it only if you trust the sender.",
-                    style = MaterialTheme.typography.bodyLarge
+    val own = remember(verdict) {
+        listOfNotNull(
+            verdict?.let {
+                com.yaz.sms.core.link.LinkWarnings.Warning(
+                    com.yaz.sms.core.link.LinkWarnings.Kind.OTHER,
+                    if (it.risk == com.yaz.sms.core.link.LinkCheck.Risk.LISTED) com.yaz.sms.core.link.LinkWarnings.Level.DANGER else com.yaz.sms.core.link.LinkWarnings.Level.CAUTION,
+                    it.words
                 )
-                Spacer(Modifier.height(8.dp))
-                Text("Goes to $host", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        )
+    }
+    com.yaz.sms.core.link.LinkSheet(
+        url = url,
+        onDismiss = onDismiss,
+        onOpen = { clean ->
+            runCatching {
+                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(clean)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
             }
         },
-        confirmButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } },
-        dismissButton = {
-            BoldButton(onClick = {
-                onDismiss()
-                runCatching {
-                    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(LinkCleaner.clean(url))).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-                }
-            }) { Text("Open", color = if (listed) MaterialTheme.colorScheme.error else cautionColor()) }
-        }
+        extraWarnings = own
     )
 }
 

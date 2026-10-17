@@ -17,6 +17,8 @@ class SmsApplication : Application() {
         // The isolated picture decoder is a process of this app with no
         // rights at all: nothing of the app starts there.
         if (android.os.Process.isIsolated()) return
+        // The links kit's catalogs (ClearURLs rules, public suffixes) from the assets, for LinkCleaner and the link sheet.
+        com.yaz.sms.core.link.ClearUrls.attach(this)
         // The Contacts app's private names, asked when a number has none in Android's contacts.
         com.yaz.sms.core.dial.PrivateNames.init(this)
         startKoin {

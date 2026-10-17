@@ -37,7 +37,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yaz.sms.core.link.LinkCleaner
@@ -62,7 +61,9 @@ internal fun LinkPreviewCapsule(url: String) {
     var failed by remember(clean) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
-    val uri = LocalUriHandler.current
+    // The card opens the link through the link sheet, as a tap on it in the message does (LinkAsk).
+    var asking by remember(clean) { mutableStateOf(false) }
+    if (asking) LinkAsk(clean, null) { asking = false }
     AnimatedContent(
         targetState = preview,
         transitionSpec = { (fadeIn() + scaleIn(initialScale = 0.92f)) togetherWith fadeOut() },
@@ -118,7 +119,7 @@ internal fun LinkPreviewCapsule(url: String) {
                 modifier = Modifier.padding(top = 4.dp).widthIn(max = 300.dp),
                 onClick = {
                     haptics.tick()
-                    runCatching { uri.openUri(shown.url) }
+                    asking = true
                 }
             ) {
                 Column {

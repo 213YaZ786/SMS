@@ -70,4 +70,7 @@ License 2.0, downloaded unchanged at build time. Calls use WebRTC's
 Android library by webrtc-sdk, MIT License. Doodles background: Material Symbols by Google, Apache 2.0. Big emoji and screen effects move with Google's Noto Animated Emoji, CC BY 4.0,
 played by Lottie (Airbnb), Apache License 2.0. Voice messages are
 written out by whisper.cpp (ggml-org), MIT License, built from its
-source, with OpenAI's Whisper model, MIT License, fetched on request.
+source, with OpenAI's Whisper model, MIT License, fetched on request. Links are checked before they open, after
+[URLCheck](https://github.com/TrianguloY/URLCheck) (CC BY 4.0); the tracking rules are
+[ClearURLs](https://github.com/ClearURLs/Rules) (LGPL-3.0), the site names come from the
+[Public Suffix List](https://publicsuffix.org) (MPL-2.0).

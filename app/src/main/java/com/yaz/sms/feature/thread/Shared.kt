@@ -49,7 +49,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.yaz.sms.core.mms.ContentType
 import com.yaz.sms.core.link.LinkCheck
-import com.yaz.sms.core.link.LinkCleaner
 import com.yaz.sms.core.mms.MmsPart
 import com.yaz.sms.core.sms.Codes
 import com.yaz.sms.core.sms.Finds
@@ -229,8 +228,9 @@ internal fun PictureCell(part: MmsPart, modifier: Modifier, held: Boolean = fals
 internal fun Line(item: Item) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
-    var risky by remember { mutableStateOf<Pair<String, LinkCheck.Verdict>?>(null) }
-    risky?.let { (url, verdict) -> RiskyLinkDialog(url, verdict) { risky = null } }
+    // A tapped link asks first, what it may hide beside where it goes (LinkAsk).
+    var asked by remember { mutableStateOf<Pair<String, LinkCheck.Verdict?>?>(null) }
+    asked?.let { (url, verdict) -> LinkAsk(url, verdict) { asked = null } }
     val day = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).format(Instant.ofEpochMilli(item.date).atZone(ZoneId.systemDefault()))
     val (icon, title, under) = when (item) {
         is Item.File -> Triple(AppIcons.AttachFile, item.part.name ?: "File", day)
@@ -247,8 +247,7 @@ internal fun Line(item: Item) {
             haptics.tick()
             when (item) {
                 is Item.File -> openOutside(context, item.part)
-                is Item.Link -> if (item.doubtful != null) risky = item.url to item.doubtful
-                    else runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(LinkCleaner.clean(item.url))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                is Item.Link -> asked = item.url to item.doubtful
                 is Item.Code -> copy(context, "Code", item.code, sensitive = true)
                 is Item.Parcel -> copy(context, "Parcel", item.number)
                 is Item.Meeting -> runCatching {
