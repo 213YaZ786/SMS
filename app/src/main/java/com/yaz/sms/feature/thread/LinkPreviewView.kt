@@ -149,7 +149,7 @@ internal fun LinkPreviewCapsule(url: String) {
  * own map app there. Nothing is fetched.
  */
 @Composable
-internal fun PlaceCard(place: com.yaz.sms.core.sms.Places.Place) {
+internal fun PlaceCard(place: com.yaz.sms.core.sms.Places.Place, subtitle: String? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val haptics = rememberHaptics()
     val drop = remember { Animatable(-14f) }
@@ -173,7 +173,8 @@ internal fun PlaceCard(place: com.yaz.sms.core.sms.Places.Place) {
             Column {
                 Text(place.label ?: "Shared place", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "%.5f, %.5f".format(java.util.Locale.ROOT, place.lat, place.lon) + " · Open in maps",
+                    // A live location says how fresh it is instead of the coordinates (LiveCard).
+                    subtitle?.let { "$it · Open in maps" } ?: ("%.5f, %.5f".format(java.util.Locale.ROOT, place.lat, place.lon) + " · Open in maps"),
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }

@@ -33,4 +33,7 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     fun setCheckLinks(on: Boolean) = store.update { it.copy(checkLinks = on) }
     fun setTranscribeVoice(on: Boolean) = store.update { it.copy(transcribeVoice = on) }
     fun setShareCard(on: Boolean) = store.update { it.copy(shareCard = on) }
+    // The same setter as the ones above; the engine takes it through RichChat.applyReadReceipts.
+    // Delta Chat Android: ChatsPreferenceFragment.ReadReceiptToggleListener.
+    fun setReadReceipts(on: Boolean) = store.update { it.copy(readReceipts = on) }
 }

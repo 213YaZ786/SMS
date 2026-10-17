@@ -259,6 +259,25 @@ private fun ThreadContent(
     // A group goes over the encrypted chat when each of its members does.
     val encrypted = remember(links, people) { linked != null || (group && chat.groupReady(people)) }
     LaunchedEffect(encrypted, chatChanges, shown) { if (encrypted && shown) chat.markSeen(people) }
+    // Live location (Delta Chat Android's location streaming): ours, while shared, and what the others share.
+    val locator: com.yaz.sms.core.chat.LiveLocator = koinInject()
+    val liveEnd = if (encrypted && !left) chat.liveChat(people)?.let { prefs.liveUntil[it] } else null
+    val locationChanges by chat.locations.collectAsState()
+    val chatReady by chat.ready.collectAsState()
+    val liveSpots by androidx.compose.runtime.produceState(emptyList<RichChat.LiveSpot>(), encrypted, people, locationChanges, chatReady) {
+        value = if (encrypted && chatReady) chat.liveSpots(people) else emptyList()
+    }
+    // "Updated N min ago" and the end of the sharing, read again every half minute while the screen is in front.
+    var liveNow by remember { mutableStateOf(System.currentTimeMillis()) }
+    val liveShown = liveEnd != null || liveSpots.isNotEmpty()
+    LaunchedEffect(shown, liveShown, locationChanges) {
+        liveNow = System.currentTimeMillis()
+        while (shown && liveShown) {
+            delay(30_000)
+            liveNow = System.currentTimeMillis()
+        }
+    }
+    val sharingLive = liveEnd != null && liveEnd > liveNow
     // Mentions in a group (Signal's): the others offered when @ is typed; "@Name" is the mention, in the chat and over SMS.
     val mentionSetting = remember { com.yaz.sms.core.chat.MentionSetting.of(context) }
     val mentionsOff by mentionSetting.off.collectAsState()
@@ -636,6 +655,11 @@ private fun ThreadContent(
                 usedFor = newest?.uid
                 restore = reply
             }
+            // The live location of the others, then ours while shared (a pill with Stop), over the field.
+            liveSpots.take(3).forEach { LiveCard(it, group, liveNow) }
+            if (sharingLive && liveEnd != null) LivePill(liveEnd) {
+                scope.launch { if (locator.stopSharing(people)) haptics.done() else haptics.reject() }
+            }
             // A group the user left can be read, not written to (Delta Chat's chat that can no longer send).
             if (left) FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Text(
@@ -674,6 +698,7 @@ private fun ThreadContent(
                 },
                 effectsCarried = encrypted,
                 onPoll = if (encrypted) ({ pollOpen = true }) else null,
+                onLive = if (encrypted) ({ seconds -> scope.launch { if (locator.share(people, seconds)) haptics.done() else haptics.reject() } }) else null,
                 onSend = { typed, sub, attachments ->
                     if (people.isEmpty()) return@Composer false
                     queue(Pending(System.nanoTime(), typed, sub, attachments, quote))

@@ -109,6 +109,17 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     checked = settings.shareCard,
                     onChange = viewModel::setShareCard
                 )
+                // Delta Chat Android's pref_read_receipts and its explanation, in the engine's meaning
+                // (Config::MdnsEnabled: receipts "sent and requested"): off, none are sent and none are seen.
+                if (settings.richChat) SwitchRow(
+                    title = "Send read receipts",
+                    summary = "Off: you stop seeing others' receipts too.",
+                    checked = settings.readReceipts,
+                    onChange = { on ->
+                        viewModel.setReadReceipts(on)
+                        chat.applyReadReceipts(on)
+                    }
+                )
                 if (settings.richChat) SettingRow(
                     title = "Relays",
                     summary = when {

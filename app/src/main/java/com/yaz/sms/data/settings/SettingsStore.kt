@@ -90,7 +90,14 @@ data class Settings(
     /** The speech model chosen; empty: the one recommended for this phone. */
     val speechModel: String = "",
     /** The user's name, photo and look go with the encrypted chat's messages (Android's "Me" contact). */
-    val shareCard: Boolean = true
+    val shareCard: Boolean = true,
+    /**
+     * Read receipts of the encrypted chat: sent, and so seen from the others (the engine's
+     * mdns_enabled, on by default; Delta Chat Android's pref_read_receipts, see ReadReceipts).
+     */
+    val readReceipts: Boolean = true,
+    /** Live locations being shared: the engine's chat id to when the sharing ends (ms). The engine keeps the period itself. */
+    val liveUntil: Map<Int, Long> = emptyMap()
 )
 
 /**

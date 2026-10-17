@@ -35,6 +35,7 @@ enum class Drop(val icon: ImageVector, val label: String) {
     FILE(AppIcons.AttachFile, "File"),
     CONTACT(AppIcons.ContactPage, "Contact"),
     PLACE(AppIcons.Place, "Place"),
+    LIVE(AppIcons.MyLocation, "Live location"),
     POLL(AppIcons.Poll, "Poll")
 }
 
@@ -46,7 +47,7 @@ private val ButtonSize = 52.dp
  * [open] tells the composer to veil its field while they are out.
  */
 @Composable
-fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop.entries.filter { it != Drop.POLL }, onPick: (Drop) -> Unit) {
+fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop.entries.filter { it != Drop.POLL && it != Drop.LIVE }, onPick: (Drop) -> Unit) {
     val haptics = rememberHaptics()
     val density = LocalDensity.current
     val turn by animateFloatAsState(if (open) 45f else 0f, spring(dampingRatio = 0.5f, stiffness = 500f), label = "turn")

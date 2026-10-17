@@ -244,6 +244,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                 if (chosen.isBlank()) engine.call("init_transports", account, null)
                 else engine.call("add_transport_from_qr", account, "dcaccount:$chosen")
             }
+            // Read receipts as the user chose, at each start (Delta Chat Android keeps it in the engine's config).
+            engine.call("set_config", account, ReadReceipts.KEY, ReadReceipts.value(settings.current.readReceipts))
             engine.call("start_io", account)
             _ready.value = true
             scope.launch {
@@ -680,6 +682,8 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                 if (chat != null && timer != null) timers[chat] = timer
             }
             "ReactionsChanged", "IncomingReaction" -> if (msgId != null) readReactions(msgId)
+            // Someone else's location moved (our own set_location raises it with the user as contact): only the cards read again.
+            "LocationChanged" -> if (event.data["contactId"]?.jsonPrimitive?.intOrNull != SELF) _locations.value++
         }
         // Only what a screen shows: the engine's own logs and connections redrew every open conversation.
         if (event.kind in SHOWN) _changes.value++
@@ -787,6 +791,108 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             _changes.value++
             true
         }.getOrDefault(false)
+    }
+
+    /**
+     * The read receipts switch given to a running engine; a stopped one takes it at its next start.
+     * Delta Chat Android, preferences/ChatsPreferenceFragment.java ReadReceiptToggleListener
+     * (set_config "mdns_enabled"); the call is deltachat-jsonrpc api.rs set_config.
+     */
+    fun applyReadReceipts(on: Boolean) {
+        if (!_ready.value || !engine.running) return
+        scope.launch { runCatching { engine.call("set_config", account, ReadReceipts.KEY, ReadReceipts.value(on)) } }
+    }
+
+    private val _locations = MutableStateFlow(0)
+
+    /** Bumped when another person's location changed (the engine's LocationChanged event, jsonrpc types/events.rs v2.62.0). */
+    val locations: StateFlow<Int> = _locations.asStateFlow()
+
+    /** The chat a conversation goes over when it does: one proven number, or a group of them (as markSeen finds it). */
+    fun liveChat(phones: List<String>): Int? = when {
+        phones.size == 1 -> linkFor(phones[0])?.chatId
+        groupReady(phones) -> _groups.value[groupKey(phones)]?.chatId
+        else -> null
+    }
+
+    /**
+     * Shares the live location with a conversation for [seconds]: the engine keeps the period
+     * (api.rs send_locations_to_chat); the end is kept here to show it. Delta Chat Android,
+     * geolocation/LocationStreamingService.startSharing and DcLocationManager.shareLocation.
+     */
+    suspend fun shareLocation(phones: List<String>, seconds: Int): Boolean {
+        if (seconds <= 0 || groupOf(phones)?.left == true) return false
+        if (!start()) return false
+        val chatId = chatOf(phones) ?: return false
+        return runCatching {
+            engine.call("send_locations_to_chat", account, chatId, seconds.toLong())
+            settings.update { it.copy(liveUntil = it.liveUntil + (chatId to LiveLocation.endsAt(System.currentTimeMillis(), seconds))) }
+        }.isSuccess
+    }
+
+    /** Stops the sharing with a conversation (send_locations_to_chat with 0 seconds); Delta Chat Android LocationStreamingService.stopSharing. */
+    suspend fun stopLocation(phones: List<String>): Boolean {
+        val chatId = liveChat(phones) ?: return false
+        if (!start()) return false
+        return runCatching {
+            engine.call("send_locations_to_chat", account, chatId, 0L)
+            settings.update { it.copy(liveUntil = it.liveUntil - chatId) }
+        }.isSuccess
+    }
+
+    /**
+     * A reading of the phone handed to the engine, which sends it to the chats sharing; false once
+     * none shares any more (api.rs set_location). Delta Chat Android, DcLocationManager.writeDcLocationUpdateMessage
+     * and LocationStreamingService.publishAndWrite.
+     */
+    suspend fun pushLocation(lat: Double, lon: Double, accuracy: Double): Boolean {
+        // A number that cannot be a place never reaches the engine (and NaN is not JSON).
+        if (!LiveLocation.valid(lat, lon) || !_ready.value) return true
+        val metres = if (accuracy.isFinite() && accuracy >= 0) accuracy else 0.0
+        val keep = runCatching { engine.call("set_location", lat, lon, metres).jsonPrimitive.boolean() }.getOrDefault(true)
+        if (!keep && settings.current.liveUntil.isNotEmpty()) settings.update { it.copy(liveUntil = emptyMap()) }
+        return keep
+    }
+
+    /**
+     * Whether a sharing is still going on, asked of the engine (api.rs is_sending_locations_to_chat);
+     * the ones that ended or were stopped elsewhere leave the list. Delta Chat Android, LocationStreamingService.isAnySharingActive.
+     */
+    suspend fun syncLive(): Boolean {
+        val kept = settings.current.liveUntil
+        if (kept.isEmpty() || !enabled || !start()) return false
+        val now = System.currentTimeMillis()
+        val live = kept.filter { (chatId, until) ->
+            until > now && runCatching { engine.call("is_sending_locations_to_chat", account, chatId).jsonPrimitive.boolean() }.getOrDefault(false)
+        }
+        if (live != kept) settings.update { it.copy(liveUntil = live) }
+        return live.isNotEmpty()
+    }
+
+    /** Every sharing stopped (api.rs stop_sending_locations), as Delta Chat Android does when the location permission is gone (LocationStreamingService.ensureRunning). */
+    suspend fun stopAllLocations() {
+        if (start()) runCatching { engine.call("stop_sending_locations") }
+        settings.update { it.copy(liveUntil = emptyMap()) }
+    }
+
+    /** A person's latest shared point, with the name they go by in the chat. */
+    data class LiveSpot(val name: String, val lat: Double, val lon: Double, val at: Long)
+
+    /**
+     * What the others of a conversation share now: the newest valid point of each, read from the
+     * engine (api.rs get_locations for the chat, over the last 24 hours, the longest sharing).
+     */
+    suspend fun liveSpots(phones: List<String>): List<LiveSpot> {
+        val chatId = liveChat(phones) ?: return emptyList()
+        if (!_ready.value) return emptyList()
+        val now = System.currentTimeMillis()
+        return runCatching {
+            val answer = engine.call("get_locations", account, chatId, null, now / 1000 - LiveLocation.WINDOW_S, 0L)
+            LiveLocation.latest(answer, now).map { s ->
+                val name = runCatching { engine.call("get_contact", account, s.contactId).jsonObject["displayName"]?.jsonPrimitive?.contentOrNull }.getOrNull().orEmpty()
+                LiveSpot(name.take(60), s.lat, s.lon, s.at)
+            }
+        }.getOrDefault(emptyList())
     }
 
     /** What the user has seen, so the other side gets its read receipt. */

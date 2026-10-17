@@ -24,6 +24,7 @@ val appModule = module {
     single { Messages(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)) }
     single { OpenRequests() }
     single { RichChat(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.IO), get()) }
+    single { com.yaz.sms.core.chat.LiveLocator(androidContext(), get(), CoroutineScope(SupervisorJob() + Dispatchers.IO)) }
     single { com.yaz.sms.core.voice.Transcriber(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.IO), get()) }
     viewModelOf(::SettingsViewModel)
 }

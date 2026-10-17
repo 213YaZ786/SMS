@@ -28,6 +28,7 @@ object ChatLife : Application.ActivityLifecycleCallbacks, KoinComponent {
 
     private val chat: RichChat by inject()
     private val settings: SettingsStore by inject()
+    private val locator: LiveLocator by inject()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var app: Application
 
@@ -47,11 +48,18 @@ object ChatLife : Application.ActivityLifecycleCallbacks, KoinComponent {
     }
 
     override fun onActivityStarted(activity: Activity) {
-        if (shown++ == 0) wake()
+        if (shown++ == 0) {
+            wake()
+            // A live location being shared is read again while SMS shows, and only then.
+            locator.resume()
+        }
     }
 
     override fun onActivityStopped(activity: Activity) {
-        if (--shown == 0) settle()
+        if (--shown == 0) {
+            locator.pause()
+            settle()
+        }
     }
 
     /** On screen: the chat connects and fetches what came in while the app was closed. */

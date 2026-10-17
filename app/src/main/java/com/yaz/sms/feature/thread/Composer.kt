@@ -89,6 +89,8 @@ fun Composer(
     effectsCarried: Boolean = false,
     /** Over the encrypted chat: the + also offers a poll. */
     onPoll: (() -> Unit)? = null,
+    /** Over the encrypted chat: the + also offers a live location; the seconds to share for are given. */
+    onLive: ((Int) -> Unit)? = null,
     editing: String? = null,
     onCancelEdit: () -> Unit = {},
     onEdit: (String) -> Unit = {},
@@ -191,6 +193,11 @@ fun Composer(
     }
     val askPlace = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
         if (granted.values.any { it }) placeHere() else haptics.reject()
+    }
+    // The live location's durations; the location permission is asked first, as for a place (HereNow).
+    var choosingLive by remember { mutableStateOf(false) }
+    val askLive = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        if (granted.values.any { it }) choosingLive = true else haptics.reject()
     }
     var arcOpen by remember { mutableStateOf(false) }
     // A voice message being recorded, and how far the finger has slid to cancel or to lock.
@@ -307,7 +314,14 @@ fun Composer(
                 }
             }
         }
-        val drops = Drop.entries.filter { (it != Drop.POLL || onPoll != null) && (it != Drop.EFFECTS || onSendEffect != null) }
+        if (choosingLive && onLive != null) LiveDurationSheet(
+            onPick = { seconds ->
+                choosingLive = false
+                onLive(seconds)
+            },
+            onDismiss = { choosingLive = false }
+        )
+        val drops = Drop.entries.filter { (it != Drop.POLL || onPoll != null) && (it != Drop.EFFECTS || onSendEffect != null) && (it != Drop.LIVE || onLive != null) }
         // What the + offers, above the bar, on the + side: round buttons of glass.
         androidx.compose.animation.AnimatedVisibility(
             visible = arcOpen && take == null,
@@ -352,6 +366,8 @@ fun Composer(
                         Drop.POLL -> onPoll?.invoke()
                         Drop.PLACE -> if (com.yaz.sms.core.sms.HereNow.allowed(context)) placeHere()
                             else askPlace.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+                        Drop.LIVE -> if (com.yaz.sms.core.sms.HereNow.allowed(context)) choosingLive = true
+                            else askLive.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
                     }
                 }
             }
