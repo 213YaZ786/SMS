@@ -11,6 +11,7 @@ import android.provider.ContactsContract
 import androidx.core.content.ContextCompat
 import com.yaz.sms.core.common.writeTextAtomically
 import com.yaz.sms.core.dial.ContactLook
+import com.yaz.sms.core.dial.Sisters
 import com.yaz.sms.data.settings.SettingsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -148,7 +149,8 @@ object Cards {
  */
 object ContactsCards {
 
-    private val authorities = listOf("com.yaz.contacts.cards", "com.yaz.contacts.debug.cards")
+    /** Asked only where the provider is the Contacts app's own (Sisters). */
+    private const val AUTHORITY = "com.yaz.contacts.cards"
 
     fun offer(context: Context, number: String, card: String, photo: ByteArray?): Boolean =
         call(context, "offer", Bundle().apply {
@@ -164,7 +166,7 @@ object ContactsCards {
         })
 
     private fun call(context: Context, method: String, extras: Bundle): Boolean {
-        for (authority in authorities) {
+        for (authority in Sisters.usable(context, AUTHORITY)) {
             val answer = runCatching { context.contentResolver.call(Uri.parse("content://$authority"), method, null, extras) }.getOrNull() ?: continue
             return answer.getBoolean("ok")
         }

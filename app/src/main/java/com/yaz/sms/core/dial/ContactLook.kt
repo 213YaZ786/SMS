@@ -48,9 +48,6 @@ object ContactLook {
         val style: String = "classic"
     )
 
-    /** The Contacts app, release first. */
-    private val packages = listOf("com.yaz.contacts", "com.yaz.contacts.debug")
-
     fun of(context: Context, contactId: Long): Look? {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return null
         return runCatching {
@@ -120,7 +117,8 @@ object ContactLook {
     /** Opens the person's page in the Contacts app; false when that app is not on the phone. */
     fun openInContacts(context: Context, contactId: Long): Boolean {
         val uri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contactId.toString())
-        for (pkg in packages) {
+        // The Contacts app, release first, and only when it is ours.
+        for (pkg in Sisters.packages("contacts").filter { Sisters.isOurs(context, it) }) {
             try {
                 context.startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 return true

@@ -21,11 +21,13 @@ object NumberActions {
     /** The phone app with [number] ready: the user presses Call there. */
     fun dial(context: Context, number: String) = open(context, Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)))
 
-    /** Dialer's page of the calls with [number]: it only shows them. */
-    fun showCalls(context: Context, number: String) = open(context, callsIntent(number))
+    /** Dialer's page of the calls with [number]: it only shows them, and only our Dialer is asked. */
+    fun showCalls(context: Context, number: String) {
+        Sisters.explicit(context, callsIntent(number))?.let { open(context, it) }
+    }
 
-    /** Whether Dialer is there to show the calls with a number. */
-    fun canShowCalls(context: Context): Boolean = callsIntent("0").resolveActivity(context.packageManager) != null
+    /** Whether our Dialer is there to show the calls with a number. */
+    fun canShowCalls(context: Context): Boolean = Sisters.explicit(context, callsIntent("0")) != null
 
     private fun callsIntent(number: String) = Intent(ACTION_SHOW_NUMBER, Uri.fromParts("tel", number, null))
 

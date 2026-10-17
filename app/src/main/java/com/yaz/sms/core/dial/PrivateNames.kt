@@ -22,7 +22,8 @@ object PrivateNames {
     /** A private person in the lists: a name and a look, nothing to open in Android's contacts. */
     const val CONTACT_ID = -2L
 
-    private val authorities = listOf("com.yaz.contacts.private", "com.yaz.contacts.debug.private")
+    /** Asked only where the provider is the Contacts app's own (Sisters). */
+    private const val AUTHORITY = "com.yaz.contacts.private"
     private val known = ConcurrentHashMap<String, Private>()
     private val missed = ConcurrentHashMap<String, Long>()
     /** Asked in the background right now: not asked twice, and not a miss yet. */
@@ -65,7 +66,7 @@ object PrivateNames {
     }
 
     private fun ask(context: Context, number: String, key: String): Private? {
-        for (authority in authorities) {
+        for (authority in Sisters.usable(context, AUTHORITY)) {
             val answer = runCatching {
                 context.contentResolver.call(Uri.parse("content://$authority"), "lookup", null, Bundle().apply { putString("number", number) })
             }.getOrNull() ?: continue

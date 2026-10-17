@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.telephony.SmsManager
 import com.yaz.sms.core.common.writeTextAtomically
+import com.yaz.sms.core.dial.ContactLookup
 import com.yaz.sms.core.dial.T9
 import com.yaz.sms.core.mms.Attachment
 import com.yaz.sms.core.mms.ContentType
@@ -13,6 +14,7 @@ import com.yaz.sms.core.mms.MmsStore
 import com.yaz.sms.core.sms.SmsSender
 import com.yaz.sms.core.sms.SmsStore
 import com.yaz.sms.core.sms.MessageNotifier
+import com.yaz.sms.data.settings.KnownStore
 import com.yaz.sms.data.settings.SettingsStore
 import java.io.File
 import java.security.SecureRandom
@@ -507,23 +509,40 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     /** An invite from [from]: joined, and its nonce sent back over the chat as proof. */
     suspend fun onHello(from: String, hello: Hello) {
-        if (!enabled || !start()) return
+        if (!enabled) return
+        val known = _links.value[key(from)]
+        // A stranger's invite is ignored (Signal's message requests, InviteGate): nothing started, nothing sent.
+        if (!withContext(Dispatchers.IO) { invitedBy(from, known) }) return
+        if (!start()) return
         // The key exchange takes a few round trips over the relay.
         ChatLife.hold(2 * 60 * 1000L)
         val chat = runCatching { engine.call("secure_join", account, hello.link()).jsonPrimitive.int }.getOrNull() ?: return
         // The proof waits until the keys are exchanged: relays take only encrypted mail.
         proofs[chat] = hello.nonce
-        val known = _links.value[key(from)]
         if (known?.proven == true && known.address != hello.address) {
             // An SMS sender can be faked: a proven number never moves on an
             // invite alone. Our own nonce goes to the number; whoever really
             // holds it proves it, and only then does the chat change.
-            hello(from, force = true)
+            answer(from, known)
             return
         }
         save(from) { (it ?: ChatLink(from)).copy(address = hello.address, chatId = chat) }
         // Our own invite back, so they can prove this side too.
-        if (known == null || known.myNonce.isEmpty()) hello(from, force = true)
+        if (known == null || known.myNonce.isEmpty()) answer(from, known)
+    }
+
+    /** Whether the invite of [from] is acted on: InviteGate, with Android's contacts, the numbers marked known and the messages sent. */
+    private fun invitedBy(from: String, known: ChatLink?): Boolean {
+        val marked = runCatching { org.koin.core.context.GlobalContext.get().get<KnownStore>().known.value }.getOrDefault(emptySet())
+        return InviteGate.accepted(
+            asked = InviteGate.asked(known), marked = marked, address = from,
+            contact = { ContactLookup.isContact(context, from) }, sent = { InviteGate.sentTo(context, from) }
+        )
+    }
+
+    /** Our invite back to [from], at most once a day per number. */
+    private suspend fun answer(from: String, known: ChatLink?) {
+        if (InviteGate.mayAnswer(known, System.currentTimeMillis())) hello(from, force = true)
     }
 
     /** Our invite link, for the Contacts app to hand over in person (phones touched); null when the chat is off. */

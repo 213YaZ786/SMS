@@ -6,6 +6,7 @@ import android.telecom.DisconnectCause
 import androidx.core.content.ContextCompat
 import com.yaz.sms.core.chat.CallSignal
 import com.yaz.sms.core.chat.RichChat
+import com.yaz.sms.core.dial.Sisters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,9 +29,10 @@ object CallLine : KoinComponent {
     @Volatile private var state = ""
     private var watching: Job? = null
 
-    /** Dialer shows the calls of this line; without it, they are not offered. */
+    /** Our Dialer, the phone app, shows the calls of this line; without it, they are not offered. */
     fun dialerShowsCalls(context: Context): Boolean =
-        context.getSystemService(android.telecom.TelecomManager::class.java)?.defaultDialerPackage?.let { it.startsWith("com.dialer.app") || it.startsWith("com.yaz.dialer") } == true
+        context.getSystemService(android.telecom.TelecomManager::class.java)?.defaultDialerPackage
+            ?.let { it in Sisters.packages("dialer") && Sisters.isOurs(context, it) } == true
 
     /** Signals of the chat for the call in progress: its answer, its end. */
     fun watch() {
