@@ -68,11 +68,22 @@ class SavedDoorTest {
         shadowOf(keyguard).setIsDeviceLocked(true)
         assertNull(door.call("origins", null, asked(1)))
         shadowOf(keyguard).setIsDeviceLocked(false)
-        val answer = door.call("origins", null, asked(1))
-        assertNotNull(answer)
-        assertEquals(0, answer!!.getLongArray("ids")!!.size)
-        // Another method is no method of this door.
-        assertNull(door.call("other", null, asked(1)))
+        // The door finds the phone book in Koin, started here with the one module it needs
+        // (https://insert-koin.io/docs/reference/koin-core/start-koin/, startKoin and stopKoin).
+        org.koin.core.context.startKoin {
+            modules(org.koin.dsl.module {
+                single { com.yaz.sms.data.contacts.PhoneBook(context, kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())) }
+            })
+        }
+        try {
+            val answer = door.call("origins", null, asked(1))
+            assertNotNull(answer)
+            assertEquals(0, answer!!.getLongArray("ids")!!.size)
+            // Another method is no method of this door.
+            assertNull(door.call("other", null, asked(1)))
+        } finally {
+            org.koin.core.context.stopKoin()
+        }
     }
 
     @Test
@@ -118,9 +129,45 @@ class SavedDoorTest {
 
     @Test
     fun `a sender without a contact is named by its number and never by nothing`() {
-        // Robolectric starts with READ_CONTACTS refused: no contact is found, the number is written the local way.
-        val name = SavedDoor.nameOf(context)
+        // No contact is found, the number is written the local way.
+        val name = SavedDoor.nameOf(context, emptyList())
         assertTrue(name("+33612345678").isNotBlank())
         assertTrue(name("12345").isNotBlank())
+    }
+
+    // The contacts as PhoneBook gives them and PhoneIndex finds them, the way ThreadScreen builds its title
+    // (PhoneIndex(contacts).find(T9.clean(to))); the case is the one found live on the emulator, two contacts
+    // fitting one number by its last nine digits (https://developer.android.com/reference/android/provider/ContactsContract.PhoneLookup).
+    private fun contact(id: Long, name: String, number: String) =
+        com.yaz.sms.core.dial.PhoneEntry(id, name, number, com.yaz.sms.core.dial.T9.clean(number), null, false)
+
+    private val carmen = contact(1, "Carmen García López", "+34 612 345 678")
+    private val fatima = contact(2, "Fatima Zahra El Idrissi", "+212 6 12 34 56 78")
+
+    @Test
+    fun `a number fitting two contacts by its last digits is named as the conversation title names it`() {
+        val sender = "+33612345678"
+        for (book in listOf(listOf(carmen, fatima), listOf(fatima, carmen))) {
+            val title = com.yaz.sms.data.contacts.PhoneIndex(book).find(com.yaz.sms.core.dial.T9.clean(sender))!!.name
+            assertEquals(title, SavedDoor.nameOf(context, book)(sender))
+        }
+        // The book's order decides, as the title's does: the first of the two.
+        assertEquals("Carmen García López", SavedDoor.nameOf(context, listOf(carmen, fatima))(sender))
+        assertEquals("Fatima Zahra El Idrissi", SavedDoor.nameOf(context, listOf(fatima, carmen))(sender))
+    }
+
+    @Test
+    fun `an exact number wins over a fit by the last digits, in any order`() {
+        for (book in listOf(listOf(carmen, fatima), listOf(fatima, carmen))) {
+            val name = SavedDoor.nameOf(context, book)
+            assertEquals("Fatima Zahra El Idrissi", name("+212612345678"))
+            assertEquals("Carmen García López", name("+34612345678"))
+        }
+    }
+
+    @Test
+    fun `a number no contact fits is written as a number`() {
+        val name = SavedDoor.nameOf(context, listOf(carmen, fatima))("+33699999999")
+        assertTrue(name.any(Char::isDigit))
     }
 }

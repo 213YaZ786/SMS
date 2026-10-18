@@ -7,8 +7,13 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import com.yaz.sms.core.dial.ContactLookup
 import com.yaz.sms.core.dial.Numbers
+import com.yaz.sms.core.dial.PhoneEntry
+import com.yaz.sms.core.dial.PrivateNames
+import com.yaz.sms.core.dial.T9
+import com.yaz.sms.data.contacts.PhoneBook
+import com.yaz.sms.data.contacts.PhoneIndex
+import kotlinx.coroutines.flow.first
 
 /**
  * What the Files app may ask about the media this app saved: who sent each one and which
@@ -33,8 +38,25 @@ class SavedDoor : ContentProvider() {
         if (context.getSystemService(KeyguardManager::class.java)?.isDeviceLocked != false) return null
         return answer(
             SavedMedia.of(context).origins(idsOf(extras)) { SavedMedia.existing(context.contentResolver, it) },
-            nameOf(context)
+            nameOf(context, contactsNow())
         )
+    }
+
+    /**
+     * The phone book's entries, as the conversation screen reads them. The process may have been started
+     * by this very call, before any screen asked the book to load: asked once here and waited for on this
+     * binder thread, as InviteProvider waits for the engine, with runBlocking and withTimeoutOrNull
+     * (https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/with-timeout-or-null.html).
+     */
+    private fun contactsNow(): List<PhoneEntry> {
+        val book = org.koin.java.KoinJavaComponent.get<PhoneBook>(PhoneBook::class.java)
+        if (!book.canRead()) return emptyList()
+        if (book.entries.value.isEmpty() && !loadAsked) {
+            loadAsked = true
+            book.refresh()
+            kotlinx.coroutines.runBlocking { kotlinx.coroutines.withTimeoutOrNull(3_000) { book.entries.first { it.isNotEmpty() } } }
+        }
+        return book.entries.value
     }
 
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?) = null
@@ -45,6 +67,9 @@ class SavedDoor : ContentProvider() {
 
     companion object {
         const val METHOD = "origins"
+
+        /** The book was asked to load by a call of this door: not waited for again (an empty book stays empty). */
+        @Volatile private var loadAsked = false
 
         /** The most ids one question takes; the others are ignored. */
         const val MAX_IDS = 400
@@ -59,12 +84,18 @@ class SavedDoor : ContentProvider() {
         fun idsOf(extras: Bundle?): List<Long> =
             (runCatching { extras?.getLongArray("ids") }.getOrNull() ?: LongArray(0)).take(MAX_IDS).filter { it > 0 }.distinct()
 
-        /** The name shown for a sender: the contact's (a private one only through PrivateNames, inside ContactLookup), else the number written the local way; never empty. */
-        fun nameOf(context: Context): (String) -> String {
+        /**
+         * The name shown for a sender, as the conversation's title names the same address (ThreadScreen:
+         * `index.find(T9.clean(to))?.name ?: Numbers.format(context, to)` over PhoneBook's entries in PhoneIndex),
+         * so a number that fits two contacts by its last digits gets the same one in both. A private person
+         * only through PrivateNames, as PhoneIndex.find asks it; else the number written the local way; never empty.
+         */
+        fun nameOf(context: Context, entries: List<PhoneEntry>): (String) -> String {
+            val index = PhoneIndex(entries)
             val known = HashMap<String, String>()
             return { sender ->
                 known.getOrPut(sender) {
-                    (ContactLookup.nameOf(context, sender) ?: Numbers.format(context, sender)).ifBlank { sender }
+                    (index.find(T9.clean(sender))?.name ?: PrivateNames.lookup(context, sender)?.name ?: Numbers.format(context, sender)).ifBlank { sender }
                 }
             }
         }
