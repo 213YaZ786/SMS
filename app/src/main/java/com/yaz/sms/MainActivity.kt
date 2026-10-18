@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
 import com.yaz.sms.core.sms.OpenRequest
 import com.yaz.sms.core.sms.OpenRequests
+import com.yaz.sms.core.sms.ShowMessage
 import com.yaz.sms.data.settings.SettingsStore
 import com.yaz.sms.navigation.SmsApp
 import com.yaz.sms.ui.theme.AppSurface
@@ -79,6 +80,21 @@ class MainActivity : ComponentActivity() {
             ACTION_THREAD -> {
                 val thread = intent.getLongExtra(EXTRA_THREAD, -1L).takeIf { it >= 0 }
                 requests.open(OpenRequest(thread, intent.getStringExtra(EXTRA_ADDRESS), null))
+            }
+            // The Files app's "From Marie": a saved attachment's message, scrolled to and lit in its conversation.
+            // Shows, never acts. The caller is the system's word (calling package, else the referrer it fills in),
+            // a package of the suite signed with our key; an unknown caller simply opens. A thread or a message
+            // that does not exist, or a message that is not in that thread, opens nothing.
+            ShowMessage.ACTION -> {
+                val asked = ShowMessage.of(intent) ?: return
+                val caller = callingPackage ?: referrer?.takeIf { it.scheme == "android-app" }?.host
+                if (!ShowMessage.allowed(this, caller)) return
+                lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val found = messages.byUid(listOf(asked.uid))?.firstOrNull()
+                    if (found != null && found.threadId == asked.thread) {
+                        requests.open(OpenRequest(asked.thread, null, null, asked.uid))
+                    }
+                }
             }
             // The Contacts app's "verified" mark: the conversation, on its encryption's keys. Shows, never acts.
             ACTION_SHOW_KEYS -> {

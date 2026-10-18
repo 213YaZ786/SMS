@@ -102,11 +102,24 @@ private fun SmsNavHost(navController: NavHostController) {
     LaunchedEffect(pending) {
         val asked = pending ?: return@LaunchedEffect
         requests.consume()
+        // A message of the conversation already on screen (SHOW_MESSAGE): no second screen, the one shown scrolls to it
+        // and lights it (the one leaving would take the request and the new one never see it).
+        val here = navController.currentBackStackEntry
+        if (asked.message != null && asked.threadId != null && here?.destination?.route == Routes.THREAD && here.arguments?.getLong("t") == asked.threadId) {
+            requests.showIn.value = asked.threadId
+            requests.showMessage.value = asked.message
+            return@LaunchedEffect
+        }
         navController.popBackStack(Routes.MAIN, inclusive = false)
         if (asked.threadId == null && asked.address == null) {
             navController.navigate(Routes.new(asked.text))
         } else {
             navController.navigate(Routes.thread(asked.threadId, asked.address, asked.text))
+            // A sister app's message to show (SHOW_MESSAGE): handed to the conversation just opened.
+            if (asked.message != null && asked.threadId != null) {
+                requests.showIn.value = asked.threadId
+                requests.showMessage.value = asked.message
+            }
         }
     }
 

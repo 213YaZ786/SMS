@@ -58,6 +58,10 @@
     <permission
         android:name="${applicationId}.permission.INVITE"
         android:protectionLevel="signature" />
+    <!-- Who sent a media saved from a message, for the Files app: apps signed with the same key only. -->
+    <permission
+        android:name="${applicationId}.permission.SAVED"
+        android:protectionLevel="signature" />
 
     <!-- Dialer, when installed, shows the calls with a number. -->
     <queries>
@@ -281,6 +285,12 @@
             android:authorities="${applicationId}.people"
             android:exported="true"
             android:permission="${applicationId}.permission.PEOPLE" />
+        <!-- The Files app asks who sent the media saved from a message and which message it was. -->
+        <provider
+            android:name=".core.mms.SavedDoor"
+            android:authorities="${applicationId}.saved"
+            android:exported="true"
+            android:permission="${applicationId}.permission.SAVED" />
         <!-- Pictures from outside decoded in a process of their own,
              with no permission, no files and no network. -->
         <service

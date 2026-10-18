@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -498,9 +499,14 @@ private fun ThreadContent(
     // tapOpensConversation / initAnchorMessageId). Further back than the page, it reads further.
     val showUid by requests.showMessage.collectAsState()
     var starredOpen by remember { mutableStateOf(false) }
+    // The message a sister app asked for is lit for a moment once reached, as Signal pulses a message jumped to
+    // (ConversationAdapter.pulseAtPosition marks it for one bind; here a wash of the accent that fades).
+    var lit by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(showUid, rows, thread) {
         val uid = showUid ?: return@LaunchedEffect
-        if (stars[uid] != thread) return@LaunchedEffect
+        // A starred message of this conversation, or the one a sister app asked for here (SHOW_MESSAGE, checked in MainActivity).
+        val asked = requests.showIn.value == thread
+        if (stars[uid] != thread && !asked) return@LaunchedEffect
         val row = rows.indexOfFirst { it.key == "m/$uid" }
         if (row < 0) {
             if (window < 5000) window = 5000
@@ -509,8 +515,19 @@ private fun ThreadContent(
         val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
         runCatching { listState.animateScrollToItem(before + rows.size - 1 - row) }
         requests.showMessage.value = null
+        if (asked) {
+            requests.showIn.value = null
+            lit = uid
+        }
     }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { requests.showMessage.value = null } }
+    LaunchedEffect(lit) {
+        if (lit != null) {
+            delay(1800)
+            lit = null
+        }
+    }
+    // A request for another conversation (still pending while this one leaves) is not this screen's to clear.
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { if (requests.showIn.value == null) requests.showMessage.value = null } }
     if (starredOpen) StarredPage(
         thread = thread,
         titleOf = { title },
@@ -779,7 +796,12 @@ private fun ThreadContent(
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                     // A message deleted, here or for everyone, fades away as the others close up.
-                    is Row.Bubble -> Box(Modifier.fillMaxWidth().animateItem(fadeOutSpec = androidx.compose.animation.core.tween(450))) {
+                    is Row.Bubble -> {
+                    val wash by animateFloatAsState(if (lit == row.message.uid) 1f else 0f, androidx.compose.animation.core.tween(500), label = "lit")
+                    Box(
+                        Modifier.fillMaxWidth().animateItem(fadeOutSpec = androidx.compose.animation.core.tween(450))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f * wash), RoundedCornerShape(16.dp))
+                    ) {
                       val mineRow = row.message.box != MessageBox.RECEIVED
                       // Every message's time, drawn in from the right edge while the
                       // conversation is pulled left, as iOS Messages shows them.
@@ -851,6 +873,7 @@ private fun ThreadContent(
                         }
                     )
                       }
+                    }
                     }
                 }
             }

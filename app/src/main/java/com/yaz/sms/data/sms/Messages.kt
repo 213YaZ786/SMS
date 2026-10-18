@@ -310,10 +310,13 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     val (text, media) = parts[id] ?: ("" to emptyList())
                     // An announcement not downloaded yet (a kept NotificationInd) waits for a tap.
                     val waiting = r[5].toInt() == 130
+                    val sender = if (box.toInt() == Telephony.Mms.MESSAGE_BOX_INBOX) senderOf(id, date) else ""
+                    // A received message's parts remember where they came from, so that Save can keep who sent them.
+                    val origin = if (sender.isNotBlank()) com.yaz.sms.core.mms.SavedOrigin(r[6], "mms/$id", sender) else null
                     out += Message(
                         id = id,
                         threadId = r[6],
-                        address = if (box.toInt() == Telephony.Mms.MESSAGE_BOX_INBOX) senderOf(id, date) else "",
+                        address = sender,
                         body = text,
                         date = date * 1000,
                         box = when (box.toInt()) {
@@ -326,7 +329,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                         delivered = false,
                         subId = sub.toInt(),
                         mms = true,
-                        parts = media,
+                        parts = if (origin == null) media else media.map { it.copy(origin = origin) },
                         waiting = waiting
                     )
                 }

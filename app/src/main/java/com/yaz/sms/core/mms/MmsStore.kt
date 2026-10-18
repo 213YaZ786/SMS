@@ -14,7 +14,13 @@ import com.yaz.sms.core.mms.pdu.PduHeaders
 import com.yaz.sms.core.mms.pdu.RetrieveConf
 
 /** One part of a picture message: its text, or a picture, video or sound kept in Android's store. */
-data class MmsPart(val uri: Uri, val contentType: String, val name: String?)
+data class MmsPart(
+    val uri: Uri,
+    val contentType: String,
+    val name: String?,
+    /** The message it came from, set on a received message's parts so that saving it can say who sent it (SavedMedia). */
+    val origin: SavedOrigin? = null
+)
 
 /**
  * Picture messages in Android's own store, which only the messaging app

@@ -9,7 +9,13 @@ import kotlinx.coroutines.flow.asStateFlow
  * notification, another app writing to someone ([text] only fills the
  * message, the user sends), text shared to choose who gets it.
  */
-data class OpenRequest(val threadId: Long?, val address: String?, val text: String?)
+data class OpenRequest(
+    val threadId: Long?,
+    val address: String?,
+    val text: String?,
+    /** A message of [threadId] (its uid, checked to be there) to scroll to and show, asked by a sister app (SHOW_MESSAGE). */
+    val message: String? = null
+)
 
 class OpenRequests {
     /** A conversation to open on its encryption's keys (the Contacts app's "verified" mark), by number. */
@@ -20,6 +26,12 @@ class OpenRequests {
      * list; the same one-shot request the keys use, cleared when taken.
      */
     val showMessage = MutableStateFlow<String?>(null)
+
+    /**
+     * The conversation [showMessage] was checked to belong to, set with it when a sister app asks
+     * for a message (SHOW_MESSAGE): only that conversation scrolls to it and lights it.
+     */
+    val showIn = MutableStateFlow<Long?>(null)
 
     /** A chat invite link from outside (a code read by the camera, a link tapped): asked, never joined unasked. */
     val invite = MutableStateFlow<String?>(null)

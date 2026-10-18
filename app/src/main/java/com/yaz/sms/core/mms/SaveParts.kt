@@ -1,5 +1,6 @@
 package com.yaz.sms.core.mms
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
@@ -53,6 +54,10 @@ object SaveParts {
             return false
         }
         resolver.update(row, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        // The row's id kept with the message it came from, for the Files app (SavedDoor); a failure here never fails the save.
+        part.origin?.let { o ->
+            runCatching { SavedMedia.of(context).add(SavedEntry(ContentUris.parseId(row), o.thread, o.uid, o.sender)) }
+        }
         true
     }.getOrDefault(false)
 }
