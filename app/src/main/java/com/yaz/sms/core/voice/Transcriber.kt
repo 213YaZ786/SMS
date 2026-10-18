@@ -36,7 +36,12 @@ class Transcriber(private val context: Context, private val scope: CoroutineScop
         data object Failed : State
     }
 
-    val model = SpeechModel(context, scope, settings)
+    // The speech model keeps its choice in SMS's settings (the voice kit's SpeechChoice)
+    val model = SpeechModel(context, scope, object : SpeechChoice {
+        override var name: String
+            get() = settings.current.speechModel
+            set(value) = settings.update { it.copy(speechModel = value) }
+    })
 
     private val file = File(context.filesDir, "transcripts.json")
     private val json = Json { ignoreUnknownKeys = true }

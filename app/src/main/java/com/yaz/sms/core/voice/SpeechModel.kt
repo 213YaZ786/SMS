@@ -15,6 +15,12 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.util.Locale
+
+/** Where an app keeps which speech model the user chose (the model's file name, [SpeechModel.SYSTEM], or empty). */
+interface SpeechChoice {
+    var name: String
+}
 
 /**
  * The speech model whisper.cpp reads: OpenAI's Whisper (MIT), as published
@@ -22,8 +28,16 @@ import java.security.MessageDigest
  * the user asks, from a pinned revision, and kept only when its SHA-256 is
  * the one written here. A newer model comes with an update of the app,
  * which then offers it and lets the old one go.
+ * From SMS's core/voice/SpeechModel.kt; the app gives it the place its choice is kept ([choice]), the language its
+ * phone recognizer is asked about ([language]) and whether it may use the network now ([allowed]).
  */
-class SpeechModel(private val context: Context, private val scope: CoroutineScope, private val settings: com.yaz.sms.data.settings.SettingsStore) {
+class SpeechModel(
+    private val context: Context,
+    private val scope: CoroutineScope,
+    private val choice: SpeechChoice,
+    private val language: () -> Locale = { Locale.getDefault() },
+    private val allowed: () -> Boolean = { true },
+) {
 
     /** One model the app knows, pinned. */
     data class Pin(val name: String, val label: String, val quality: String, val bytes: Long, val sha256: String) {
@@ -46,7 +60,7 @@ class SpeechModel(private val context: Context, private val scope: CoroutineScop
     }
 
     /** The user's choice, else the recommended one. */
-    val pin: Pin get() = PINS.firstOrNull { it.name == settings.current.speechModel } ?: recommended
+    val pin: Pin get() = PINS.firstOrNull { it.name == choice.name } ?: recommended
 
     private val _system = MutableStateFlow(false)
     /** The phone has its own on-device recognizer with its language installed: nothing to fetch. */
@@ -54,21 +68,28 @@ class SpeechModel(private val context: Context, private val scope: CoroutineScop
 
     /** The phone's own recognizer is used: chosen, or nothing else chosen nor fetched. */
     val usesSystem: Boolean
-        get() = _system.value && (settings.current.speechModel == SYSTEM || (settings.current.speechModel.isEmpty() && !File(dir, recommended.name).exists()))
+        get() = _system.value && (choice.name == SYSTEM || (choice.name.isEmpty() && !File(dir, recommended.name).exists()))
 
     /** Another model chosen: fetched when asked, the other one goes once it is there. */
-    fun choose(choice: Pin) {
+    fun choose(pick: Pin) {
         job?.cancel()
-        settings.update { it.copy(speechModel = choice.name) }
+        choice.name = pick.name
         refresh()
     }
 
     /** The phone's own recognizer chosen. */
     fun chooseSystem() {
         job?.cancel()
-        settings.update { it.copy(speechModel = SYSTEM) }
+        choice.name = SYSTEM
         refresh()
     }
+
+    /** Asks the phone again whether it hears its language itself (the app's language may have changed). */
+    fun recheck(): Job =
+        scope.launch {
+            _system.value = SystemSpeech(context).ready(language())
+            if (_state.value !is State.Fetching) refresh()
+        }
 
     private fun refresh() {
         _state.value = if (usesSystem || file.exists()) State.Ready else State.Missing
@@ -82,10 +103,7 @@ class SpeechModel(private val context: Context, private val scope: CoroutineScop
 
     init {
         // Whether the phone hears its language itself, asked once.
-        scope.launch {
-            _system.value = SystemSpeech(context).ready()
-            if (_state.value !is State.Fetching) refresh()
-        }
+        recheck()
         // A model this version no longer knows (an update pinned another) and broken fetches go.
         scope.launch(Dispatchers.IO) { dir.listFiles()?.filter { f -> PINS.none { it.name == f.name } }?.forEach { it.delete() } }
     }
@@ -93,20 +111,17 @@ class SpeechModel(private val context: Context, private val scope: CoroutineScop
     /** Over a connection that costs by the megabyte (mobile data), the user is told first. */
     fun metered(): Boolean = runCatching { context.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered }.getOrDefault(true)
 
-    /** Fetches the model, checked before it is kept. */
+    /** Fetches the model, checked before it is kept. Nothing is fetched while the app does not allow the network. */
     fun fetch() {
         if (_state.value is State.Fetching || _state.value == State.Ready) return
+        if (!allowed()) return
         _state.value = State.Fetching(0f)
         job = scope.launch(Dispatchers.IO) {
             dir.mkdirs()
             val part = File(dir, pin.name + ".part")
             val ok = runCatching {
-                val connection = (URL(pin.url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15_000
-                    readTimeout = 30_000
-                }
+                val connection = open(URL(pin.url))
                 try {
-                    check(connection.responseCode == 200)
                     val digest = MessageDigest.getInstance("SHA-256")
                     var read = 0L
                     var shown = -1
@@ -142,6 +157,44 @@ class SpeechModel(private val context: Context, private val scope: CoroutineScop
                 _state.value = State.Failed
             }
         }
+    }
+
+    /**
+     * Opens [start] once it answers 200. HttpURLConnection never follows a redirect by itself: each hop is read and
+     * checked before it is taken (HTTPS, huggingface.co or its CDN *.hf.co, no user part, no other port, at most 5),
+     * as the keyboard's dictionary download does (DictionaryRepo.open) and the update kit.
+     * https://developer.android.com/reference/java/net/HttpURLConnection#setInstanceFollowRedirects(boolean)
+     */
+    private fun open(start: URL): HttpURLConnection {
+        var url = start
+        var hops = 0
+        while (true) {
+            check(trusted(url))
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
+                connectTimeout = 15_000
+                readTimeout = 30_000
+            }
+            when (connection.responseCode) {
+                200 -> return connection
+                301, 302, 303, 307, 308 -> {
+                    val location = connection.getHeaderField("Location")
+                    connection.disconnect()
+                    check(!location.isNullOrBlank() && hops++ < 5)
+                    url = URL(url, location)
+                }
+                else -> {
+                    connection.disconnect()
+                    error("the model is not served")
+                }
+            }
+        }
+    }
+
+    private fun trusted(url: URL): Boolean {
+        val host = url.host.lowercase()
+        return url.protocol == "https" && url.userInfo == null && (url.port == -1 || url.port == 443) &&
+            (host == "huggingface.co" || host.endsWith(".hf.co"))
     }
 
     fun cancel() {

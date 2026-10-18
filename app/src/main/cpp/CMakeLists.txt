@@ -1,6 +1,8 @@
-# Voice messages written out on the phone: whisper.cpp (MIT) built from its
-# pinned source (fetched and checked by the app's build), with one CPU
-# variant per generation of ARM chip, the right one chosen when it starts.
+# Speech written out on the phone: whisper.cpp (MIT) built from its pinned source (fetched and checked by the app's
+# build, WHISPER_SRC), with one CPU variant per generation of chip, the right one chosen when it starts.
+# The library is named for the app (libsmswhisper.so), so two apps never share a name.
+# Taken from SMS's app/src/main/cpp/CMakeLists.txt, which follows whisper.cpp's own build options
+# https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22)
 project(smswhisper CXX C)
 
