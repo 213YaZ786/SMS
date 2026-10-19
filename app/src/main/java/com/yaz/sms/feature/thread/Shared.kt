@@ -130,6 +130,7 @@ internal fun SharedPage(
     var only by remember { mutableStateOf(start) }
     val shown = items.filter { only == null || kindOf(it) == only }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        PageBars()
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
                 LazyColumn(

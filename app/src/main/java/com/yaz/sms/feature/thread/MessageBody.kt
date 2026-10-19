@@ -35,6 +35,10 @@ import com.yaz.sms.core.security.MediaCheck
  * - several without words: the grid, the footer under it (Below, as for its gallery);
  * - media with words: the media on top, the words under it in the same glass, the footer on their
  *   last line when it fits (Aligned);
+ * - a file, a card or a sound ([tiles]): inside the bubble above the words, as Element X's
+ *   TimelineItemFileView and TimelineItemAudioView sit in the event bubble with their caption under
+ *   (event/TimelineItemEventContentView.kt: the attachment, then CaptionView, in one column); the footer
+ *   on the last line of the words when there are some, else under the tile;
  * - words alone: the footer on the last line when it fits, else under them (Aligned); under them
  *   when the words run both ways, from Signal's V2FooterPositionDelegate
  *   (https://github.com/signalapp/Signal-Android, AGPL-3.0).
@@ -53,7 +57,10 @@ internal fun MessageBody(
     held: Boolean,
     footer: @Composable (mismatched: Boolean, onMedia: Boolean) -> Unit,
     onMore: (() -> Unit)?,
-    interactive: Boolean = true
+    interactive: Boolean = true,
+    /** The parts that are no picture or film (files, cards, sounds), drawn in the bubble above the words. */
+    tiles: List<MmsPart> = emptyList(),
+    mine: Boolean = false
 ) {
     val caption = words.isNotEmpty()
     val mixed = remember(plain) { hasMixedTextDirection(plain) }
@@ -62,6 +69,18 @@ internal fun MessageBody(
     }
     when {
         poll != null -> WithFooter(FooterAt.Below, { footer(it, false) }) { poll() }
+        tiles.isNotEmpty() ->
+            WithFooter(if (!caption || mixed) FooterAt.Below else FooterAt.Aligned, { footer(it, false) }, words = plain) { onLayout ->
+                Column {
+                    if (visual.isNotEmpty()) Box(Modifier.padding(4.dp).clip(RoundedCornerShape(18.dp)).align(Alignment.CenterHorizontally)) { gallery(Modifier) }
+                    tiles.forEach { part ->
+                        Box(Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = if (caption) 0.dp else 2.dp)) {
+                            MediaTile(part, mine, held = held, onMore = onMore, interactive = interactive)
+                        }
+                    }
+                    if (caption) Words(words, blurred, 4.dp, onLayout)
+                }
+            }
         visual.isNotEmpty() && !caption && visual.size == 1 ->
             WithFooter(FooterAt.Overlay, { footer(it, true) }) { gallery(Modifier) }
         visual.isNotEmpty() && !caption ->

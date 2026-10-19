@@ -441,6 +441,7 @@ private fun ThreadContent(
         rowsOfList = from
         thread?.let { opened.put(it, from to rows) }
     }
+    val clusters = remember(rows, group) { clustersOf(rows, group) }
     // A message added at the bottom while reading there comes into sight, not under the field.
     LaunchedEffect(rows.lastOrNull()?.key, waiting.size) {
         if (listState.firstVisibleItemIndex <= 2) listState.animateScrollToItem(0)
@@ -767,11 +768,13 @@ private fun ThreadContent(
                 else with(density) { (listBottom - composerTop).coerceAtLeast(0f).toDp() } + 16.dp
             ),
             // A short conversation sits by the composer, as a long one does.
-            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom)
+            // No gap of its own: each message brings its margins by its place in its cluster (Signal's
+            // MessageShape top and bottom padding, Cluster), the other rows their own.
+            verticalArrangement = Arrangement.spacedBy(0.dp, Alignment.Bottom)
         ) {
             // Messages scheduled for later, at the very bottom; a tap cancels one.
             items(scheduled.filter { it.to.toSet() == people.toSet() }, key = { "sched/${it.id}" }) { sc ->
-                Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth().animateItem()) {
+                Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth().animateItem().padding(vertical = 3.dp)) {
                     FloatingPane(shape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp), onClick = {
                         haptics.tick()
                         com.yaz.sms.core.sms.Timed.cancel(context, sc.id)
@@ -789,7 +792,7 @@ private fun ThreadContent(
             }
             // Waiting messages sit at the bottom, their ring emptying; a tap takes one back.
             items(waiting.asReversed(), key = { "wait/${it.key}" }) { p ->
-                PendingBubble(p, store.current.undoSeconds, Modifier.animateItem()) {
+                PendingBubble(p, store.current.undoSeconds, Modifier.animateItem().padding(vertical = Cluster.SINGLE.top)) {
                     haptics.tick()
                     waiting = waiting.filterNot { it.key == p.key }
                     restore = p.text
@@ -807,6 +810,11 @@ private fun ThreadContent(
                     // A message deleted, here or for everyone, fades away as the others close up.
                     is Row.Bubble -> {
                     val wash by animateFloatAsState(if (lit == row.message.uid) 1f else 0f, androidx.compose.animation.core.tween(500), label = "lit")
+                    val rich = chat.refOf(row.message.mms, row.message.id).also { refs.size }
+                    // Its place in its run of messages; one with reactions (a poll's votes aside) ends the run.
+                    val cluster = (clusters[row.message.uid] ?: Cluster.SINGLE).endedBy(
+                        row.smsReactions.isNotEmpty() || rich?.reactions.orEmpty().any { com.yaz.sms.core.sms.Polls.choiceOf(it) < 0 }
+                    )
                     Box(
                         // No entrance for the rows a conversation opens with (fadeInSpec null until it has been
                         // read); a message added after that fades in (LazyItemScope.animateItem, the default spring).
@@ -814,6 +822,7 @@ private fun ThreadContent(
                             fadeInSpec = if (read) spring(stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow) else null,
                             fadeOutSpec = androidx.compose.animation.core.tween(450)
                         )
+                            .padding(top = cluster.top, bottom = cluster.bottom)
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f * wash), RoundedCornerShape(16.dp))
                     ) {
                       val mineRow = row.message.box != MessageBox.RECEIVED
@@ -834,7 +843,8 @@ private fun ThreadContent(
                       Bubble(
                         row.message,
                         fresh = row.message.box == MessageBox.RECEIVED && row.message.uid in fresh,
-                        rich = chat.refOf(row.message.mms, row.message.id).also { refs.size },
+                        rich = rich,
+                        cluster = cluster,
                         smsReactions = row.smsReactions,
                         // A reaction by SMS to a message with words, one to one: Google Messages shows it as such, an iPhone as words.
                         onSmsReact = if (!group && !row.message.rich && row.message.body.isNotBlank()) ({ emoji ->
@@ -945,6 +955,20 @@ private fun rowsOf(all: List<Message>): List<Row> {
         }
         // Each message carries its own time in its bubble (MessageBody's footer).
         out += Row.Bubble(m, folded.reactions[m.uid].orEmpty(), folded.mine[m.uid].orEmpty())
+    }
+    return out
+}
+
+/**
+ * Each message's place in its run of messages of one sender, by its neighbours (Signal's V2ConversationItemShape,
+ * see [Clusters.of]); the neighbours are the messages before and after it, whatever lies between them in the list.
+ */
+private fun clustersOf(rows: List<Row>, group: Boolean): Map<String, Cluster> {
+    val messages = rows.filterIsInstance<Row.Bubble>().map { it.message }
+    val zone = ZoneId.systemDefault()
+    val out = HashMap<String, Cluster>(messages.size * 2)
+    messages.forEachIndexed { i, m ->
+        out[m.uid] = Clusters.of(m, messages.getOrNull(i - 1), messages.getOrNull(i + 1), group, zone)
     }
     return out
 }
@@ -1123,6 +1147,8 @@ private fun Bubble(
     onDeleteForAll: (Int) -> Unit,
     onPin: (Int, Boolean) -> Unit,
     chatId: Int?,
+    /** Its place in its run of messages of one sender: the corners of its bubble (Signal's V2ConversationItemShape). */
+    cluster: Cluster = Cluster.SINGLE,
     stranger: Boolean = false,
     /** Its media wait for a tap: from a stranger, when Settings asks so. */
     holdMedia: Boolean = stranger,
@@ -1226,15 +1252,18 @@ private fun Bubble(
     LaunchedEffect(fresh) { if (fresh) drop.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 320f)) }
     val ringColor = MaterialTheme.colorScheme.primary
     // The pictures and films go in the bubble with the words and the time, as Element X's event row holds
-    // its media and caption (https://github.com/element-hq/element-x-android, TimelineItemEventRow.kt); sounds
-    // and files stay tiles above it. What each part is comes from its first bytes (MediaCheck), all at once.
+    // its media and caption (https://github.com/element-hq/element-x-android, TimelineItemEventRow.kt); sounds,
+    // files and cards go in the same bubble above the words (TimelineItemFileView, TimelineItemAudioView, MessageBody).
+    // What each part is comes from its first bytes (MediaCheck), all at once.
     val kinds by rememberKinds(remember(m.parts) { m.parts.map { it.uri } })
     val inBubble = m.parts.indices.filter { m.parts[it].let { p -> isPicture(p, kinds.getOrNull(it)) || isFilm(p, kinds.getOrNull(it)) } }
     val visual = remember(m.parts, inBubble) { inBubble.map { m.parts[it] } }
     val visualKinds = remember(kinds, inBubble) { inBubble.map { kinds.getOrNull(it) } }
     val tiles = remember(m.parts, inBubble) { m.parts.filterIndexed { i, _ -> i !in inBubble } }
-    // A message with neither words nor pictures (a voice message, a file, a card) has no bubble: its tile and a footer line.
-    val hasBubble = !m.waiting && (said.isNotEmpty() || visual.isNotEmpty() || m.parts.isEmpty())
+    // Every message with words or parts has its bubble; a message waiting for its download has none.
+    val hasBubble = !m.waiting && (said.isNotEmpty() || visual.isNotEmpty() || tiles.isNotEmpty() || m.parts.isEmpty())
+    // The corners follow the message's place in its run of messages of one sender (Signal's V2ConversationItemShape).
+    val shape = remember(cluster, mine) { Clusters.corners(cluster, mine) }
     val clock = remember(m.date) { clockOf(context, m.date) }
     val delivery = if (!mine) null else when {
         rich?.seen == true -> Delivery.Read
@@ -1266,7 +1295,8 @@ private fun Bubble(
                 }
             }
     ) {
-        sender?.let {
+        // A group's sender is named once, over the first of their run of messages (Signal shows the name at the start of a cluster).
+        sender?.takeIf { cluster.isStarting }?.let {
             Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 12.dp, bottom = 2.dp))
         }
         // Announced by the network, not here yet: a tap fetches it, as AOSP
@@ -1294,21 +1324,6 @@ private fun Bubble(
                 }
             }
         }
-        tiles.forEach { part ->
-            // Only a tile and no bubble: the tile stands where the bubble would, for the menu to lift it;
-            // it steps aside while its lifted copy shows, as the text bubble does.
-            Box(
-                Modifier
-                    .onGloballyPositioned { if (!hasBubble) bounds = it.boundsInWindow() }
-                    .graphicsLayer { alpha = if (menuOpen && !hasBubble) 0f else 1f }
-            ) {
-                MediaTile(part, mine, held = holdMedia && !mine, onMore = {
-                    haptics.firm()
-                    menuOpen = true
-                })
-            }
-            Spacer(Modifier.height(4.dp))
-        }
         val scope = rememberCoroutineScope()
         val pull = remember { Animatable(0f) }
         var armed by remember { mutableStateOf(false) }
@@ -1325,7 +1340,7 @@ private fun Bubble(
         // Media bubbles take 0.78 of the list's width, as Element X's MessageEventBubble (BUBBLE_WIDTH_RATIO).
         if (hasBubble) Box(
             Modifier
-                .fillMaxWidth(if (visual.isNotEmpty()) 0.78f else 0.82f)
+                .fillMaxWidth(if (visual.isNotEmpty() || tiles.isNotEmpty()) 0.78f else 0.82f)
                 .graphicsLayer {
                     val k = fx.value
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (mine) 1f else 0f, 1f)
@@ -1409,10 +1424,6 @@ private fun Bubble(
                         scaleY = s
                     }
             )
-            val shape = RoundedCornerShape(
-                topStart = 22.dp, topEnd = 22.dp,
-                bottomStart = if (mine) 22.dp else 6.dp, bottomEnd = if (mine) 6.dp else 22.dp
-            )
             val held = Modifier
                     .then(if (poll != null) Modifier.fillMaxWidth() else Modifier)
                     // At least 80 dp wide, as Element X's MIN_BUBBLE_WIDTH.
@@ -1468,7 +1479,8 @@ private fun Bubble(
                     onMore = {
                         haptics.firm()
                         menuOpen = true
-                    }
+                    },
+                    tiles = tiles, mine = mine
                 )
             }
         }
@@ -1520,21 +1532,17 @@ private fun Bubble(
                 onMoreReactions = if (rich != null) ({ pickingEmoji = true }) else null
             ) {
                 if (big != null) BigEmojiRow(big, 0)
-                // A message of only a tile (a sound, a file) lifts its own tile.
-                else if (!hasBubble && m.parts.isNotEmpty()) MediaTile(m.parts.first(), mine, held = holdMedia && !mine)
-                // The bubble's own shape, its tail included, with what it holds (tiles that open nothing).
+                // The bubble's own shape, its cluster corners, with what it holds (tiles that open nothing).
                 else ZoneSurface(
-                    shape = RoundedCornerShape(
-                        topStart = 22.dp, topEnd = 22.dp,
-                        bottomStart = if (mine) 22.dp else 6.dp, bottomEnd = if (mine) 6.dp else 22.dp
-                    ),
+                    shape = shape,
                     accent = mine, shadowElevation = 8.dp
                 ) {
                     MessageBody(
                         words = text, plain = said, blurred = false,
                         poll = null,
                         visual = visual, kinds = visualKinds, held = holdMedia && !mine, footer = footer,
-                        onMore = null, interactive = false
+                        onMore = null, interactive = false,
+                        tiles = tiles, mine = mine
                     )
                 }
             }

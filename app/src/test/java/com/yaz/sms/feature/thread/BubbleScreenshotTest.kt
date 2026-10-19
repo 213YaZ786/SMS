@@ -93,19 +93,31 @@ class BubbleScreenshotTest {
         delivery: Delivery?,
         share: Float = 0.82f,
         visual: List<MmsPart> = emptyList(),
-        starred: Boolean = false
+        starred: Boolean = false,
+        cluster: Cluster = Cluster.SINGLE,
+        tiles: List<MmsPart> = emptyList()
     ) {
-        Box(Modifier.fillMaxWidth(share), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
-            ZoneSurface(shape = RoundedCornerShape(22.dp), accent = mine) {
+        Box(
+            Modifier.fillMaxWidth(share).padding(top = cluster.top, bottom = cluster.bottom),
+            contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart
+        ) {
+            ZoneSurface(shape = Clusters.corners(cluster, mine), accent = mine) {
                 MessageBody(
                     words = AnnotatedString(words), plain = words, blurred = false, poll = null,
                     visual = visual, kinds = visual.map { MediaCheck.Kind.IMAGE }, held = true,
                     footer = { mismatched, onMedia -> MessageFooter("10:42", delivery, starred, onMedia = onMedia, mismatched = mismatched) },
-                    onMore = null
+                    onMore = null,
+                    tiles = tiles, mine = mine
                 )
             }
         }
     }
+
+    // Fixed parts as Element X's file previews (TimelineItemFileContentPreviewParam, element-hq/element-x-android): a PDF and a card.
+    private fun files() = listOf(
+        MmsPart(Uri.parse("content://t/f1"), "application/pdf", "Facture octobre.pdf"),
+        MmsPart(Uri.parse("content://t/f2"), "text/x-vcard", "contact.vcf")
+    )
 
     private fun pictures(n: Int) = List(n) { MmsPart(Uri.parse("content://t/$it"), "image/jpeg", null) }
 
@@ -132,6 +144,32 @@ class BubbleScreenshotTest {
                 Bubble("مرحبا بك في تطبيق الرسائل الجديد الذي يجمع كل ما تحتاجه للتواصل مع أصدقائك", true, Delivery.Sent)
                 Bubble("Ok", true, Delivery.Sent)
             }
+        }
+    }
+
+    // Runs of messages of one sender: the corners and the margins by the place in the run (Signal's V2ConversationItemShape).
+    @Test
+    fun clusters() = capture("bubble_clusters") {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Bubble("Salut", false, null, cluster = Cluster.START)
+            Bubble("Tu es là ?", false, null, cluster = Cluster.MIDDLE)
+            Bubble("J'arrive dans dix minutes, devant la gare", false, null, cluster = Cluster.END)
+            Bubble("Ok", true, Delivery.Read, cluster = Cluster.START)
+            Bubble("À tout de suite, je suis déjà au café", true, Delivery.Read, cluster = Cluster.MIDDLE)
+            Bubble("Ok", true, Delivery.Delivered, cluster = Cluster.END)
+            Bubble("Seul", true, Delivery.Sent, cluster = Cluster.SINGLE)
+        }
+    }
+
+    // A file, a card: inside the one bubble above the words, as Element X's file view with its caption
+    // (https://github.com/element-hq/element-x-android, TimelineItemEventContentView.kt, TimelineItemFileView.kt).
+    @Test
+    fun fileTiles() = capture("bubble_files") {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Bubble("", true, Delivery.Delivered, 0.78f, tiles = files().take(1))
+            Bubble("La facture dont je te parlais", false, null, 0.78f, tiles = files().take(1))
+            Bubble("", false, null, 0.78f, cluster = Cluster.START, tiles = files().drop(1))
+            Bubble("Son contact", false, null, 0.78f, cluster = Cluster.END, tiles = files())
         }
     }
 

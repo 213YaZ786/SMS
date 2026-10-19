@@ -94,6 +94,7 @@ internal fun StarredPage(thread: Long?, titleOf: (Message) -> String, onOpen: (M
     val shown = remember(found, stars) { found.orEmpty().filter { stars[it.uid] == it.threadId }.sortedByDescending { it.date } }
     val haptics = rememberHaptics()
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        PageBars()
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
                 if (found != null && shown.isEmpty()) EmptyZone(

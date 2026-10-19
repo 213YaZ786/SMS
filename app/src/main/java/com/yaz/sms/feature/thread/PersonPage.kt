@@ -1,6 +1,13 @@
 package com.yaz.sms.feature.thread
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
+import com.yaz.sms.ui.theme.zone
 import com.yaz.sms.ui.glass.glassGround
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -161,6 +168,7 @@ fun PersonPage(
     )
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        PageBars()
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             Box(Modifier.fillMaxSize().glassGround(com.yaz.sms.ui.glass.LocalGlass.current, MaterialTheme.colorScheme.surface)) {
                 HeroGlow(if (group) null else photo, height = 420.dp)
@@ -209,16 +217,16 @@ fun PersonPage(
                             maxItemsInEachRow = 2,
                             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
                         ) {
-                            if (unsaved) Tile(AppIcons.PersonAdd, "Add contact", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary) { NumberActions.addContact(context, address) }
-                            calls.phone?.let { Tile(AppIcons.Call, "Call", CallGreen, Color.White, it) }
-                            calls.encrypted?.let { Tile(AppIcons.Lock, "Encrypted call", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, it) }
-                            calls.video?.let { Tile(AppIcons.Videocam, "Video call", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, it) }
-                            Tile(AppIcons.Search, "Search", null, null) {
+                            if (unsaved) Tile(AppIcons.PersonAdd, "Add contact", MaterialTheme.colorScheme.primary) { NumberActions.addContact(context, address) }
+                            calls.phone?.let { Tile(AppIcons.Call, "Call", CallGreen, it) }
+                            calls.encrypted?.let { Tile(AppIcons.Lock, "Encrypted call", MaterialTheme.colorScheme.primary, it) }
+                            calls.video?.let { Tile(AppIcons.Videocam, "Video call", MaterialTheme.colorScheme.primary, it) }
+                            Tile(AppIcons.Search, "Search", null) {
                                 onClose()
                                 onSearch()
                             }
-                            Tile(if (silencedUntil != null) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silencedUntil != null) "Silenced" else "Silence", null, null, onSilence)
-                            onBackground?.let { Tile(AppIcons.Palette, "Background", null, null, it) }
+                            Tile(if (silencedUntil != null) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silencedUntil != null) "Silenced" else "Silence", null, onSilence)
+                            onBackground?.let { Tile(AppIcons.Palette, "Background", null, it) }
                         }
                         }
                     }
@@ -328,31 +336,53 @@ fun PersonPage(
     }
 }
 
-/** A card, its icon over its name; filled in its colour when it calls. */
+/**
+ * A card of glass, its icon over its name; one that calls is tinted by its colour, the colour on the icon, the
+ * name in the page's text colour. Dialer's NumberParts.kt CallBar and ActionTile
+ * (https://github.com/213YaZ786/Dialer/blob/main/app/src/main/java/com/yaz/dialer/feature/recents/NumberParts.kt):
+ * the glass tinted at low alpha through [rememberTinted] and provided as LocalGlass around the ZoneSurface, and the
+ * sink on press (spring, damping 0.45, stiffness 700). The shape and sizes are the card's own.
+ */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun androidx.compose.foundation.layout.FlowRowScope.Tile(icon: ImageVector, label: String, fill: Color?, tint: Color?, onClick: () -> Unit) {
+private fun androidx.compose.foundation.layout.FlowRowScope.Tile(icon: ImageVector, label: String, color: Color?, onClick: () -> Unit) {
     val haptics = rememberHaptics()
     val shape = RoundedCornerShape(24.dp)
-    val content: @Composable () -> Unit = {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 16.dp)
+    val press = remember { MutableInteractionSource() }
+    val pressed by press.collectIsPressedAsState()
+    val sink by animateFloatAsState(if (pressed) 0.95f else 1f, spring(dampingRatio = 0.45f, stiffness = 700f), label = "sink")
+    val glass = com.yaz.sms.ui.glass.LocalGlass.current
+    val tinted = rememberTinted(glass, color?.copy(alpha = 0.32f))
+    CompositionLocalProvider(com.yaz.sms.ui.glass.LocalGlass provides (tinted ?: glass)) {
+        ZoneSurface(
+            shape = shape,
+            // Without glass: the colour's wash on the page's own fill.
+            color = color?.copy(alpha = 0.2f) ?: MaterialTheme.colorScheme.zone,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxRowHeight()
+                .heightIn(min = 100.dp)
+                .graphicsLayer {
+                    scaleX = sink
+                    scaleY = sink
+                }
+                .clip(shape)
+                .clickable(interactionSource = press, indication = null, role = Role.Button, onClickLabel = label) {
+                    if (color != null) haptics.firm() else haptics.tick()
+                    onClick()
+                }
         ) {
-            Icon(icon, contentDescription = null, tint = tint ?: MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
-            Spacer(Modifier.height(8.dp))
-            Text(label, style = MaterialTheme.typography.titleSmall, color = tint ?: LocalContentColor.current, textAlign = TextAlign.Center, maxLines = 2)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 16.dp)
+            ) {
+                Icon(icon, contentDescription = null, tint = color ?: MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                Spacer(Modifier.height(8.dp))
+                Text(label, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center, maxLines = 2)
+            }
         }
     }
-    if (fill != null) androidx.compose.material3.Surface(
-        shape = shape,
-        color = fill,
-        shadowElevation = 3.dp,
-        onClick = { haptics.firm(); onClick() },
-        modifier = Modifier.weight(1f).fillMaxRowHeight().heightIn(min = 100.dp)
-    ) { content() }
-    else ZoneSurface(shape = shape, modifier = Modifier.weight(1f).fillMaxRowHeight().heightIn(min = 100.dp), onClick = { haptics.tick(); onClick() }) { content() }
 }
 
 /** A line of glass for something about the person. */

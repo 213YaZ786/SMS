@@ -75,10 +75,17 @@ import androidx.compose.ui.semantics.semantics
  * its line; another file opens in the app chosen for it. What a part
  * really is comes from its first bytes, not from the type it was sent
  * with. From an unknown number ([held]) nothing is read before a tap.
+ *
+ * A file, a card or a sound is drawn inside the message's bubble, with no surface of its own, as Element X's
+ * TimelineItemAttachmentView (https://github.com/element-hq/element-x-android, AGPL-3.0,
+ * features/messages/impl/src/main/kotlin/io/element/android/features/messages/impl/timeline/components/event/
+ * TimelineItemAttachmentView.kt, used by TimelineItemFileView and TimelineItemAudioView): a 36 dp box with the
+ * icon, 8 dp apart from the name (two lines at most) over a line of detail. [interactive] false draws a copy
+ * for the menu to lift, a tile that opens nothing.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -> Unit)? = null) {
+fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -> Unit)? = null, interactive: Boolean = true) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var video by remember { mutableStateOf(false) }
@@ -91,7 +98,8 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
     if (!shown && sound) {
         HeldTile(
             "Sound from an unknown number, tap to load",
-            AppIcons.Mic
+            AppIcons.Mic,
+            interactive
         ) { shown = true }
     } else if (image || isFilm(part, kind)) {
         // A picture or a film alone, if one is handed here: the conversation lays them out in the message's
@@ -100,12 +108,28 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
             MediaCell(part, kind, held, single = true, onMore = onMore)
         }
     } else if (sound) {
-        VoiceTile(part, mine)
+        VoiceTile(part, mine, inBubble = true)
     } else {
-        ZoneSurface(
-            shape = RoundedCornerShape(20.dp),
-            accent = mine,
-            modifier = Modifier.clip(RoundedCornerShape(20.dp)).combinedClickable(
+        // A contact card shows the person's name, read from the card itself.
+        val person by androidx.compose.runtime.produceState<String?>(null, part.uri) {
+            if (part.contentType.contains("vcard")) value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(part.uri)?.bufferedReader()?.use { r ->
+                        r.lineSequence().take(200).firstOrNull { it.startsWith("FN:") || it.startsWith("FN;") }?.substringAfter(':')?.trim()?.take(60)
+                    }
+                }.getOrNull()
+            }
+        }
+        val shape = RoundedCornerShape(12.dp)
+        AttachmentRow(
+            icon = when {
+                part.contentType.contains("vcard") -> AppIcons.ContactPage
+                ContentType.isVideoType(part.contentType) || ContentType.isAudioType(part.contentType) -> AppIcons.Play
+                else -> AppIcons.AttachFile
+            },
+            name = person ?: part.name ?: mediaWord(part.contentType),
+            detail = attachmentDetail(part),
+            modifier = if (!interactive) Modifier else Modifier.clip(shape).combinedClickable(
                 onClick = {
                     haptics.tick()
                     if (ContentType.isVideoType(part.contentType) && kind == MediaCheck.Kind.VIDEO) video = true else openOutside(context, part)
@@ -113,31 +137,46 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
                 onLongClick = onMore,
                 onLongClickLabel = if (onMore != null) "More" else null
             )
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Icon(
-                    when {
-                        part.contentType.contains("vcard") -> AppIcons.ContactPage
-                        ContentType.isVideoType(part.contentType) || ContentType.isAudioType(part.contentType) -> AppIcons.Play
-                        else -> AppIcons.AttachFile
-                    },
-                    contentDescription = null
-                )
-                Spacer(Modifier.width(10.dp))
-                // A contact card shows the person's name, read from the card itself.
-                val person by androidx.compose.runtime.produceState<String?>(null, part.uri) {
-                    if (part.contentType.contains("vcard")) value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        runCatching {
-                            context.contentResolver.openInputStream(part.uri)?.bufferedReader()?.use { r ->
-                                r.lineSequence().take(200).firstOrNull { it.startsWith("FN:") || it.startsWith("FN;") }?.substringAfter(':')?.trim()?.take(60)
-                            }
-                        }.getOrNull()
-                    }
-                }
-                Text(person ?: part.name ?: mediaWord(part.contentType), style = MaterialTheme.typography.bodyLarge)
-            }
-        }
+        )
         if (video) VideoViewer(part.uri, onClose = { video = false }, part = part)
+    }
+}
+
+/**
+ * A file or card in a bubble: the icon in a 36 dp box, the name over a line of detail. Element X's
+ * TimelineItemAttachmentHeaderView (https://github.com/element-hq/element-x-android, AGPL-3.0,
+ * features/messages/impl/src/main/kotlin/io/element/android/features/messages/impl/timeline/components/event/
+ * TimelineItemAttachmentView.kt): box 36 dp of 4 dp corners, 24 dp icon, 8 dp between, the name at most two
+ * lines in the body size, the detail one line in the small size and the secondary colour. The box takes the
+ * bubble's text colour at a low alpha where Element X paints its canvas colour.
+ */
+@Composable
+private fun AttachmentRow(icon: androidx.compose.ui.graphics.vector.ImageVector, name: String, detail: String?, modifier: Modifier = Modifier) {
+    val ink = androidx.compose.material3.LocalContentColor.current
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.padding(end = 4.dp)) {
+        Box(Modifier.size(36.dp).background(ink.copy(alpha = 0.12f), RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        androidx.compose.foundation.layout.Column(Modifier.widthIn(max = 240.dp)) {
+            Text(name, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = ink.copy(alpha = 0.66f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/**
+ * The line under a file's name: its kind. Element X's fileExtensionAndSize (the extension, then the size);
+ * the size is not read here, since a part from an unknown number is not opened before a tap. A part whose
+ * bytes disagree with the type it was sent as (a "photo" that is no picture) is a plain file.
+ */
+private fun attachmentDetail(part: MmsPart): String {
+    val type = part.contentType.lowercase()
+    return when {
+        type.contains("vcard") -> "Contact card"
+        ContentType.isImageType(type) || ContentType.isVideoType(type) || ContentType.isAudioType(type) -> "File"
+        else -> (part.name?.substringAfterLast('.', "")?.takeIf { it.length in 1..5 } ?: type.substringAfter('/', "").substringBefore(';').takeIf { it.isNotEmpty() && it.length <= 12 })
+            ?.uppercase() ?: "File"
     }
 }
 
@@ -358,23 +397,23 @@ internal fun VideoViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null) {
     }
 }
 
-/** What a part from an unknown number waits behind: a tap, before anything reads it. */
+/**
+ * What a part from an unknown number waits behind: a tap, before anything reads it. In the message's
+ * bubble like the file it stands for (AttachmentRow); [interactive] false for the copy the menu lifts.
+ */
 @Composable
-private fun HeldTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onShow: () -> Unit) {
+private fun HeldTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, interactive: Boolean, onShow: () -> Unit) {
     val haptics = rememberHaptics()
-    ZoneSurface(
-        shape = RoundedCornerShape(20.dp),
-        modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable {
+    val shape = RoundedCornerShape(12.dp)
+    AttachmentRow(
+        icon = icon,
+        name = label,
+        detail = null,
+        modifier = if (!interactive) Modifier else Modifier.clip(shape).clickable {
             haptics.tick()
             onShow()
         }
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Icon(icon, contentDescription = null)
-            Spacer(Modifier.width(10.dp))
-            Text(label, style = MaterialTheme.typography.bodyLarge)
-        }
-    }
+    )
 }
 
 /**

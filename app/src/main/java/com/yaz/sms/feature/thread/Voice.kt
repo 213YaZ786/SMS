@@ -145,7 +145,7 @@ fun VoiceLevels(take: VoiceTake, modifier: Modifier = Modifier) {
  * as it plays, and how long it is.
  */
 @Composable
-fun VoiceTile(part: MmsPart, mine: Boolean) {
+fun VoiceTile(part: MmsPart, mine: Boolean, inBubble: Boolean = false) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
@@ -171,9 +171,10 @@ fun VoiceTile(part: MmsPart, mine: Boolean) {
     }
     val accent = MaterialTheme.colorScheme.primary
     val faint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)
-    ZoneSurface(shape = RoundedCornerShape(22.dp), accent = mine, modifier = Modifier.width(240.dp)) {
+    VoiceFrame(inBubble, mine) {
       Column(Modifier.animateContentSize()) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+        // In a bubble the tile's own margins (MessageBody) are the padding.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = if (inBubble) Modifier else Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
             Box(
                 Modifier.size(40.dp).clickable {
                     haptics.tick()
@@ -213,6 +214,18 @@ fun VoiceTile(part: MmsPart, mine: Boolean) {
         Transcript(part)
       }
     }
+}
+
+/**
+ * A voice message's frame: in a message's bubble it has none, as Element X's TimelineItemVoiceView
+ * (https://github.com/element-hq/element-x-android, AGPL-3.0, features/messages/impl/src/main/kotlin/io/element/android/
+ * features/messages/impl/timeline/components/event/TimelineItemVoiceView.kt) sits in the event bubble;
+ * alone, a pane of glass of its own.
+ */
+@Composable
+private fun VoiceFrame(inBubble: Boolean, mine: Boolean, content: @Composable () -> Unit) {
+    if (inBubble) Box(Modifier.width(240.dp)) { content() }
+    else ZoneSurface(shape = RoundedCornerShape(22.dp), accent = mine, modifier = Modifier.width(240.dp), content = content)
 }
 
 /**
