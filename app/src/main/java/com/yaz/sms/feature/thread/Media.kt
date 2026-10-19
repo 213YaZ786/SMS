@@ -1,8 +1,15 @@
 package com.yaz.sms.feature.thread
 
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.runtime.CompositionLocalProvider
+import com.yaz.sms.ui.component.LocalViewerChrome
+import com.yaz.sms.ui.component.ViewerChromeEffect
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.graphics.graphicsLayer
@@ -232,6 +239,7 @@ internal fun savePart(context: Context, part: MmsPart) {
  * zoom, pan while zoomed; at rest, drawn down (or up) it follows the finger
  * and closes past a threshold.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun PictureViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null) {
     val still by rememberPicture(uri, 2048)
@@ -244,7 +252,11 @@ internal fun PictureViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null)
     val appear = remember { androidx.compose.animation.core.Animatable(0.9f) }
     var zoomed by remember { androidx.compose.runtime.mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(Unit) { appear.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.7f, stiffness = 500f)) }
+    // A tap on the picture hides Close, Save and Share and the system bars, the next brings them back
+    // (the player kit's ViewerChrome: ReFra's and Glimpse's viewers, Google Photos).
+    val chrome = remember { mutableStateOf(true) }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        ViewerChromeEffect(chrome.value)
         androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
             val height = constraints.maxHeight.toFloat()
             val gone = (kotlin.math.abs(drag.value) / (height * 0.5f)).coerceIn(0f, 1f)
@@ -252,6 +264,8 @@ internal fun PictureViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null)
                 Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.92f * (1f - gone)))
+                    // Where the picture is not (still loading) a tap flips the chrome too; on the picture Zoomable takes it.
+                    .pointerInput(chrome) { detectTapGestures(onTap = { chrome.value = !chrome.value }) }
                     .pointerInput(zoomed) {
                         if (zoomed) return@pointerInput
                         detectVerticalDragGestures(
@@ -282,19 +296,25 @@ internal fun PictureViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null)
                             scaleX = s
                             scaleY = s
                         },
-                        onZoomChanged = { zoomed = it }
+                        onZoomChanged = { zoomed = it },
+                        onTap = { chrome.value = !chrome.value }
                     ) {
                         Image(picture, contentDescription = "Photo", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
                     }
                 }
-                Box(Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(16.dp)) {
-                    FloatingAction(AppIcons.Close, "Close", onClose)
+                // The bars may be hidden, so the buttons keep the place they have (statusBarsIgnoringVisibility).
+                AnimatedVisibility(chrome.value, Modifier.align(Alignment.TopStart), enter = fadeIn(), exit = fadeOut()) {
+                    Box(Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility).padding(16.dp)) {
+                        FloatingAction(AppIcons.Close, "Close", onClose)
+                    }
                 }
                 // Saved or handed on from the viewer too, as AOSP Messaging's photo viewer offers.
-                if (part != null) Row(Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(16.dp)) {
-                    FloatingAction(AppIcons.Download, "Save", onClick = { savePart(context, part) })
-                    Spacer(Modifier.width(10.dp))
-                    FloatingAction(AppIcons.Share, "Share", onClick = { shareOutside(context, part) })
+                if (part != null) AnimatedVisibility(chrome.value, Modifier.align(Alignment.TopEnd), enter = fadeIn(), exit = fadeOut()) {
+                    Row(Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility).padding(16.dp)) {
+                        FloatingAction(AppIcons.Download, "Save", onClick = { savePart(context, part) })
+                        Spacer(Modifier.width(10.dp))
+                        FloatingAction(AppIcons.Share, "Share", onClick = { shareOutside(context, part) })
+                    }
                 }
             }
         }
@@ -405,6 +425,7 @@ fun rememberKind(uri: Uri): State<MediaCheck.Kind?> {
  * A film on the whole screen, in the app's own player: never handed to
  * another app, read by Media3 limited to the formats of messages.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun VideoViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null) {
     val context = LocalContext.current
@@ -419,15 +440,28 @@ internal fun VideoViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null) {
     DisposableEffect(player) { onDispose { player.release() } }
     LaunchedEffect(player, muted) { player.volume = if (muted) 0f else 1f }
     LifecycleResumeEffect(player) { onPauseOrDispose { player.pause() } }
+    // A tap on the film hides Close, Save, Share, the player's controls and the system bars together (GlassVideo
+    // follows LocalViewerChrome), the next brings them back: ReFra's and Glimpse's viewers, Google Photos.
+    val chrome = remember { mutableStateOf(true) }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        ViewerChromeEffect(chrome.value)
         DarkGround {
-            Box(Modifier.fillMaxSize()) {
-                GlassVideo(player = player, muted = muted, onMutedChange = { muted = it })
-                Box(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp)) { FloatingAction(AppIcons.Close, "Close", onClose) }
-                if (part != null) Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp)) {
-                    FloatingAction(AppIcons.Download, "Save", onClick = { savePart(context, part) })
-                    Spacer(Modifier.width(10.dp))
-                    FloatingAction(AppIcons.Share, "Share", onClick = { shareOutside(context, part) })
+            CompositionLocalProvider(LocalViewerChrome provides chrome) {
+                Box(Modifier.fillMaxSize()) {
+                    GlassVideo(player = player, muted = muted, onMutedChange = { muted = it })
+                    // The bars may be hidden, so the buttons keep the place they have (statusBarsIgnoringVisibility).
+                    AnimatedVisibility(chrome.value, Modifier.align(Alignment.TopStart), enter = fadeIn(), exit = fadeOut()) {
+                        Box(Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility).padding(16.dp)) {
+                            FloatingAction(AppIcons.Close, "Close", onClose)
+                        }
+                    }
+                    if (part != null) AnimatedVisibility(chrome.value, Modifier.align(Alignment.TopEnd), enter = fadeIn(), exit = fadeOut()) {
+                        Row(Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility).padding(16.dp)) {
+                            FloatingAction(AppIcons.Download, "Save", onClick = { savePart(context, part) })
+                            Spacer(Modifier.width(10.dp))
+                            FloatingAction(AppIcons.Share, "Share", onClick = { shareOutside(context, part) })
+                        }
+                    }
                 }
             }
         }
