@@ -10,8 +10,10 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Telephony
 import androidx.core.content.ContextCompat
+import com.yaz.sms.core.mms.MmsDelivery
 import com.yaz.sms.core.mms.MmsPart
 import com.yaz.sms.core.mms.MmsStore
+import com.yaz.sms.core.mms.pdu.PduHeaders
 import com.yaz.sms.core.mms.mediaWord
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -307,17 +309,25 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             }
             context.contentResolver.query(
                 Telephony.Mms.CONTENT_URI,
-                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID, Telephony.Mms.MESSAGE_TYPE, Telephony.Mms.THREAD_ID, Telephony.Mms.SUBJECT),
-                mmsWhere,
+                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID, Telephony.Mms.MESSAGE_TYPE, Telephony.Mms.THREAD_ID, Telephony.Mms.SUBJECT, Telephony.Mms.MESSAGE_ID, Telephony.Mms.DELIVERY_REPORT),
+                // The delivery reports kept beside the messages (m_type 134, 136) are no message: the provider's own
+                // conversation views take only types 128, 130 and 132 (MmsSmsProvider, "m_type=132 OR m_type=130 OR m_type=128").
+                "($mmsWhere) AND ${Telephony.Mms.MESSAGE_TYPE} NOT IN (${PduHeaders.MESSAGE_TYPE_DELIVERY_IND}, ${PduHeaders.MESSAGE_TYPE_READ_ORIG_IND})",
                 mmsArgs, "${Telephony.Mms.DATE} DESC" + if (limit < Int.MAX_VALUE) " LIMIT $limit" else ""
             )?.use { c ->
                 // The rows first, then all their parts in one query.
                 val rows = ArrayList<LongArray>()
                 val subjects = HashMap<Long, String?>()
+                // Sent messages that asked for a delivery report: row to Message-ID (MmsDelivery).
+                val reportable = HashMap<Long, String>()
                 while (c.moveToNext()) {
                     rows += longArrayOf(c.getLong(0), c.getLong(1), c.getInt(2).toLong(), c.getInt(3).toLong(), c.getInt(4).toLong(), c.getInt(5).toLong(), c.getLong(6))
                     subjects[c.getLong(0)] = c.getString(7)
+                    if (c.getInt(2) == Telephony.Mms.MESSAGE_BOX_SENT && c.getInt(9) == PduHeaders.VALUE_YES) {
+                        c.getString(8)?.takeIf { it.isNotBlank() }?.let { reportable[c.getLong(0)] = it }
+                    }
                 }
+                val delivered = MmsDelivery.delivered(context, reportable)
                 val parts = MmsStore.parts(context, rows.map { it[0] })
                 rows.forEach { r ->
                     val (id, date, box, read, sub) = r
@@ -340,7 +350,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                             else -> Box.SENDING
                         },
                         read = read != 0L,
-                        delivered = false,
+                        delivered = id in delivered,
                         subId = sub.toInt(),
                         mms = true,
                         parts = if (origin == null) media else media.map { it.copy(origin = origin) },

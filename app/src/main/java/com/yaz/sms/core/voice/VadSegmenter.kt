@@ -38,6 +38,13 @@ class VadSegmenter(private val params: Params = Params()) {
         val minSpeechMs: Int = 250,
         /** Nothing said at all for this long ends the dictation: the microphone is never left open for ever. */
         val noSpeechStopMs: Int = 10_000,
+        /**
+         * Never ends the dictation on silence or on nothing said ([stopSilenceMs] and [noSpeechStopMs] ignored): only
+         * the end of the source or the caller's stop does, as a session whose audio source is a file or a stream
+         * (RecognizerIntent.EXTRA_SEGMENTED_SESSION = EXTRA_AUDIO_SOURCE)
+         * https://developer.android.com/reference/android/speech/RecognizerIntent#EXTRA_SEGMENTED_SESSION
+         */
+        val neverStops: Boolean = false,
     )
 
     enum class Reason { SILENCE, NO_SPEECH }
@@ -45,8 +52,13 @@ class VadSegmenter(private val params: Params = Params()) {
     sealed interface Event {
         /** Speech just began. */
         data object Speech : Event
-        /** A phrase to write out; [endsUtterance] false when it was cut at the longest length and the speech goes on. */
-        class Phrase(val pcm: FloatArray, val endsUtterance: Boolean) : Event
+        /**
+         * A phrase to write out; [endsUtterance] false when it was cut at the longest length and the speech goes on.
+         * [startSample]: where [pcm] begins in the whole sound fed (every sample counted, the lead-in kept included),
+         * so the times of a word inside it can be told from the start, as stream.cpp keeps the time of each step
+         * https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/examples/stream/stream.cpp
+         */
+        class Phrase(val pcm: FloatArray, val endsUtterance: Boolean, val startSample: Long) : Event
         /** The dictation should end. */
         class Stop(val reason: Reason) : Event
     }
@@ -54,6 +66,8 @@ class VadSegmenter(private val params: Params = Params()) {
     private val windowMs = params.window * 1000 / params.sampleRate
     private var buffer = FloatArray(params.sampleRate * 2)
     private var length = 0
+    /** Samples fed so far: the buffer holds the last [length] of them, so it begins at [fed] - [length]. */
+    private var fed = 0L
     private var speaking = false
     private var spoke = false
     private var quietMs = 0
@@ -76,14 +90,16 @@ class VadSegmenter(private val params: Params = Params()) {
                     speechMs = windowMs
                     events += Event.Speech
                 } else {
-                    quietMs += windowMs
                     dropOldest(params.preRollMs * params.sampleRate / 1000)
-                    if (spoke && quietMs >= params.stopSilenceMs) {
-                        stopped = true
-                        events += Event.Stop(Reason.SILENCE)
-                    } else if (!spoke && quietMs >= params.noSpeechStopMs) {
-                        stopped = true
-                        events += Event.Stop(Reason.NO_SPEECH)
+                    if (!params.neverStops) {
+                        quietMs += windowMs
+                        if (spoke && quietMs >= params.stopSilenceMs) {
+                            stopped = true
+                            events += Event.Stop(Reason.SILENCE)
+                        } else if (!spoke && quietMs >= params.noSpeechStopMs) {
+                            stopped = true
+                            events += Event.Stop(Reason.NO_SPEECH)
+                        }
                     }
                 }
             } else {
@@ -113,7 +129,7 @@ class VadSegmenter(private val params: Params = Params()) {
     }
 
     private fun phrase(events: MutableList<Event>, endsUtterance: Boolean) {
-        if (speechMs >= params.minSpeechMs) events += Event.Phrase(buffer.copyOf(length), endsUtterance)
+        if (speechMs >= params.minSpeechMs) events += Event.Phrase(buffer.copyOf(length), endsUtterance, fed - length)
         speechMs = 0
         if (endsUtterance) {
             // What follows may be the next phrase: the end of this sound stays as its lead-in.
@@ -127,6 +143,7 @@ class VadSegmenter(private val params: Params = Params()) {
         if (length + params.window > buffer.size) buffer = buffer.copyOf(maxOf(buffer.size * 2, length + params.window))
         System.arraycopy(pcm, from, buffer, length, params.window)
         length += params.window
+        fed += params.window
     }
 
     private fun dropOldest(keep: Int) {

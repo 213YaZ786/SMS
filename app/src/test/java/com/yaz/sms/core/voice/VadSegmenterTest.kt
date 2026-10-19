@@ -107,6 +107,58 @@ class VadSegmenterTest {
         assertFalse(s.flush().any())
     }
 
+    // Same protocol as the tests above (fed sound coded by value, probabilities by window; the cases of stream.cpp's
+    // VAD mode https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/examples/stream/stream.cpp): where a phrase begins
+    @Test
+    fun aPhraseKnowsWhereItBeginsInTheWholeSoundLeadInIncluded() {
+        val s = VadSegmenter()
+        feed(s, ms(2_000), 0.01f, 0f)
+        feed(s, ms(1_000), 0.9f, 1f)
+        val first = feed(s, ms(1_024), 0.05f, 0f).phrases().single()
+        // 2 s of silence fed before the speech, 500 ms of it kept as the lead-in
+        assertEquals((ms(2_000) * window - 500 * 16).toLong(), first.startSample)
+        // the first sample of the phrase is that one: the lead-in is silent, the speech follows it
+        assertEquals(500 * 16, first.pcm.takeWhile { it == 0f }.size)
+        // a second phrase, after a quiet stretch short of the three seconds: counted from the very first sample fed
+        feed(s, ms(1_500), 0.01f, 0f)
+        val fedBefore = (ms(2_000) + ms(1_000) + ms(1_024) + ms(1_500)).toLong() * window
+        feed(s, ms(1_000), 0.9f, 1f)
+        val second = feed(s, ms(1_024), 0.05f, 0f).phrases().single()
+        assertEquals(fedBefore - 500 * 16, second.startSample)
+    }
+
+    // Same protocol (stream.cpp's length_ms, a phrase never longer than ten seconds): the pieces follow one another
+    @Test
+    fun aPhraseCutAtTheLongestLengthIsFollowedByOneThatBeginsWhereItEnded() {
+        val s = VadSegmenter()
+        val phrases = feed(s, ms(25_000), 0.9f, 1f).phrases()
+        assertEquals(2, phrases.size)
+        // no lead-in on the first: the speech is the first thing fed
+        assertEquals(0L, phrases[0].startSample)
+        assertEquals(phrases[0].pcm.size.toLong(), phrases[1].startSample)
+        val rest = feed(s, ms(1_024), 0.05f, 0f).phrases().single()
+        assertEquals(phrases[1].startSample + phrases[1].pcm.size, rest.startSample)
+    }
+
+    // Same protocol (Transcribro's silences that end a dictation, as the tests above): the mode that never ends on them
+    @Test
+    fun neverStopsIgnoresSilenceAndNothingSaid() {
+        val s = VadSegmenter(VadSegmenter.Params(neverStops = true))
+        // a minute of nothing: no stop
+        assertTrue(feed(s, ms(60_000), 0.01f, 0f).isEmpty())
+        // speech, then silence: the phrase closes after a second, no stop, not after a minute more either
+        feed(s, ms(1_000), 0.9f, 1f)
+        val closed = feed(s, ms(1_024), 0.05f, 0f)
+        assertEquals(1, closed.phrases().size)
+        assertEquals(0, closed.stops().size)
+        assertTrue(feed(s, ms(60_000), 0.01f, 0f).isEmpty())
+        // and it still hears what comes after
+        feed(s, ms(1_000), 0.9f, 1f)
+        val again = feed(s, ms(1_024), 0.05f, 0f)
+        assertEquals(1, again.phrases().size)
+        assertEquals(0, again.stops().size)
+    }
+
     @Test
     fun soundAndProbabilitiesMustMatch() {
         val s = VadSegmenter()

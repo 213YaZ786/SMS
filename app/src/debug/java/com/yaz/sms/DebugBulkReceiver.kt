@@ -19,6 +19,33 @@ class DebugBulkReceiver : BroadcastReceiver() {
         intent.getStringExtra("drop")?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.forEach {
             context.contentResolver.delete(android.content.ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, it), null, null)
         }
+        // --el delivered <mms row> [--ei status 129]: the network's M-Delivery.ind for a sent MMS, as AOSP Mms's
+        // PushReceiver receives one (packages/apps/Mms, src/com/android/mms/transaction/PushReceiver.java). The
+        // emulator has no MMS centre, so the row gets the Message-ID and report request a carrier's Send.conf would
+        // have left (sent box, m_id, d_rpt), then the report goes through the real MmsDelivery.received.
+        // 0 takes the newest outgoing MMS (the shell does not see failed rows).
+        intent.getLongExtra("delivered", -1L).takeIf { it >= 0 }?.let { asked ->
+            val id = if (asked > 0) asked else context.contentResolver.query(
+                Telephony.Mms.CONTENT_URI, arrayOf(Telephony.Mms._ID),
+                "${Telephony.Mms.MESSAGE_BOX} IN (2, 4, 5)", null, "${Telephony.Mms._ID} DESC"
+            )?.use { c -> if (c.moveToFirst()) c.getLong(0) else null } ?: return
+            val row = android.content.ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, id)
+            val messageId = "debug-$id"
+            context.contentResolver.update(row, android.content.ContentValues().apply {
+                put(Telephony.Mms.MESSAGE_BOX, Telephony.Mms.MESSAGE_BOX_SENT)
+                put(Telephony.Mms.MESSAGE_ID, messageId)
+                put(Telephony.Mms.DELIVERY_REPORT, com.yaz.sms.core.mms.pdu.PduHeaders.VALUE_YES)
+            }, null, null)
+            val to = com.yaz.sms.core.mms.MmsStore.recipients(context, id)
+            val ind = com.yaz.sms.core.mms.pdu.DeliveryInd().apply {
+                setMessageId(messageId.toByteArray())
+                setTo(to.take(1).map { com.yaz.sms.core.mms.pdu.EncodedStringValue(it) }.toTypedArray())
+                setStatus(intent.getIntExtra("status", com.yaz.sms.core.mms.pdu.PduHeaders.STATUS_RETRIEVED))
+                setDate(System.currentTimeMillis() / 1000)
+            }
+            android.util.Log.d("DebugBulk", "delivery report for mms $id: ${com.yaz.sms.core.mms.MmsDelivery.received(context, ind)}")
+            return
+        }
         val from = intent.getStringExtra("from") ?: return
         intent.getStringExtra("picture")?.let { name ->
             val file = java.io.File(context.dataDir, name)

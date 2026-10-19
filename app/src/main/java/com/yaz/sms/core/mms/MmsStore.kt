@@ -9,7 +9,9 @@ import com.yaz.sms.core.mms.pdu.CharacterSets
 import com.yaz.sms.core.mms.pdu.EncodedStringValue
 import com.yaz.sms.core.mms.pdu.PduBody
 import com.yaz.sms.core.mms.pdu.PduHeaders
+import com.yaz.sms.core.mms.pdu.PduParser
 import com.yaz.sms.core.mms.pdu.RetrieveConf
+import com.yaz.sms.core.mms.pdu.SendConf
 
 /** One part of a picture message: its text, or a picture, video or sound kept in Android's store. */
 data class MmsPart(
@@ -140,11 +142,18 @@ object MmsStore {
     }.getOrNull() ?: android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId()
 
     /** A message about to go out, kept in the outbox until the network answers. */
-    fun saveOutgoing(context: Context, recipients: List<String>, body: PduBody, subId: Int, inThread: Long? = null): Uri? = runCatching {
+    fun saveOutgoing(context: Context, recipients: List<String>, body: PduBody, subId: Int, inThread: Long? = null, deliveryReport: Boolean = false): Uri? = runCatching {
         val thread = inThread ?: Telephony.Threads.getOrCreateThreadId(context, recipients.toSet())
         val uri = context.contentResolver.insert(
             Telephony.Mms.Outbox.CONTENT_URI,
             ContentValues().apply {
+                // The report asked for stays in the row, as AOSP Messaging's PduPersister persists the Send.req's
+                // X-Mms-Delivery-Report and X-Mms-Read-Report (OCTET_COLUMN_NAME_MAP: d_rpt, rr); a report that comes
+                // back is taken only for a message that asked for one (MmsDelivery.received).
+                if (deliveryReport) {
+                    put(Telephony.Mms.DELIVERY_REPORT, PduHeaders.VALUE_YES)
+                    put(Telephony.Mms.READ_REPORT, PduHeaders.VALUE_NO)
+                }
                 put(Telephony.Mms.THREAD_ID, thread)
                 put(Telephony.Mms.DATE, System.currentTimeMillis() / 1000)
                 put(Telephony.Mms.MESSAGE_BOX, Telephony.Mms.MESSAGE_BOX_OUTBOX)
@@ -162,6 +171,115 @@ object MmsStore {
         recipients.forEach { writeAddress(context, id, it, PduHeaders.TO) }
         uri
     }.getOrNull()
+
+    /**
+     * What the network answered to a sent picture message (its M-Send.conf, in the sent result's EXTRA_MMS_DATA):
+     * the response status and the Message-ID the delivery report will name, kept in the row. AOSP Messaging
+     * ProcessSentMessageAction (EXTRA_MMS_DATA, MmsSender.parseSendConf: the response parsed, anything but a
+     * SendConf dropped) and MmsUtils.updateSentMmsMessageStatus (RESPONSE_STATUS and MESSAGE_ID written, the
+     * Message-ID as PduPersister.toIsoString) in https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/.
+     * A response that is not small, not a SendConf or without a Message-ID changes nothing.
+     */
+    fun saveSendConf(context: Context, uri: Uri, response: ByteArray?) {
+        if (response == null || response.isEmpty() || response.size > 16 * 1024) return
+        runCatching {
+            val conf = PduParser(response, true).parse() as? SendConf ?: return
+            val values = ContentValues(2)
+            values.put(Telephony.Mms.RESPONSE_STATUS, conf.responseStatus)
+            conf.messageId?.takeIf { it.isNotEmpty() && it.size <= 256 }?.let { values.put(Telephony.Mms.MESSAGE_ID, isoString(it)) }
+            context.contentResolver.update(uri, values, null, null)
+        }
+    }
+
+    /** A Message-ID as text, as AOSP Messaging's PduPersister.toIsoString (ISO-8859-1). */
+    fun isoString(bytes: ByteArray): String = String(bytes, Charsets.ISO_8859_1)
+
+    /** A sent picture message, as a delivery report needs to know it. */
+    class SentMms(val id: Long, val thread: Long, val box: Int, val reportAsked: Boolean, val sub: Int)
+
+    /**
+     * The one sent message with this Message-ID: AOSP Mms PushReceiver.findThreadId selects the Send.req rows
+     * (m_type 128) of the m_id and goes on only when there is exactly one. The Message-ID is bound, never written
+     * into the query.
+     */
+    fun sentWithId(context: Context, messageId: String): SentMms? = runCatching {
+        context.contentResolver.query(
+            Telephony.Mms.CONTENT_URI,
+            arrayOf(Telephony.Mms._ID, Telephony.Mms.THREAD_ID, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.DELIVERY_REPORT, Telephony.Mms.SUBSCRIPTION_ID),
+            "${Telephony.Mms.MESSAGE_ID} = ? AND ${Telephony.Mms.MESSAGE_TYPE} = ${PduHeaders.MESSAGE_TYPE_SEND_REQ}",
+            arrayOf(messageId), null
+        )?.use { c ->
+            if (c.count != 1 || !c.moveToFirst()) return null
+            SentMms(c.getLong(0), c.getLong(1), c.getInt(2), c.getInt(3) == PduHeaders.VALUE_YES, c.getInt(4))
+        }
+    }.getOrNull()
+
+    /** One kept delivery report: its row and the status it holds. */
+    class Report(val row: Long, val status: Int)
+
+    /**
+     * The delivery reports kept for these Message-IDs (the pdu rows of m_type 134, TelephonyProvider MmsProvider
+     * MMS_REPORT_STATUS joins them to the sent message by m_id), in one query per few hundred.
+     */
+    fun reports(context: Context, messageIds: Collection<String>): Map<String, List<Report>> {
+        val out = HashMap<String, ArrayList<Report>>()
+        messageIds.distinct().chunked(400).forEach { chunk ->
+            runCatching {
+                context.contentResolver.query(
+                    Telephony.Mms.CONTENT_URI, arrayOf(Telephony.Mms._ID, Telephony.Mms.MESSAGE_ID, Telephony.Mms.STATUS),
+                    "${Telephony.Mms.MESSAGE_TYPE} = ${PduHeaders.MESSAGE_TYPE_DELIVERY_IND} AND ${Telephony.Mms.MESSAGE_ID} IN (${chunk.joinToString(",") { "?" }})",
+                    chunk.toTypedArray(), null
+                )?.use { c ->
+                    while (c.moveToNext()) out.getOrPut(c.getString(1).orEmpty()) { ArrayList() } += Report(c.getLong(0), c.getInt(2))
+                }
+            }
+        }
+        return out
+    }
+
+    /** Who a kept report is about: the TO address of its row (the MMS_REPORT_STATUS join: addr of type 151). */
+    fun reportRecipient(context: Context, row: Long): String? = runCatching {
+        context.contentResolver.query(
+            Uri.parse("content://mms/$row/addr"), arrayOf(Telephony.Mms.Addr.ADDRESS),
+            "${Telephony.Mms.Addr.TYPE} = ?", arrayOf(PduHeaders.TO.toString()), null
+        )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    }.getOrNull()
+
+    /**
+     * Keeps a delivery report: AOSP Mms PushReceiver persists the DeliveryInd in the inbox and gives it the sent
+     * message's thread. Read and seen, so that it counts as no unread message; the provider's thread triggers
+     * (PDU_UPDATE_THREAD_CONSTRAINTS) take only m_type 128, 130 and 132, so the thread's date, snippet and
+     * count stay. The recipient is the sent message's own address for them, which [reportRecipient] gives back.
+     */
+    fun saveReport(context: Context, sent: SentMms, messageId: String, recipient: String, status: Int, date: Long): Boolean = runCatching {
+        val now = System.currentTimeMillis() / 1000
+        val uri = context.contentResolver.insert(
+            Telephony.Mms.Inbox.CONTENT_URI,
+            ContentValues().apply {
+                put(Telephony.Mms.THREAD_ID, sent.thread)
+                put(Telephony.Mms.DATE, now)
+                put(Telephony.Mms.DATE_SENT, date.takeIf { it > 0 } ?: now)
+                put(Telephony.Mms.MESSAGE_BOX, Telephony.Mms.MESSAGE_BOX_INBOX)
+                put(Telephony.Mms.READ, 1)
+                put(Telephony.Mms.SEEN, 1)
+                put(Telephony.Mms.MESSAGE_TYPE, PduHeaders.MESSAGE_TYPE_DELIVERY_IND)
+                put(Telephony.Mms.MMS_VERSION, PduHeaders.CURRENT_MMS_VERSION)
+                put(Telephony.Mms.MESSAGE_ID, messageId)
+                put(Telephony.Mms.STATUS, status)
+                put(Telephony.Mms.SUBSCRIPTION_ID, sent.sub)
+            }
+        ) ?: return false
+        writeAddress(context, ContentUris.parseId(uri), recipient, PduHeaders.TO)
+        true
+    }.getOrDefault(false)
+
+    /** A later report about the same recipient replaces the status of the kept one. */
+    fun updateReport(context: Context, row: Long, status: Int): Boolean = runCatching {
+        context.contentResolver.update(
+            ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, row),
+            ContentValues().apply { put(Telephony.Mms.STATUS, status) }, null, null
+        ) > 0
+    }.getOrDefault(false)
 
     /**
      * A picture or file that came over the rich chat, kept in the inbox: its

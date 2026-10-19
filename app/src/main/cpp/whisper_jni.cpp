@@ -48,7 +48,17 @@ jlong open_model(JNIEnv *env, jclass, jstring lib_dir, jstring model) {
     return reinterpret_cast<jlong>(ctx);
 }
 
-jbyteArray transcribe(JNIEnv *env, jclass, jlong handle, jfloatArray pcm, jint threads, jstring language, jboolean live) {
+// [prompt]: words the speech is likely to hold (the text before the cursor, names an app expects), given to whisper as
+// its initial prompt, as whisper.cpp's command line does with --prompt (examples/cli/cli.cpp, wparams.initial_prompt)
+// https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/examples/cli/cli.cpp
+// [words]: one segment per word with its times, as cli.cpp's word-level timestamps (-ml 1): token_timestamps, max_len 1,
+// split_on_word, timestamps on (README "Word-level timestamp (experimental)", cli.cpp wparams.token_timestamps /
+// max_len / split_on_word) https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/README.md
+// The answer is then UTF-8 lines "t0<TAB>t1<TAB>text<LF>": t0 and t1 in milliseconds from the start of the sound
+// (whisper_full_get_segment_t0/t1 count 10 ms, whisper.h), the text as whisper wrote it (a leading space marks a new
+// word). Without [words] it is the text alone.
+jbyteArray run_whisper(JNIEnv *env, jlong handle, jfloatArray pcm, jint threads, jstring language, jboolean live,
+                       jstring prompt, bool words) {
     auto *ctx = reinterpret_cast<whisper_context *>(handle);
     if (ctx == nullptr) return nullptr;
     whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
@@ -58,8 +68,20 @@ jbyteArray transcribe(JNIEnv *env, jclass, jlong handle, jfloatArray pcm, jint t
     env->ReleaseStringUTFChars(language, lang);
     if (code != "auto" && whisper_lang_id(code.c_str()) < 0) code = "auto";
     params.language = code.c_str();
+    std::string hint;
+    if (prompt != nullptr) {
+        const char *p = env->GetStringUTFChars(prompt, nullptr);
+        hint = p;
+        env->ReleaseStringUTFChars(prompt, p);
+    }
+    if (!hint.empty()) params.initial_prompt = hint.c_str();
     params.translate = false;
-    params.no_timestamps = true;
+    params.no_timestamps = !words;
+    if (words) {
+        params.token_timestamps = true;
+        params.max_len = 1;
+        params.split_on_word = true;
+    }
     params.print_progress = false;
     params.print_realtime = false;
     params.print_timestamps = false;
@@ -77,11 +99,45 @@ jbyteArray transcribe(JNIEnv *env, jclass, jlong handle, jfloatArray pcm, jint t
     if (failed != 0) return nullptr;
     std::string text;
     const int segments = whisper_full_n_segments(ctx);
-    for (int i = 0; i < segments; ++i) text += whisper_full_get_segment_text(ctx, i);
+    for (int i = 0; i < segments; ++i) {
+        std::string piece = whisper_full_get_segment_text(ctx, i);
+        if (!words) {
+            text += piece;
+            continue;
+        }
+        // The line format holds no tab or line break inside the text
+        for (char &c : piece) if (c == '\t' || c == '\n' || c == '\r') c = ' ';
+        text += std::to_string(whisper_full_get_segment_t0(ctx, i) * 10) + '\t' +
+                std::to_string(whisper_full_get_segment_t1(ctx, i) * 10) + '\t' + piece + '\n';
+    }
     // Plain UTF-8 bytes: Java's own string maker refuses some of it (emoji).
     jbyteArray out = env->NewByteArray(static_cast<jsize>(text.size()));
     env->SetByteArrayRegion(out, 0, static_cast<jsize>(text.size()), reinterpret_cast<const jbyte *>(text.data()));
     return out;
+}
+
+// The text alone: examples/cli/cli.cpp without -ml, https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/examples/cli/cli.cpp
+jbyteArray transcribe(JNIEnv *env, jclass, jlong handle, jfloatArray pcm, jint threads, jstring language, jboolean live,
+                      jstring prompt) {
+    return run_whisper(env, handle, pcm, threads, language, live, prompt, false);
+}
+
+// Word by word with times: examples/cli/cli.cpp with -ml 1 (README "Word-level timestamp (experimental)"),
+// https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/examples/cli/cli.cpp
+jbyteArray transcribe_words(JNIEnv *env, jclass, jlong handle, jfloatArray pcm, jint threads, jstring language,
+                            jboolean live, jstring prompt) {
+    return run_whisper(env, handle, pcm, threads, language, live, prompt, true);
+}
+
+// The language whisper heard in the last sound it wrote out (its code, "fr"), as cli.cpp reports it:
+// whisper_lang_str(whisper_full_lang_id(ctx)) https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/examples/cli/cli.cpp
+jstring heard_language(JNIEnv *env, jclass, jlong handle) {
+    auto *ctx = reinterpret_cast<whisper_context *>(handle);
+    if (ctx == nullptr) return nullptr;
+    const int id = whisper_full_lang_id(ctx);
+    if (id < 0) return nullptr;
+    const char *code = whisper_lang_str(id);
+    return code == nullptr ? nullptr : env->NewStringUTF(code);
 }
 
 void close_model(JNIEnv *, jclass, jlong handle) {
@@ -142,7 +198,9 @@ const char kClass[] = "com.yaz.sms.core.voice.Whisper";
 
 const JNINativeMethod kMethods[] = {
     {"open", "(Ljava/lang/String;Ljava/lang/String;)J", reinterpret_cast<void *>(open_model)},
-    {"transcribe", "(J[FILjava/lang/String;Z)[B", reinterpret_cast<void *>(transcribe)},
+    {"transcribe", "(J[FILjava/lang/String;ZLjava/lang/String;)[B", reinterpret_cast<void *>(transcribe)},
+    {"transcribeWords", "(J[FILjava/lang/String;ZLjava/lang/String;)[B", reinterpret_cast<void *>(transcribe_words)},
+    {"heardLanguage", "(J)Ljava/lang/String;", reinterpret_cast<void *>(heard_language)},
     {"close", "(J)V", reinterpret_cast<void *>(close_model)},
     {"abort", "(Z)V", reinterpret_cast<void *>(abort_work)},
     {"knows", "(Ljava/lang/String;)Z", reinterpret_cast<void *>(knows_language)},

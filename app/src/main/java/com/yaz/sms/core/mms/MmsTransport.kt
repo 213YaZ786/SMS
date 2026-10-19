@@ -14,6 +14,7 @@ import android.telephony.SubscriptionManager
 import androidx.core.content.FileProvider
 import com.yaz.sms.core.mms.pdu.AcknowledgeInd
 import com.yaz.sms.core.mms.pdu.CharacterSets
+import com.yaz.sms.core.mms.pdu.DeliveryInd
 import com.yaz.sms.core.mms.pdu.EncodedStringValue
 import com.yaz.sms.core.mms.pdu.NotificationInd
 import com.yaz.sms.core.mms.pdu.PduBody
@@ -118,12 +119,15 @@ object MmsTransport {
             expiry = 7L * 24 * 60 * 60
             runCatching {
                 priority = PduHeaders.PRIORITY_NORMAL
-                deliveryReport = PduHeaders.VALUE_NO
+                // A delivery report is always asked for, as the SMS path asks: AOSP Messaging's createMmsSendReq sets
+                // X-Mms-Delivery-Report from isDeliveryReportRequired (its delivery reports preference, on by default
+                // for SMS), https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/sms/MmsUtils.java
+                deliveryReport = PduHeaders.VALUE_YES
                 readReport = PduHeaders.VALUE_NO
             }
             messageSize = (0 until body.partsNum).sumOf { (body.getPart(it).data?.size ?: 0).toLong() }
         }
-        val uri = MmsStore.saveOutgoing(app, recipients, body, sub, inThread) ?: return null
+        val uri = MmsStore.saveOutgoing(app, recipients, body, sub, inThread, deliveryReport = true) ?: return null
         if (unfit.isNotEmpty()) {
             MmsStore.setBox(app, uri, Telephony.Mms.MESSAGE_BOX_FAILED)
             val what = if (unfit.all { ContentType.isVideoType(it.contentType) }) "video" else "attachment"
@@ -152,7 +156,14 @@ object MmsTransport {
      */
     fun download(context: Context, pdu: ByteArray, subId: Int) {
         val app = context.applicationContext
-        val ind = runCatching { PduParser(pdu, true).parse() as? NotificationInd }.getOrNull() ?: return
+        // What the network pushed, told apart by its type as AOSP Mms PushReceiver does: a delivery report goes to
+        // MmsDelivery, an announcement is downloaded, anything else is dropped.
+        val pushed = runCatching { PduParser(pdu, true).parse() }.getOrNull()
+        if (pushed is DeliveryInd) {
+            MmsDelivery.received(app, pushed)
+            return
+        }
+        val ind = pushed as? NotificationInd ?: return
         val sub = if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) subId else SubscriptionManager.getDefaultSmsSubscriptionId()
         // The announcement is kept first, as AOSP Mms keeps a NotificationInd: a
         // download that fails or waits leaves a message the user can download by hand.
@@ -218,6 +229,9 @@ object MmsTransport {
                     val uri = intent.data ?: return
                     if (uri.authority != "mms") return
                     MmsStore.setBox(context, uri, if (resultCode == Activity.RESULT_OK) Telephony.Mms.MESSAGE_BOX_SENT else Telephony.Mms.MESSAGE_BOX_FAILED)
+                    // The network's answer carries the Message-ID the delivery report will name: AOSP Messaging
+                    // ProcessSentMessageAction reads it from the result's EXTRA_MMS_DATA.
+                    if (resultCode == Activity.RESULT_OK) MmsStore.saveSendConf(context, uri, intent.getByteArrayExtra(SmsManager.EXTRA_MMS_DATA))
                 }
                 ACTION_DOWNLOADED -> {
                     val from = intent.getStringExtra(EXTRA_FROM)

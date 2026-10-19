@@ -10,18 +10,49 @@ import java.util.Locale
 /**
  * The number ranges a country's regulator keeps for sales calls, so a
  * cold call is known by its number alone, on the phone, with no list to
- * download. Countries are added as their rules are published.
+ * download. A country is added only when its regulator's own text reserves
+ * a range to telemarketing, cited beside it. Most countries have none
+ * (checked 2026-10-18: Germany, UK, USA, Canada, Netherlands, Belgium,
+ * Portugal, Argentina, Mexico, Colombia rely on consent registers and
+ * caller ID rules; Italy's AGCOM 0844 (Delibera 156/18/CIR) is defined but
+ * unused, its Delibera 21/26/CIR says so; Brazil's Anatel 0303 stopped
+ * being mandatory in August 2025).
  */
 object SalesCalls {
 
-    /** France (ARCEP, since 2023): mainland and overseas ranges, the nine digits after the trunk 0. */
+    /**
+     * France: ARCEP decision no. 2022-1583 of 1 September 2022 (since 1 January 2023),
+     * the "numeros polyvalents verifies" automated outbound calls must use:
+     * mainland and overseas ranges, the nine digits after the trunk 0.
+     */
     private val France = listOf(
         "162", "163", "270", "271", "377", "378", "424", "425", "568", "569", "948", "949",
         "9475", "9476", "9477", "9478", "9479"
     )
 
+    /** One country: its ISO code, its calling code, and what a national number (no trunk 0) must be. */
+    private class Rule(val iso: String, val code: String, val inRange: (String) -> Boolean)
+
+    private val rules = listOf(
+        Rule("fr", "33") { it.length == 9 && France.any(it::startsWith) },
+        // Spain: Resolucion of 14 April 2026 (BOE-A-2026-8409, under Ley 10/2025 art. 16.3): code 400,
+        // nine digits, the only range allowed for commercial calls from 17 October 2026.
+        Rule("es", "34") { it.length == 9 && it.startsWith("400") },
+        // India: TRAI, TCCCPR 2018 and its 2025 amendment, press release no. 91/2026: the 140 series
+        // is for promotional calls. The 1600 series is banks' and governments' service calls and
+        // must never be blocked or tagged, so it is not here.
+        Rule("in", "91") { it.length == 10 && it.startsWith("140") },
+        // Chile: Subtel Resolucion Exenta 286/2024 (in force 13 August 2025, updated 5 June 2026):
+        // 809 marks unsolicited mass advertising calls (600 is for calls the person asked for,
+        // not sales). The length is not stated: Chile's 600 and 800 numbers have 9 or 10 digits.
+        Rule("cl", "56") { it.length in 9..10 && it.startsWith("809") },
+        // Peru: Decreto Supremo 018-2026-MTC (El Peruano, 15 September 2026), article 5:
+        // the 500 series, format 500 XXX XXX, is exclusive to commercial and advertising calls.
+        Rule("pe", "51") { it.length == 9 && it.startsWith("500") }
+    )
+
     /** Countries with ranges, by ISO code. */
-    val countries = setOf("fr", "es", "in")
+    val countries: Set<String> = rules.map { it.iso }.toSet()
 
     /**
      * The country a national number is read in: the network of the line
@@ -66,22 +97,14 @@ object SalesCalls {
         val digits = number.substringBefore(';').trim()
             .filterIndexed { i, c -> c.isDigit() || (c == '+' && i == 0) }
             .replaceFirst(Regex("^00"), "+")
-        val (cc, rest) = when {
-            digits.startsWith("+33") -> "fr" to digits.removePrefix("+33")
-            digits.startsWith("+34") -> "es" to digits.removePrefix("+34")
-            digits.startsWith("+91") -> "in" to digits.removePrefix("+91")
-            digits.startsWith("+") -> return false
-            else -> country?.lowercase() to digits
+        val (rule, rest) = when {
+            digits.startsWith("+") -> {
+                val found = rules.firstOrNull { digits.startsWith("+" + it.code) } ?: return false
+                found to digits.removePrefix("+" + found.code)
+            }
+            else -> (rules.firstOrNull { it.iso == country?.lowercase() } ?: return false) to digits
         }
         // The trunk 0 of a national form, or one some networks keep after the country code.
-        val national = rest.removePrefix("0")
-        return when (cc) {
-            "fr" -> national.length == 9 && France.any(national::startsWith)
-            // Spain (Law 10/2025): nine digit numbers starting with 400.
-            "es" -> national.length == 9 && national.startsWith("400")
-            // India (TRAI): the 140 series, kept for promotional calls.
-            "in" -> national.length == 10 && national.startsWith("140")
-            else -> false
-        }
+        return rule.inRange(rest.removePrefix("0"))
     }
 }

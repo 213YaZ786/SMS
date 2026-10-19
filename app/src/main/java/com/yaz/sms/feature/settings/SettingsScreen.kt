@@ -271,7 +271,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 )
                 SettingRow(
                     title = "SMS ${BuildConfig.VERSION_NAME}",
-                    summary = "A phone app with no account, no tracking and no ads.",
+                    summary = "A messaging app with no account, no tracking and no ads.",
                     onClick = null
                 )
                 SettingRow(

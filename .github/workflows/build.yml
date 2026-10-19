@@ -133,6 +133,72 @@ jobs:
           ( cd release && sha256sum ./*.apk > SHA256SUMS.txt )
           cat release/SHA256SUMS.txt
 
+      # Writes release/app.json and release/icon.png, which go out with the
+      # APKs (the artifact and `gh release create` both take release/*) so a
+      # store can list the app without opening the APK. app.json holds the
+      # package, versionCode, versionName, label and minSdk that aapt2 reads
+      # from the release APK (`aapt2 dump badging`: package: name= versionCode=
+      # versionName=, minSdkVersion: (sdkVersion: in older aapt), application-label:), and "description", an
+      # object from locale to the short description of each
+      # fastlane/metadata/android/<locale>/short_description.txt of the repo
+      # (the layout supply in github.com/fastlane/fastlane and F-Droid read,
+      # f-droid.org/docs/All_About_Descriptions_Graphics_and_Screenshots);
+      # {} when there is none; "apks", the release APKs a store may install
+      # (one here; an app shipping one APK per ABI lists them all, the store
+      # picks by the phone's ABIs), so a store reaches every file through
+      # releases/latest/download/ without GitHub's API and its 60 requests
+      # an hour. jq builds the JSON, so every text is escaped.
+      # icon.png is images/icon.png of en-US when the repo has it, else the
+      # launcher icon drawn by the unit tests (app/build/outputs/icon/icon.png,
+      # for an app taking the iconexport kit). SHA256SUMS.txt above stays over
+      # the APKs only.
+      - name: Write app.json and the icon
+        run: |
+          AAPT2="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)aapt2"
+          BADGING="$("$AAPT2" dump badging "release/SMS-$VERSION.apk")"
+          badge() { printf '%s\n' "$BADGING" | sed -n "$1" | head -n 1; }
+          app_package="$(badge "s/^package: name='\([^']*\)'.*/\1/p")"
+          app_code="$(badge "s/^package:.* versionCode='\([0-9]*\)'.*/\1/p")"
+          app_version="$(badge "s/^package:.* versionName='\([^']*\)'.*/\1/p")"
+          app_label="$(badge "s/^application-label:'\(.*\)'$/\1/p")"
+          app_sdk="$(badge "s/^\(min\)\{0,1\}[sS]dkVersion:'\([0-9]*\)'$/\2/p")"
+          for field in app_package app_code app_version app_label app_sdk
+          do
+            if [ -z "${!field}" ]
+            then
+              echo "::error::aapt2 dump badging gave no $field"
+              exit 1
+            fi
+          done
+          descriptions='{}'
+          for file in fastlane/metadata/android/*/short_description.txt
+          do
+            [ -f "$file" ] || continue
+            locale="$(basename "$(dirname "$file")")"
+            descriptions="$(jq -c --arg locale "$locale" --rawfile text "$file" \
+              '. + {($locale): ($text | sub("\\s+$"; ""))}' <<< "$descriptions")"
+          done
+          jq -n \
+            --arg package "$app_package" \
+            --argjson versionCode "$app_code" \
+            --arg versionName "$app_version" \
+            --arg label "$app_label" \
+            --argjson minSdk "$app_sdk" \
+            --argjson description "$descriptions" \
+            --arg apk "SMS-$VERSION.apk" \
+            '{package: $package, versionCode: $versionCode, versionName: $versionName, label: $label, minSdk: $minSdk, description: $description, apks: [$apk]}' \
+            > release/app.json
+          cat release/app.json
+          # The fastlane icon wins; without one, the launcher icon drawn at 512 px
+          # by the unit tests above (IconExportTest, the iconexport kit).
+          if [ -f fastlane/metadata/android/en-US/images/icon.png ]
+          then
+            cp fastlane/metadata/android/en-US/images/icon.png release/icon.png
+          elif [ -f app/build/outputs/icon/icon.png ]
+          then
+            cp app/build/outputs/icon/icon.png release/icon.png
+          fi
+
       # The app declares a handful of permissions and depends on libraries
       # that declare a few of their own, WorkManager above all. Allowed: the
       # list below, plus what the app's own manifest asks for, since an app
