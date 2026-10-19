@@ -840,17 +840,35 @@ private fun ThreadContent(
                           Modifier.fillMaxWidth().offset { IntOffset(if (mineRow) -timesPeek.value.roundToInt() else 0, 0) },
                           horizontalAlignment = if (mineRow) Alignment.End else Alignment.Start
                       ) {
+                      // What a reaction by text is about: the message's words, or "image" / "video" for a message of only
+                      // that (the iPhone names it, quoting nothing). Said in Google's way or the iPhone's (Settings, and
+                      // Automatic: the way of the last reaction received here); a group takes it as it takes any text.
+                      // Quik's sendReaction (https://github.com/quik-sms/quik/pull/846) sends to the one address of a
+                      // conversation; here the people of the group get it in a picture message, as a group's other texts.
+                      val reactWords = remember(row.message.body) { com.yaz.sms.core.sms.Effects.read(row.message.body).first }
+                      val reactMedia = if (reactWords.isNotBlank()) null else row.message.parts.firstNotNullOfOrNull { p ->
+                          when {
+                              p.contentType.startsWith("image/", ignoreCase = true) -> "image"
+                              p.contentType.startsWith("video/", ignoreCase = true) -> "video"
+                              else -> null
+                          }
+                      }
                       Bubble(
                         row.message,
                         fresh = row.message.box == MessageBox.RECEIVED && row.message.uid in fresh,
                         rich = rich,
                         cluster = cluster,
                         smsReactions = row.smsReactions,
-                        // A reaction by SMS to a message with words, one to one: Google Messages shows it as such, an iPhone as words.
-                        onSmsReact = if (!group && !row.message.rich && row.message.body.isNotBlank()) ({ emoji ->
+                        // A reaction by text to a message with words, a picture or a film: Google Messages shows Google's
+                        // as such, an iPhone reads either as words.
+                        onSmsReact = if (!row.message.rich && !left && people.none { '@' in it } && (reactWords.isNotBlank() || reactMedia != null)) ({ emoji ->
                             val removed = emoji in row.smsMine
-                            val said = com.yaz.sms.core.sms.Effects.read(row.message.body).first
-                            scope.launch(Dispatchers.IO) { SmsSender.send(context, to, com.yaz.sms.core.sms.SmsReactions.write(emoji, said, removed), row.message.subId, thread) }
+                            val style = com.yaz.sms.core.sms.SmsReactions.styleFor(prefs.reactionFormat, list)
+                            val text = com.yaz.sms.core.sms.SmsReactions.compose(style, emoji, reactWords, removed, reactMedia)
+                            scope.launch(Dispatchers.IO) {
+                                if (group) MmsTransport.send(context, people, text, emptyList(), row.message.subId, thread)
+                                else SmsSender.send(context, to, text, row.message.subId, thread)
+                            }
                         }) else null,
                         smsMine = row.smsMine,
                         onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },
@@ -1261,7 +1279,7 @@ private fun Bubble(
     val visualKinds = remember(kinds, inBubble) { inBubble.map { kinds.getOrNull(it) } }
     val tiles = remember(m.parts, inBubble) { m.parts.filterIndexed { i, _ -> i !in inBubble } }
     // Every message with words or parts has its bubble; a message waiting for its download has none.
-    val hasBubble = !m.waiting && (said.isNotEmpty() || visual.isNotEmpty() || tiles.isNotEmpty() || m.parts.isEmpty())
+    val hasBubble = !m.waiting && (said.isNotEmpty() || visual.isNotEmpty() || tiles.isNotEmpty() || m.parts.isEmpty() || m.subject != null)
     // The corners follow the message's place in its run of messages of one sender (Signal's V2ConversationItemShape).
     val shape = remember(cluster, mine) { Clusters.corners(cluster, mine) }
     val clock = remember(m.date) { clockOf(context, m.date) }
@@ -1480,7 +1498,7 @@ private fun Bubble(
                         haptics.firm()
                         menuOpen = true
                     },
-                    tiles = tiles, mine = mine
+                    tiles = tiles, mine = mine, subject = m.subject
                 )
             }
         }
@@ -1542,7 +1560,7 @@ private fun Bubble(
                         poll = null,
                         visual = visual, kinds = visualKinds, held = holdMedia && !mine, footer = footer,
                         onMore = null, interactive = false,
-                        tiles = tiles, mine = mine
+                        tiles = tiles, mine = mine, subject = m.subject
                     )
                 }
             }

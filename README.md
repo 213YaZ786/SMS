@@ -64,7 +64,9 @@ Fossify Messages' recycle bin (GPL-3.0); starred messages port Zulip's,
 Apache License 2.0; the spam filter ports SpamBlocker's classifier and
 order of tests (MIT), AOSP ExtServices' code detection (Apache License 2.0) and
 the keyword filters of QUIK and Fossify Messages (GPL-3.0). Icons from Google's Material Icons, Apache License 2.0. Picture
-messages use code from AOSP Messaging, Apache License 2.0. The encrypted
+messages use code from AOSP Messaging, Apache License 2.0 (their layout and names, the subject, the
+numbers kept out of a group); an iPhone's shared place is read after AirMessage's (Apache License 2.0);
+reactions sent as an iPhone writes them follow QUIK's (GPL-3.0) and Kotozute's (AGPL-3.0). The encrypted
 chat runs chatmail core (github.com/chatmail/core), Mozilla Public
 License 2.0, downloaded unchanged at build time. Calls use WebRTC's
 Android library by webrtc-sdk, MIT License. Doodles background: Material Symbols by Google, Apache 2.0. Big emoji and screen effects move with Google's Noto Animated Emoji, CC BY 4.0,

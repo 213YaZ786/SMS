@@ -223,7 +223,7 @@ object MmsStore {
             runCatching {
                 context.contentResolver.query(
                     Uri.parse("content://mms/part"),
-                    arrayOf(Telephony.Mms.Part._ID, Telephony.Mms.Part.CONTENT_TYPE, Telephony.Mms.Part.TEXT, Telephony.Mms.Part.NAME, Telephony.Mms.Part.FILENAME, Telephony.Mms.Part.MSG_ID),
+                    arrayOf(Telephony.Mms.Part._ID, Telephony.Mms.Part.CONTENT_TYPE, Telephony.Mms.Part.TEXT, Telephony.Mms.Part.NAME, Telephony.Mms.Part.FILENAME, Telephony.Mms.Part.MSG_ID, Telephony.Mms.Part.CONTENT_LOCATION),
                     "${Telephony.Mms.Part.MSG_ID} IN (${chunk.joinToString(",") { "?" }})", chunk.map { it.toString() }.toTypedArray(), Telephony.Mms.Part._ID
                 )?.use { c ->
                     while (c.moveToNext()) {
@@ -235,13 +235,34 @@ object MmsStore {
                                 if (t.isNotBlank()) text.getOrPut(mid) { StringBuilder() }.let { if (it.isEmpty()) it.append(t) else it.append('\n').append(t) }
                             }
                             type == ContentType.APP_SMIL || type.startsWith("application/smil") -> Unit
-                            else -> media.getOrPut(mid) { ArrayList() } += MmsPart(Uri.parse("content://mms/part/${c.getLong(0)}"), type, c.getString(3) ?: c.getString(4))
+                            else -> media.getOrPut(mid) { ArrayList() } += MmsPart(Uri.parse("content://mms/part/${c.getLong(0)}"), type, c.getString(3) ?: c.getString(4) ?: c.getString(6))
                         }
                     }
                 }
             }
         }
         return ids.associateWith { (text[it]?.toString().orEmpty()) to (media[it] ?: emptyList()) }
+    }
+
+    /**
+     * The subjects of picture messages, cleansed (MmsSubject), only those that have one to show: the
+     * conversation list names the newest message's subject over its snippet, as AOSP Messaging's
+     * ConversationListItemView.setSubject does. One query per few hundred rows.
+     */
+    fun subjects(context: Context, ids: Collection<Long>): Map<Long, String> {
+        val out = HashMap<Long, String>()
+        ids.distinct().chunked(500).forEach { chunk ->
+            runCatching {
+                context.contentResolver.query(
+                    Telephony.Mms.CONTENT_URI, arrayOf(Telephony.Mms._ID, Telephony.Mms.SUBJECT),
+                    "${Telephony.Mms._ID} IN (${chunk.joinToString(",") { "?" }}) AND ${Telephony.Mms.SUBJECT} IS NOT NULL",
+                    chunk.map { it.toString() }.toTypedArray(), null
+                )?.use { c ->
+                    while (c.moveToNext()) MmsSubject.cleanse(c.getString(1))?.let { out[c.getLong(0)] = it }
+                }
+            }
+        }
+        return out
     }
 
     /** Who sent a received message. */
@@ -306,6 +327,7 @@ fun mediaWord(contentType: String?): String = when {
     ContentType.isImageType(contentType) -> "Photo"
     ContentType.isVideoType(contentType) -> "Video"
     ContentType.isAudioType(contentType) -> "Voice message"
+    contentType.contains("vlocation") -> "Location"
     contentType.contains("vcard") -> "Contact card"
     else -> "Attachment"
 }

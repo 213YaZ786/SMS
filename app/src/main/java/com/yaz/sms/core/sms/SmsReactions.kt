@@ -56,10 +56,56 @@ object SmsReactions {
      * Google Messages and here, in any language.
      */
     fun write(emoji: String, text: String, removed: Boolean): String {
-        val quoted = squash(text).let { if (it.length > 200) it.take(199).trimEnd() + "…" else it }
+        val quoted = excerpt(text)
         val mark = if (removed) '\u200c' else '\u200b'
         return "$HAIR${if (removed) "Removed " else "Reacted "}$mark$emoji$mark${if (removed) " from " else " to "}$HAIR$quoted$HAIR$HAIR"
     }
+
+    /** A quoted message squashed to one line and cut at 200 characters, as Google writes it. */
+    private fun excerpt(text: String) = squash(text).let { if (it.length > 200) it.take(199).trimEnd() + "…" else it }
+
+    /** The two ways a reaction travels as text: Google Messages' (invisible marks) and the iPhone's (Apple's words). */
+    enum class Style { GOOGLE, APPLE }
+
+    /** Which way a reaction message came in, or null when it is no reaction. */
+    fun styleOf(body: String): Style? {
+        if (body.isEmpty()) return null
+        if (body.first() == HAIR && google.containsMatchIn(body)) return Style.GOOGLE
+        return if (parse(body) != null) Style.APPLE else null
+    }
+
+    /**
+     * The way of the newest reaction received in [list] (oldest first), or null when none came yet. Quik's
+     * EmojiReactionRepositoryImpl.resolveFormat in its automatic mode "mirrors the most recent reaction format we
+     * received in this thread" (https://github.com/quik-sms/quik/pull/846).
+     */
+    fun lastStyle(list: List<Message>): Style? {
+        for (i in list.indices.reversed()) {
+            val m = list[i]
+            if (m.box != com.yaz.sms.data.sms.Box.RECEIVED || m.rich || (m.mms && m.parts.isNotEmpty())) continue
+            styleOf(m.body)?.let { return it }
+        }
+        return null
+    }
+
+    /**
+     * The way a reaction of the user goes out: the one chosen in Settings, or with Automatic the way of the newest
+     * reaction received in the conversation, Google's when none came (Quik's resolveFormat: Automatic, Google
+     * Messages, iOS; "falling back to the Google Messages format", https://github.com/quik-sms/quik/pull/846).
+     */
+    fun styleFor(setting: com.yaz.sms.data.settings.ReactionFormat, list: List<Message>): Style = when (setting) {
+        com.yaz.sms.data.settings.ReactionFormat.GOOGLE -> Style.GOOGLE
+        com.yaz.sms.data.settings.ReactionFormat.IPHONE -> Style.APPLE
+        com.yaz.sms.data.settings.ReactionFormat.AUTOMATIC -> lastStyle(list) ?: Style.GOOGLE
+    }
+
+    /**
+     * The text of a reaction of the user in [style]. Google's is [write]; Apple's is [Tapbacks.write], the words of
+     * the phone's language. A picture or a video ([media] "image" or "video") has no quote to carry the marks of
+     * Google's, so it is always said in Apple's words, which Google Messages reads too.
+     */
+    fun compose(style: Style, emoji: String, text: String, removed: Boolean, media: String? = null, locale: java.util.Locale = java.util.Locale.getDefault()): String =
+        if (style == Style.GOOGLE && media == null) write(emoji, text, removed) else Tapbacks.write(emoji, excerpt(text), removed, media, locale)
 
     /** The conversation without its reaction messages, each message's reactions by its uid, and the user's own among them. */
     data class Folded(val messages: List<Message>, val reactions: Map<String, List<String>>, val mine: Map<String, List<String>> = emptyMap())
@@ -71,7 +117,11 @@ object SmsReactions {
         // Per message, per person: the emojis they left there, in order.
         val given = LinkedHashMap<String, LinkedHashMap<String, MutableList<String>>>()
         list.forEachIndexed { i, m ->
-            if (m.mms || m.rich) return@forEachIndexed
+            // An iPhone's tapback in a group arrives as a picture message holding only words (the group is
+            // MMS, Apple Support HT202724): those fold too, as Quik's EmojiReactionRepositoryImpl reparses SMS
+            // and MMS with a text part alike (github.com/quik-sms/quik, data/.../EmojiReactionRepositoryImpl.kt).
+            // One that carries media is a message of its own.
+            if ((m.mms && m.parts.isNotEmpty()) || m.rich) return@forEachIndexed
             val p = parse(m.body) ?: return@forEachIndexed
             val target = (if (p.media != null) mediaBefore(list, i, p.media) else targetOf(list, i, p.quoted)) ?: return@forEachIndexed
             hidden += m.uid

@@ -988,14 +988,26 @@ private fun ConversationLine(
                             color = if (unread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Text(
-                        when {
-                            // A draft wins the line, as AOSP Messaging shows its drafts first.
-                            c.draft != null -> "Draft: " + com.yaz.sms.core.sms.Markup.plain(c.draft)
-                            c.failed -> "Not sent: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
-                            c.fromMe -> "You: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
-                            else -> com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
-                        },
+                    // A picture message's subject over its snippet, as AOSP Messaging's conversation list does
+                    // (ConversationListItemView.setSubject: the "Subject: " label and the cleansed subject, a line of its own).
+                    if (c.subject != null && c.draft == null) Text(
+                        "Subject: " + c.subject,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (unread) FontWeight.Medium else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val line = when {
+                        // A draft wins the line, as AOSP Messaging shows its drafts first.
+                        c.draft != null -> "Draft: " + com.yaz.sms.core.sms.Markup.plain(c.draft)
+                        c.failed -> "Not sent: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
+                        c.fromMe -> "You: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
+                        else -> com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
+                    }
+                    // A message of a subject alone has no snippet line (fromMe or not: "You: " alone says nothing).
+                    if (c.snippet.isNotEmpty() || c.draft != null) Text(
+                        line,
                         style = MaterialTheme.typography.bodyMedium,
                         color = when {
                             c.draft != null -> MaterialTheme.colorScheme.primary

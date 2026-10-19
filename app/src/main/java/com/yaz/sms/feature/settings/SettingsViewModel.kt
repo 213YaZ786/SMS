@@ -36,4 +36,9 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     // The same setter as the ones above; the engine takes it through RichChat.applyReadReceipts.
     // Delta Chat Android: ChatsPreferenceFragment.ReadReceiptToggleListener.
     fun setReadReceipts(on: Boolean) = store.update { it.copy(readReceipts = on) }
+    // A text preference saved as written, cleaned to a phone number's characters
+    // (AOSP Messaging's "Phone number" preference, EditTextPreference of its MMS settings).
+    fun setOwnNumber(number: String) = store.update { it.copy(ownNumber = number) }
+    // A choice kept by name, as the swipe actions above; Quik's reactionSendFormat (PR #846, Preferences.kt).
+    fun setReactionFormat(format: com.yaz.sms.data.settings.ReactionFormat) = store.update { it.copy(reactionFormat = format) }
 }

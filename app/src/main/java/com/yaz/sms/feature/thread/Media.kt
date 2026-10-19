@@ -110,6 +110,14 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
     } else if (sound) {
         VoiceTile(part, mine, inBubble = true)
     } else {
+        // An iPhone's shared location is a place card, opening the map app; read only once shown (so not
+        // from a number held), a few kilobytes at most. A file that holds no place stays a tile.
+        val located = isLocationCard(part)
+        val spot by androidx.compose.runtime.produceState<com.yaz.sms.core.sms.Places.Place?>(null, part.uri, shown) {
+            if (located && shown) value = withContext(Dispatchers.IO) { readLocation(context, part.uri) }
+        }
+        val place = spot
+        if (place != null) PlaceCard(place) else {
         // A contact card shows the person's name, read from the card itself.
         val person by androidx.compose.runtime.produceState<String?>(null, part.uri) {
             if (part.contentType.contains("vcard")) value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -132,15 +140,44 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
             modifier = if (!interactive) Modifier else Modifier.clip(shape).combinedClickable(
                 onClick = {
                     haptics.tick()
-                    if (ContentType.isVideoType(part.contentType) && kind == MediaCheck.Kind.VIDEO) video = true else openOutside(context, part)
+                    if (located && !shown) shown = true
+                    else if (ContentType.isVideoType(part.contentType) && kind == MediaCheck.Kind.VIDEO) video = true else openOutside(context, part)
                 },
                 onLongClick = onMore,
                 onLongClickLabel = if (onMore != null) "More" else null
             )
         )
         if (video) VideoViewer(part.uri, onClose = { video = false }, part = part)
+        }
     }
 }
+
+/**
+ * An iPhone's shared location: its card, type text/x-vlocation, named `Current Location.loc.vcf`. AirMessage
+ * Android tells a location card from a contact card by the same type and name (airmessage-android, Apache-2.0,
+ * https://github.com/airmessage/airmessage-android/blob/0758ea0273f942881fd8de605aa349b40a1c404c/app/src/main/java/me/tagavari/airmessage/messaging/FileDisplayMetadata.kt,
+ * LocationDetailed; the type from iOS's IMFileManager.MIMETypeOfPath).
+ */
+internal fun isLocationCard(part: MmsPart): Boolean =
+    part.contentType.lowercase().contains("x-vlocation") || part.name?.lowercase()?.endsWith(".loc.vcf") == true
+
+/**
+ * The place in a location card, read as AirMessage's FileDisplayMetadata.LocationDetailed reads its file
+ * (https://github.com/airmessage/airmessage-android/blob/0758ea0273f942881fd8de605aa349b40a1c404c/app/src/main/java/me/tagavari/airmessage/messaging/FileDisplayMetadata.kt),
+ * the first [com.yaz.sms.core.sms.Places.CARD_MAX] bytes of it and no more.
+ */
+private fun readLocation(context: Context, uri: Uri): com.yaz.sms.core.sms.Places.Place? = runCatching {
+    context.contentResolver.openInputStream(uri)?.use { input ->
+        val buffer = ByteArray(com.yaz.sms.core.sms.Places.CARD_MAX)
+        var n = 0
+        while (n < buffer.size) {
+            val got = input.read(buffer, n, buffer.size - n)
+            if (got < 0) break
+            n += got
+        }
+        com.yaz.sms.core.sms.Places.fromVLocation(String(buffer, 0, n, Charsets.UTF_8))
+    }
+}.getOrNull()
 
 /**
  * A file or card in a bubble: the icon in a 36 dp box, the name over a line of detail. Element X's

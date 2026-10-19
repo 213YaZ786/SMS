@@ -95,7 +95,8 @@ class BubbleScreenshotTest {
         visual: List<MmsPart> = emptyList(),
         starred: Boolean = false,
         cluster: Cluster = Cluster.SINGLE,
-        tiles: List<MmsPart> = emptyList()
+        tiles: List<MmsPart> = emptyList(),
+        subject: String? = null
     ) {
         Box(
             Modifier.fillMaxWidth(share).padding(top = cluster.top, bottom = cluster.bottom),
@@ -107,7 +108,7 @@ class BubbleScreenshotTest {
                     visual = visual, kinds = visual.map { MediaCheck.Kind.IMAGE }, held = true,
                     footer = { mismatched, onMedia -> MessageFooter("10:42", delivery, starred, onMedia = onMedia, mismatched = mismatched) },
                     onMore = null,
-                    tiles = tiles, mine = mine
+                    tiles = tiles, mine = mine, subject = subject
                 )
             }
         }
@@ -170,6 +171,21 @@ class BubbleScreenshotTest {
             Bubble("La facture dont je te parlais", false, null, 0.78f, tiles = files().take(1))
             Bubble("", false, null, 0.78f, cluster = Cluster.START, tiles = files().drop(1))
             Bubble("Son contact", false, null, 0.78f, cluster = Cluster.END, tiles = files())
+        }
+    }
+
+    // A picture message's subject, bold over its words, over a picture and file, and alone: iOS Messages' bold first
+    // line, placed as AOSP Messaging's ConversationMessageView.updateMessageSubject places it
+    // (https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/ui/conversation/ConversationMessageView.java).
+    @Test
+    fun subject() = capture("bubble_subject") {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Bubble("On se voit demain à 14h devant la gare", false, null, subject = "Rendez-vous")
+            Bubble("Ok pour moi", true, Delivery.Read, subject = "Re: Rendez-vous")
+            Bubble("", false, null, subject = "Joyeux anniversaire")
+            Bubble("La facture", false, null, 0.78f, tiles = files().take(1), subject = "Facture octobre")
+            Bubble("مرحبا بك في تطبيق الرسائل", true, Delivery.Sent, subject = "موضوع")
+            Bubble("", true, Delivery.Sent, 0.78f, pictures(1), subject = "Les photos de samedi")
         }
     }
 

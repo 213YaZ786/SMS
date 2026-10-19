@@ -97,8 +97,23 @@ data class Settings(
      */
     val readReceipts: Boolean = true,
     /** Live locations being shared: the engine's chat id to when the sharing ends (ms). The engine keeps the period itself. */
-    val liveUntil: Map<Int, Long> = emptyMap()
+    val liveUntil: Map<Int, Long> = emptyMap(),
+    /**
+     * The user's own number when the SIM gives none or a wrong one, written by hand: kept out of a
+     * group's people so that a group never splits (OwnNumbers). AOSP Messaging's "Phone number"
+     * setting (PhoneUtils.getSelfRawNumber(allowOverride)), Google Messages' Settings, Advanced.
+     * Empty: only the SIMs' numbers.
+     */
+    val ownNumber: String = "",
+    /**
+     * How a reaction to a message goes out by SMS or MMS: as Google Messages writes it, as the iPhone's words,
+     * or in the format last received in that conversation (Quik's "Reaction send format", PR #846).
+     */
+    val reactionFormat: ReactionFormat = ReactionFormat.AUTOMATIC
 )
+
+@Serializable
+enum class ReactionFormat { AUTOMATIC, GOOGLE, IPHONE }
 
 /**
  * Small preference file, plain JSON written atomically, like the other apps.

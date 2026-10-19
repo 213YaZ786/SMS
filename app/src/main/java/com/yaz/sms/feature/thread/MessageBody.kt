@@ -60,9 +60,12 @@ internal fun MessageBody(
     interactive: Boolean = true,
     /** The parts that are no picture or film (files, cards, sounds), drawn in the bubble above the words. */
     tiles: List<MmsPart> = emptyList(),
-    mine: Boolean = false
+    mine: Boolean = false,
+    /** A picture message's subject, already cleansed (MmsSubject): bold at the head of the words, above them. */
+    subject: String? = null
 ) {
     val caption = words.isNotEmpty()
+    val head = subject?.takeIf { it.isNotBlank() }
     val mixed = remember(plain) { hasMixedTextDirection(plain) }
     val gallery = @Composable { modifier: Modifier ->
         MediaGallery(visual, kinds, held, modifier, onMore = onMore, interactive = interactive)
@@ -74,24 +77,33 @@ internal fun MessageBody(
                 Column {
                     if (visual.isNotEmpty()) Box(Modifier.padding(4.dp).clip(RoundedCornerShape(18.dp)).align(Alignment.CenterHorizontally)) { gallery(Modifier) }
                     tiles.forEach { part ->
-                        Box(Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = if (caption) 0.dp else 2.dp)) {
+                        Box(Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = if (caption || head != null) 0.dp else 2.dp)) {
                             MediaTile(part, mine, held = held, onMore = onMore, interactive = interactive)
                         }
                     }
-                    if (caption) Words(words, blurred, 4.dp, onLayout)
+                    if (head != null) SubjectLine(head, 4.dp, bottom = if (caption) 0.dp else 6.dp)
+                    if (caption) Words(words, blurred, if (head != null) 2.dp else 4.dp, onLayout)
                 }
             }
-        visual.isNotEmpty() && !caption && visual.size == 1 ->
+        visual.isNotEmpty() && !caption && head == null && visual.size == 1 ->
             WithFooter(FooterAt.Overlay, { footer(it, true) }) { gallery(Modifier) }
-        visual.isNotEmpty() && !caption ->
+        visual.isNotEmpty() && !caption && head == null ->
             WithFooter(FooterAt.Below, { footer(it, false) }) {
                 Box(Modifier.padding(4.dp).clip(RoundedCornerShape(18.dp))) { gallery(Modifier) }
             }
         visual.isNotEmpty() ->
-            WithFooter(if (mixed) FooterAt.Below else FooterAt.Aligned, { footer(it, false) }, words = plain) { onLayout ->
+            WithFooter(if (!caption || mixed) FooterAt.Below else FooterAt.Aligned, { footer(it, false) }, words = plain) { onLayout ->
                 Column {
                     Box(Modifier.padding(4.dp).clip(RoundedCornerShape(18.dp)).align(Alignment.CenterHorizontally)) { gallery(Modifier) }
-                    Words(words, blurred, 4.dp, onLayout)
+                    if (head != null) SubjectLine(head, 4.dp, bottom = if (caption) 0.dp else 6.dp)
+                    if (caption) Words(words, blurred, if (head != null) 2.dp else 4.dp, onLayout)
+                }
+            }
+        head != null ->
+            WithFooter(if (!caption || mixed) FooterAt.Below else FooterAt.Aligned, { footer(it, false) }, words = plain) { onLayout ->
+                Column {
+                    SubjectLine(head, 10.dp, bottom = if (caption) 0.dp else 6.dp)
+                    if (caption) Words(words, blurred, 2.dp, onLayout)
                 }
             }
         else ->
@@ -99,6 +111,22 @@ internal fun MessageBody(
                 Words(words, blurred, 10.dp, onLayout)
             }
     }
+}
+
+/**
+ * A picture message's subject, bold above the words, in the bubble's text colour. AOSP Messaging's
+ * ConversationMessageView.updateMessageSubject draws it over the message text in its bubble (the cleansed
+ * subject, shown only when there is one; https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/ui/conversation/ConversationMessageView.java);
+ * the weight is iOS Messages' (its subject is the bold first line), AOSP draws it plain behind a "Subject:" label.
+ */
+@Composable
+private fun SubjectLine(subject: String, top: Dp, bottom: Dp) {
+    Text(
+        subject,
+        style = MaterialTheme.typography.bodyLarge,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = top, bottom = bottom)
+    )
 }
 
 /**

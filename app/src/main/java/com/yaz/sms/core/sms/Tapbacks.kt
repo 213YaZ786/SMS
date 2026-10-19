@@ -1,5 +1,7 @@
 package com.yaz.sms.core.sms
 
+import java.util.Locale
+
 /**
  * What an iPhone sends as SMS when someone reacts to a message: a sentence
  * in the phone's language around the quoted message ("Loved “See you”",
@@ -16,17 +18,21 @@ internal object Tapbacks {
     private class Form(val lang: String, val text: String, val emoji: String, val removed: Boolean, val media: String = "")
 
     /** [anchor]: the longest word of the form, looked for before the pattern is tried. */
-    private class Pattern(val regex: Regex, val emoji: String, val emojiGroup: Int, val quoteGroup: Int, val removed: Boolean, val media: String, val anchor: String)
+    private class Pattern(val regex: Regex, val emoji: String, val emojiGroup: Int, val quoteGroup: Int, val removed: Boolean, val media: String, val anchor: String, val bare: Boolean)
 
     /** A reaction to a picture or a video is one short sentence. */
     private const val SHORT = 120
 
-    private const val QUOTES = "\"“”„‟«»‹›「」『』'‘’‚"
+    // Hebrew writes its quotes with gershayim and geresh (U+05F4, U+05F3).
+    private const val QUOTES = "\"“”„‟«»‹›「」『』'‘’‚״׳"
 
     private val patterns: List<Pattern> by lazy { FORMS.mapNotNull(::compile) }
 
+    /** The patterns in the order they are tried: those with a quote mark first. */
+    private val ordered: List<Pattern> by lazy { patterns.filterNot { it.bare } + patterns.filter { it.bare } }
+
     /** Compiled ahead, off the main thread: the first conversation opened no longer waits for them. */
-    fun warm() { patterns.size }
+    fun warm() { ordered.size }
 
     /** Quick look before the patterns: a reaction quotes something, or names a picture in a few words. */
     fun mayBe(body: String): Boolean = body.length in 4..2000 && (body.length <= SHORT || body.any { it in QUOTES })
@@ -34,12 +40,16 @@ internal object Tapbacks {
     fun parse(body: String): SmsReactions.Parsed? {
         if (!mayBe(body)) return null
         val quotes = body.any { it in QUOTES }
-        for (p in patterns) {
-            // A quote for the words reacted to; a short sentence for a picture.
-            if (if (p.media.isEmpty()) !quotes else body.length > SHORT) continue
+        // The forms that carry no quote mark come last: their words are open at the start, and would take a short
+        // sentence about a picture ("<picture> likes") for a quote.
+        for (p in ordered) {
+            // A quote for the words reacted to; a short sentence for a picture. Some languages (Mandarin, Punjabi,
+            // Kazakh, Odia) have Apple's sentence carry no quote mark: those forms are tried without one.
+            if (if (p.media.isEmpty()) !quotes && !p.bare else body.length > SHORT) continue
             if (!body.contains(p.anchor)) continue
             val m = p.regex.matchEntire(body) ?: continue
-            val emoji = if (p.emojiGroup > 0) m.groupValues[p.emojiGroup].trim() else p.emoji
+            // The emoji of Apple's generic sentence may sit in quote marks of its own (pt_PT's "Reagiu com “%@” a “%@”").
+            val emoji = if (p.emojiGroup > 0) m.groupValues[p.emojiGroup].trim { it.isWhitespace() || it in QUOTES } else p.emoji
             // "Reacted with a sticker", words where an emoji should be: not ours to show.
             if (emoji.isEmpty() || emoji.any { it.isLetter() }) continue
             val quoted = if (p.quoteGroup > 0) m.groupValues[p.quoteGroup].trim { it.isWhitespace() || it in "\u200b\u200c\u200d\u200e\u200f\u2066\u2067\u2068\u2069" } else ""
@@ -76,7 +86,7 @@ internal object Tapbacks {
         sb.append(literal(form.text.substring(at).trimEnd('.', '。', '։', '۔'))).append("[.。։۔]?[\\s\\u200a-\\u200f\\u2066-\\u2069]*")
         if (quoteGroup == 0 && form.media.isEmpty()) return null
         val anchor = Regex("[\\p{L}\\p{M}]+").findAll(form.text.replace(Regex("%(\\d)?\\$?@"), " ")).map { it.value }.maxByOrNull { it.length }.orEmpty()
-        return Pattern(Regex(sb.toString()), form.emoji, emojiGroup, quoteGroup, form.removed, form.media, anchor)
+        return Pattern(Regex(sb.toString()), form.emoji, emojiGroup, quoteGroup, form.removed, form.media, anchor, form.media.isEmpty() && form.text.none { it in QUOTES })
     }
 
     private fun literal(text: String): String = buildString {
@@ -86,6 +96,82 @@ internal object Tapbacks {
             c in '\u200a'..'\u200f' || c in '\u2066'..'\u2069' -> append("[\\u200a-\\u200f\\u2066-\\u2069]*")
             c.isWhitespace() || c == '\u00a0' || c == '\u202f' -> append("[\\s\\u00a0\\u202f]*")
             else -> append(Regex.escape(c.toString()))
+        }
+    }
+
+    private val placeholder = Regex("%(\\d)?\\$?@")
+
+    /** The forms by language, emoji (without its variation selector), removal and media: the sentence to write is one lookup. */
+    private val byKey: Map<String, Form> by lazy { FORMS.associateBy { key(it.lang, it.emoji, it.removed, it.media) } }
+
+    private fun key(lang: String, emoji: String, removed: Boolean, media: String) = "$lang|${emoji.replace("️", "")}|$removed|$media"
+
+    /** Latin American Spanish is Apple's es_419; Android names each country (and the UN region 419). */
+    private val LATIN_AMERICA = setOf(
+        "419", "AR", "BO", "CL", "CO", "CR", "CU", "DO", "EC", "SV", "GT", "HN", "MX", "NI", "PA", "PY", "PE", "PR", "UY", "VE", "US"
+    )
+
+    /**
+     * Apple's language codes to try for [locale], the most exact first, English last. Quik's
+     * EmojiReactionRepositoryImpl.templatesForCurrentLocale tries the locale's tag, then its language, then English
+     * (https://github.com/quik-sms/quik/pull/846); the names are those of [FORMS]: fr_CA, pt_PT, en_GB, zh_CN,
+     * zh_TW, zh_HK, es_419, and "no" for Norwegian whichever of nb, nn or no Android says (iw, in are the old
+     * codes of Hebrew and Indonesian).
+     */
+    internal fun languages(locale: Locale): List<String> {
+        val language = when (locale.language) { "iw" -> "he"; "in" -> "id"; "nb", "nn" -> "no"; else -> locale.language }
+        val country = locale.country
+        val out = ArrayList<String>()
+        when (language) {
+            "zh" -> {
+                val traditional = locale.script == "Hant" || country == "TW" || country == "HK" || country == "MO"
+                when {
+                    country == "HK" || country == "MO" -> { out += "zh_HK"; out += "zh_TW" }
+                    traditional -> { out += "zh_TW"; out += "zh_HK" }
+                    else -> out += "zh_CN"
+                }
+            }
+            "es" -> {
+                if (country in LATIN_AMERICA) out += "es_419"
+            }
+            else -> if (country.isNotEmpty()) out += "${language}_$country"
+        }
+        if (language != "zh") out += language
+        out += "en"
+        return out.distinct()
+    }
+
+    /**
+     * Apple's sentence for a reaction of the user, in the language of [locale]: one of the six tapbacks' own words
+     * ("Loved “x”", "Removed a heart from “x”"), any other emoji in the generic one iOS 18 writes ("Reacted 😮 to
+     * “x”"), and for a picture or a video no quote at all ("Loved an image", "Liked a movie"; [media] "image" or
+     * "video"). The sentences are the ones [parse] reads, which is Apple's own wording per language. The way is
+     * Quik's buildIosReactionBody (https://github.com/quik-sms/quik/pull/846, GPL-3.0: a template per tapback
+     * and per language, the generic one for other emojis, English when the language has none) and Kotozute's
+     * composeAttachmentTapback (https://github.com/wanderwildwood/kotozute, AGPL-3.0, EmojiReactionRepositoryImpl.kt:
+     * "an image", "a movie"); here the templates are [FORMS], not a second list. [quoted] is the message's words.
+     */
+    fun write(emoji: String, quoted: String, removed: Boolean, media: String? = null, locale: Locale = Locale.getDefault()): String {
+        val kind = media ?: ""
+        val bare = emoji.replace("️", "")
+        for (lang in languages(locale)) {
+            val form = byKey[key(lang, bare, removed, kind)] ?: byKey[key(lang, "", removed, kind)] ?: continue
+            return fill(form, emoji, quoted)
+        }
+        // English has every form; a list of forms without it would be a broken build.
+        error("no wording for $emoji")
+    }
+
+    /** A form's %@, %1$@ and %2$@ filled: with the emoji first when the sentence has it, then the quote when it has one. */
+    private fun fill(form: Form, emoji: String, quoted: String): String {
+        val args = buildList {
+            if (form.emoji.isEmpty()) add(emoji)
+            if (form.media.isEmpty()) add(quoted)
+        }
+        var next = 0
+        return placeholder.replace(form.text) { m ->
+            val at = m.groupValues[1].toIntOrNull()?.minus(1) ?: next++
+            args.getOrNull(at).orEmpty()
         }
     }
 

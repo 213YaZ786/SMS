@@ -47,7 +47,9 @@ data class Message(
     val rich: Boolean = false,
     /** The other side read it (rich chat). */
     val seen: Boolean = false,
-    val reactions: List<String> = emptyList()
+    val reactions: List<String> = emptyList(),
+    /** A picture message's subject, cleansed as AOSP Messaging does (MmsSubject); null when there is none to show. */
+    val subject: String? = null
 ) {
     /** Unique among SMS and picture messages, whose numbers overlap. */
     val uid: String get() = (if (mms) "mms/" else "sms/") + id
@@ -68,7 +70,9 @@ data class Conversation(
     /** A text left in the composer, shown over the snippet as Bugle shows its drafts. */
     val draft: String? = null,
     /** How many messages the user sent in it: three make a sender known to the spam classifier (SpamJudge). */
-    val sent: Int = 0
+    val sent: Int = 0,
+    /** The newest message's subject when it is a picture message with one (AOSP Messaging lists it over the snippet). */
+    val subject: String? = null
 ) {
     val group: Boolean get() = addresses.size > 1
 }
@@ -163,6 +167,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             }
         }
         val parts = MmsStore.parts(context, last.filterNot { it.sms }.map { it.id })
+        val subjects = MmsStore.subjects(context, last.filterNot { it.sms }.map { it.id })
         last.map { m ->
             val addresses = people[m.thread] ?: listOf(m.address)
             if (m.sms) Conversation(
@@ -181,14 +186,16 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                 Conversation(
                     threadId = m.thread,
                     address = addresses.firstOrNull().orEmpty(),
-                    snippet = if (m.id in waiting) "Picture message" else text.ifBlank { mediaWord(media.firstOrNull()?.contentType) },
+                    // A message of a subject alone has the subject over an empty snippet, as in AOSP's list.
+                    snippet = if (m.id in waiting) "Picture message" else text.ifBlank { if (media.isEmpty() && subjects[m.id] != null) "" else mediaWord(media.firstOrNull()?.contentType) },
                     date = m.date,
                     unread = unread[m.thread] ?: 0,
                     fromMe = m.box != Telephony.Mms.MESSAGE_BOX_INBOX,
                     failed = m.box == Telephony.Mms.MESSAGE_BOX_FAILED,
                     addresses = addresses.ifEmpty { listOf("") },
                     draft = drafts[m.thread]?.first,
-                    sent = sentCounts[m.thread] ?: 0
+                    sent = sentCounts[m.thread] ?: 0,
+                    subject = if (m.id in waiting) null else subjects[m.id]
                 )
             }
         }.let { listed ->
@@ -300,13 +307,17 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             }
             context.contentResolver.query(
                 Telephony.Mms.CONTENT_URI,
-                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID, Telephony.Mms.MESSAGE_TYPE, Telephony.Mms.THREAD_ID),
+                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBSCRIPTION_ID, Telephony.Mms.MESSAGE_TYPE, Telephony.Mms.THREAD_ID, Telephony.Mms.SUBJECT),
                 mmsWhere,
                 mmsArgs, "${Telephony.Mms.DATE} DESC" + if (limit < Int.MAX_VALUE) " LIMIT $limit" else ""
             )?.use { c ->
                 // The rows first, then all their parts in one query.
                 val rows = ArrayList<LongArray>()
-                while (c.moveToNext()) rows += longArrayOf(c.getLong(0), c.getLong(1), c.getInt(2).toLong(), c.getInt(3).toLong(), c.getInt(4).toLong(), c.getInt(5).toLong(), c.getLong(6))
+                val subjects = HashMap<Long, String?>()
+                while (c.moveToNext()) {
+                    rows += longArrayOf(c.getLong(0), c.getLong(1), c.getInt(2).toLong(), c.getInt(3).toLong(), c.getInt(4).toLong(), c.getInt(5).toLong(), c.getLong(6))
+                    subjects[c.getLong(0)] = c.getString(7)
+                }
                 val parts = MmsStore.parts(context, rows.map { it[0] })
                 rows.forEach { r ->
                     val (id, date, box, read, sub) = r
@@ -333,7 +344,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                         subId = sub.toInt(),
                         mms = true,
                         parts = if (origin == null) media else media.map { it.copy(origin = origin) },
-                        waiting = waiting
+                        waiting = waiting,
+                        subject = if (waiting) null else com.yaz.sms.core.mms.MmsSubject.cleanse(subjects[id])
                     )
                 }
             }

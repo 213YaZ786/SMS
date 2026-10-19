@@ -51,6 +51,8 @@ class DebugBulkReceiver : BroadcastReceiver() {
             val conf = com.yaz.sms.core.mms.pdu.RetrieveConf().apply {
                 setFrom(com.yaz.sms.core.mms.pdu.EncodedStringValue(from))
                 to.split(',').map { it.trim() }.filter { it.isNotEmpty() }.forEach { addTo(com.yaz.sms.core.mms.pdu.EncodedStringValue(it)) }
+                // --es subject "...": the MMS's subject header (AOSP mmslib RetrieveConf.setSubject).
+                intent.getStringExtra("subject")?.let { subject = com.yaz.sms.core.mms.pdu.EncodedStringValue(it) }
                 date = System.currentTimeMillis() / 1000
                 body = com.yaz.sms.core.mms.pdu.PduBody().apply {
                     addPart(com.yaz.sms.core.mms.pdu.PduPart().apply {

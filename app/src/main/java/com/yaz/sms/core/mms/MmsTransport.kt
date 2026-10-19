@@ -55,18 +55,33 @@ object MmsTransport {
         val app = context.applicationContext
         val sub = if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) subId else SubscriptionManager.getDefaultSmsSubscriptionId()
         val budget = maxSize(app, sub) - 2 * 1024 - text.toByteArray().size
-        val body = PduBody()
-        if (text.isNotBlank()) body.addPart(part(ContentType.TEXT_PLAIN, "text0.txt", text.toByteArray(Charsets.UTF_8), CharacterSets.UTF_8))
+        // The body as AOSP Messaging's MmsUtils.makePduBody lays it out (MmsBody): the attachments in order, named
+        // by what they are, the text after them, and a SMIL part describing them put first.
+        val items = ArrayList<MmsBody.Item>()
         val share = if (attachments.isEmpty()) budget else budget / attachments.size
-        attachments.forEachIndexed { i, a ->
-            val data = if (ContentType.isImageType(a.contentType)) shrinkImage(app, a.uri, share) else read(app, a.uri, share)
+        attachments.forEach { a ->
+            val claimed = a.contentType
+            var type = claimed
+            val data: ByteArray?
+            if (ContentType.isImageType(claimed)) {
+                // A GIF stays a GIF when it fits the carrier's size (MmsUtils.getResizedImageAsPart keeps image/gif
+                // for a GIF); the signature is checked, a file that claims to be one is decoded like any picture.
+                // Any other picture goes out as a JPEG shrunk to fit.
+                val gif = if (claimed.equals(ContentType.IMAGE_GIF, ignoreCase = true) || ContentType.isUnspecified(claimed))
+                    read(app, a.uri, share)?.takeIf(MmsBody::isGif) else null
+                data = gif ?: shrinkImage(app, a.uri, share)
+                type = if (gif != null) ContentType.IMAGE_GIF else ContentType.IMAGE_JPEG
+            } else {
+                data = read(app, a.uri, share)
+            }
             if (data != null) {
-                val type = if (ContentType.isImageType(a.contentType)) ContentType.IMAGE_JPEG else a.contentType
-                val ext = if (type == ContentType.IMAGE_JPEG) "jpg" else type.substringAfter('/')
-                body.addPart(part(type, "part$i.$ext", data, 0))
+                val kind = MmsBody.kindOf(type)
+                // A film or a sound says how long it plays, which the SMIL needs (MmsUtils.getMediaDurationMs).
+                val length = if (kind == MmsBody.Kind.VIDEO || kind == MmsBody.Kind.AUDIO) durationMs(app, a.uri) else MmsBody.DEFAULT_DURATION
+                items += MmsBody.Item(type, data, ContentType.getExtensionFromMimeType(type), length)
             }
         }
-        if (body.partsNum == 0) return null
+        val body = MmsBody.build(items, text) ?: return null
         val req = SendReq().apply {
             recipients.forEach { addTo(EncodedStringValue(it)) }
             date = System.currentTimeMillis() / 1000
@@ -202,13 +217,23 @@ object MmsTransport {
         }
     }
 
-    private fun part(type: String, location: String, data: ByteArray, charset: Int) = PduPart().apply {
-        setContentType(type.toByteArray())
-        setContentLocation(location.toByteArray())
-        setContentId("<$location>".toByteArray())
-        setName(location.toByteArray())
-        if (charset != 0) setCharset(charset)
-        setData(data)
+    /**
+     * How long a film or a sound plays, in milliseconds, as AOSP Messaging's MmsUtils.getMediaDurationMs reads it
+     * (a MediaMetadataRetriever on the part, METADATA_KEY_DURATION;
+     * https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/sms/MmsUtils.java);
+     * the default of a SMIL player when it cannot be read.
+     */
+    private fun durationMs(context: Context, uri: Uri): Int {
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                ?.coerceIn(1L, 24L * 60 * 60 * 1000)?.toInt() ?: MmsBody.DEFAULT_DURATION
+        } catch (e: Exception) {
+            MmsBody.DEFAULT_DURATION
+        } finally {
+            runCatching { retriever.release() }
+        }
     }
 
     /** A picture made small enough for the carrier: smaller sides, then lower quality, as needed. */

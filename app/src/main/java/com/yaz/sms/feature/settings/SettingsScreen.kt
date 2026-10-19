@@ -34,6 +34,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.yaz.sms.ui.component.BoldButton
 import com.yaz.sms.ui.component.GlassRadio
 import com.yaz.sms.ui.component.GlassSwitch
 import com.yaz.sms.ui.component.QuietButton
@@ -66,7 +67,7 @@ import com.yaz.sms.ui.theme.TEXT_SCALES
 import com.yaz.sms.ui.theme.textScaleLabel
 import org.koin.androidx.compose.koinViewModel
 
-private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY, UNDO, SWIPE_LEFT, SWIPE_RIGHT }
+private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY, UNDO, SWIPE_LEFT, SWIPE_RIGHT, OWN_NUMBER, REACTION_FORMAT }
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewModel()) {
@@ -74,6 +75,8 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     var dialog by rememberSaveable { mutableStateOf(OpenDialog.NONE) }
+    // What Android gives as the SIM's number, read once (OwnNumbers.sim): shown under "My number" and prefilled in its field.
+    val simNumber = remember { com.yaz.sms.core.mms.OwnNumbers.sim(context).firstOrNull() }
 
     // Scrolls at full width, rows pushed in by the readable inset, so the
     // margins of a tablet scroll like the rest. See ReadableScroll.
@@ -146,6 +149,17 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     title = "Undo send",
                     summary = if (settings.undoSeconds == 0) "Off" else "${settings.undoSeconds} seconds to take a message back",
                     onClick = { dialog = OpenDialog.UNDO }
+                )
+                // The number Android may not give: a group never splits for want of it (OwnNumbers).
+                SettingRow(
+                    title = "My number",
+                    summary = settings.ownNumber.ifBlank { simNumber ?: "Not set" },
+                    onClick = { dialog = OpenDialog.OWN_NUMBER }
+                )
+                SettingRow(
+                    title = "Reactions sent to others",
+                    summary = reactionFormatLabel(settings.reactionFormat),
+                    onClick = { dialog = OpenDialog.REACTION_FORMAT }
                 )
                 SettingRow(
                     title = "Notifications",
@@ -355,6 +369,18 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             onSelect = viewModel::setSwipeRight,
             onDismiss = { dialog = OpenDialog.NONE }
         )
+        OpenDialog.OWN_NUMBER -> OwnNumberDialog(
+            current = settings.ownNumber.ifBlank { simNumber.orEmpty() },
+            onSave = viewModel::setOwnNumber,
+            onDismiss = { dialog = OpenDialog.NONE }
+        )
+        OpenDialog.REACTION_FORMAT -> ChoiceDialog(
+            title = "Reactions sent to others",
+            options = com.yaz.sms.data.settings.ReactionFormat.entries.map { it to reactionFormatLabel(it) },
+            selected = settings.reactionFormat,
+            onSelect = viewModel::setReactionFormat,
+            onDismiss = { dialog = OpenDialog.NONE }
+        )
         OpenDialog.NONE -> Unit
     }
 }
@@ -421,6 +447,48 @@ private fun SwitchRow(title: String, summary: String, checked: Boolean, enabled:
         onClick = if (enabled) ({ change(!checked) }) else null,
         trailing = { GlassSwitch(checked = checked, onCheckedChange = change, enabled = enabled) }
     )
+}
+
+/**
+ * The user's number written by hand, as AOSP Messaging's "Phone number" preference (an EditTextPreference
+ * of its MMS settings, mms_phone_number_pref_key, https://android.googlesource.com/platform/packages/apps/Messaging/):
+ * the field holds the SIM's number until changed; saved empty, only the SIMs' numbers count. Laid out as
+ * GroupNameDialog (feature/thread/ThreadScreen.kt): a zone dialog, one field, Save and Cancel.
+ */
+@Composable
+private fun OwnNumberDialog(current: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var number by remember { mutableStateOf(current) }
+    val valid = number.isBlank() || number.count { it.isDigit() } >= MIN_DIGITS
+    ZoneAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("My number") },
+        text = {
+            androidx.compose.material3.OutlinedTextField(
+                value = number,
+                onValueChange = { number = it.filter { c -> c.isDigit() || c in "+ ()-." }.take(24) },
+                singleLine = true,
+                isError = !valid,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone),
+                placeholder = { Text("+33 6 12 34 56 78") }
+            )
+        },
+        confirmButton = {
+            BoldButton(filled = true, enabled = valid, onClick = {
+                onSave(number.trim())
+                onDismiss()
+            }) { Text("Save") }
+        },
+        dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/** Fewest digits a number written by hand has (a shorter one would match short codes). */
+private const val MIN_DIGITS = 6
+
+private fun reactionFormatLabel(format: com.yaz.sms.data.settings.ReactionFormat): String = when (format) {
+    com.yaz.sms.data.settings.ReactionFormat.AUTOMATIC -> "Automatic"
+    com.yaz.sms.data.settings.ReactionFormat.GOOGLE -> "Google Messages"
+    com.yaz.sms.data.settings.ReactionFormat.IPHONE -> "iPhone (readable text)"
 }
 
 @Composable
