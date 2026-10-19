@@ -49,6 +49,8 @@ object MmsTransport {
     private const val EXTRA_ROW = "row"
     /** What carriers take when they say nothing: 300 KB. */
     private const val DEFAULT_MAX = 300 * 1024
+    /** The most a failed message keeps of an attachment that did not fit. */
+    private const val KEPT_MAX = 100L * 1024 * 1024
 
     /** Writes and sends a picture message to [recipients]: text and attachments in one. */
     fun send(context: Context, recipients: List<String>, text: String, attachments: List<Attachment>, subId: Int, inThread: Long? = null): Uri? {
@@ -58,6 +60,7 @@ object MmsTransport {
         // The body as AOSP Messaging's MmsUtils.makePduBody lays it out (MmsBody): the attachments in order, named
         // by what they are, the text after them, and a SMIL part describing them put first.
         val items = ArrayList<MmsBody.Item>()
+        val unfit = ArrayList<Attachment>()
         val share = if (attachments.isEmpty()) budget else budget / attachments.size
         attachments.forEach { a ->
             val claimed = a.contentType
@@ -71,6 +74,16 @@ object MmsTransport {
                     read(app, a.uri, share)?.takeIf(MmsBody::isGif) else null
                 data = gif ?: shrinkImage(app, a.uri, share)
                 type = if (gif != null) ContentType.IMAGE_GIF else ContentType.IMAGE_JPEG
+            } else if (ContentType.isVideoType(claimed)) {
+                // A film goes as it is when it fits; a bigger one is turned into an MP4 (H.264, AAC) that
+                // fits the carrier's size (MmsVideo, Media3 Transformer), or dropped as before when it cannot be.
+                val whole = read(app, a.uri, share)
+                if (whole != null) {
+                    data = whole
+                } else {
+                    data = MmsVideo.fit(app, a.uri, share)
+                    if (data != null) type = ContentType.VIDEO_MP4
+                }
             } else {
                 data = read(app, a.uri, share)
             }
@@ -79,9 +92,23 @@ object MmsTransport {
                 // A film or a sound says how long it plays, which the SMIL needs (MmsUtils.getMediaDurationMs).
                 val length = if (kind == MmsBody.Kind.VIDEO || kind == MmsBody.Kind.AUDIO) durationMs(app, a.uri) else MmsBody.DEFAULT_DURATION
                 items += MmsBody.Item(type, data, ContentType.getExtensionFromMimeType(type), length)
+            } else {
+                unfit += a
             }
         }
-        val body = MmsBody.build(items, text) ?: return null
+        // An attachment that could not be made to fit never makes the message vanish: it is kept as a failed message
+        // that holds the attachment as picked (a part read from its Uri), so the thread shows "Not sent" and the
+        // message goes again from its menu (AOSP Messaging keeps a failed message and its parts for ResendMessageAction,
+        // https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/datamodel/action/ResendMessageAction.java).
+        val body = MmsBody.build(items, text) ?: (if (unfit.isNotEmpty()) PduBody() else return null)
+        unfit.forEach { a ->
+            if (!keepable(app, a.uri)) return@forEach
+            body.addPart(PduPart().apply {
+                setContentType(a.contentType.toByteArray())
+                setContentLocation("unsent${body.partsNum}".toByteArray())
+                setDataUri(a.uri)
+            })
+        }
         val req = SendReq().apply {
             recipients.forEach { addTo(EncodedStringValue(it)) }
             date = System.currentTimeMillis() / 1000
@@ -97,6 +124,15 @@ object MmsTransport {
             messageSize = (0 until body.partsNum).sumOf { (body.getPart(it).data?.size ?: 0).toLong() }
         }
         val uri = MmsStore.saveOutgoing(app, recipients, body, sub, inThread) ?: return null
+        if (unfit.isNotEmpty()) {
+            MmsStore.setBox(app, uri, Telephony.Mms.MESSAGE_BOX_FAILED)
+            val what = if (unfit.all { ContentType.isVideoType(it.contentType) }) "video" else "attachment"
+            // A Toast from the sending thread through the main looper, as ThreadScreen's own "Not sent yet" notice.
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(app, "Not sent: the $what is too large for MMS.", android.widget.Toast.LENGTH_LONG).show()
+            }
+            return uri
+        }
         val sent = runCatching {
             val bytes = PduComposer(app, req).make() ?: error("compose")
             val file = file(app, "send-${uri.lastPathSegment}")
@@ -256,9 +292,32 @@ object MmsTransport {
         null
     }.getOrNull()
 
-    /** A video or a sound as it is, when it fits. */
+    /**
+     * Whether a file that could not be fitted is small enough to be kept in the failed message (100 MB): a bigger one
+     * stays out, so that the message is still listed as failed and the disk is not filled by a copy. The length is
+     * read as AOSP Messaging's UriUtil does, from the asset file descriptor
+     * (https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/util/UriUtil.java).
+     */
+    private fun keepable(context: Context, uri: Uri): Boolean = runCatching {
+        context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length in 0..KEPT_MAX } ?: false
+    }.getOrDefault(false)
+
+    /**
+     * A video or a sound as it is, when it fits; read in blocks and given up as soon as it is over the budget, so a
+     * film of hundreds of megabytes is never held whole (kotlin.io's InputStream.copyTo loop, stopped at the budget).
+     */
     private fun read(context: Context, uri: Uri, budget: Int): ByteArray? = runCatching {
-        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.takeIf { it.size <= budget }
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val out = ByteArrayOutputStream()
+            val buffer = ByteArray(16 * 1024)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                out.write(buffer, 0, n)
+                if (out.size() > budget) return@use null
+            }
+            out.toByteArray()
+        }
     }.getOrNull()
 
     private fun maxSize(context: Context, sub: Int): Int = runCatching {

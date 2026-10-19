@@ -51,9 +51,6 @@ import kotlin.math.roundToInt
 /** One action of a message's menu: its icon, its word, red when it takes something away. */
 data class MessageAction(val icon: ImageVector, val label: String, val danger: Boolean = false, val run: () -> Unit)
 
-/** The six reactions offered over a message of the encrypted chat. */
-val Reactions = listOf("❤️", "😂", "👍", "😮", "😢", "🙏")
-
 /**
  * A message held: over it, the reactions hop into place one by one (on
  * the encrypted chat only); under it, the actions by name. The message,
@@ -91,11 +88,12 @@ fun MessageMenu(
         ) {
             var window by remember { mutableStateOf(IntSize.Zero) }
             Box(Modifier.fillMaxSize().onSizeChanged { window = it })
-            // The side of the message: the user's own on the right.
-            fun xFor(width: Int): Int {
-                val x = if (mine) bounds.right.roundToInt() - width else bounds.left.roundToInt()
-                return x.coerceIn(edge, (window.width - width - edge).coerceAtLeast(edge))
-            }
+            // The side of the message: the user's own on the right. The reaction bar and the actions hang off the
+            // message's own bounds (Signal's ReactionOverlayPlacement, see MenuPlacement), inside the conversation
+            // column, which on a tablet is narrower than the window.
+            val columnInset = with(density) { com.yaz.sms.navigation.LocalReadableInset.current.roundToPx() }
+            fun xFor(width: Int): Int =
+                MenuPlacement.x(!mine, bounds.left.roundToInt(), bounds.right.roundToInt(), width, window.width, columnInset, edge)
             // The message itself, above the veil, lifted a little.
             val rise = remember { Animatable(0f) }
             LaunchedEffect(Unit) { rise.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 500f)) }
@@ -171,7 +169,7 @@ fun MessageMenu(
                 actions,
                 onDismiss,
                 Modifier
-                    .offset { IntOffset(if (mine) (window.width - edge - listSize.width).coerceAtLeast(edge) else edge, listY) }
+                    .offset { IntOffset(xFor(listSize.width), listY) }
                     .onSizeChanged { listSize = it }
             )
         }

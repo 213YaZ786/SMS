@@ -18,6 +18,7 @@ val appModule = module {
     single { SettingsStore(androidContext()) }
     single { com.yaz.sms.data.settings.StarStore(androidContext()) }
     single { com.yaz.sms.data.settings.TrashStore(androidContext()) }
+    single { com.yaz.sms.data.settings.ReactionStore(androidContext()) }
     single { com.yaz.sms.data.settings.SpamStore(androidContext()) }
     single { PhoneBook(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)) }
     single { Messages(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)) }

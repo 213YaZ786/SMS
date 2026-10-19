@@ -196,6 +196,12 @@ private fun ThreadContent(
     // The starred messages, by uid (Zulip's starredMessages set, see StarStore).
     val starStore: com.yaz.sms.data.settings.StarStore = koinInject()
     val stars by starStore.stars.collectAsState()
+    // The reactions the user sends most come first in the long press bar (ReactionStore, Element Web's recent emoji).
+    val reactionStore: com.yaz.sms.data.settings.ReactionStore = koinInject()
+    val reactionUses by reactionStore.uses.collectAsState()
+    val reactionBar = remember(reactionUses) { com.yaz.sms.data.settings.ReactionHistory.bar(reactionUses) }
+    // The "+" of the bar waits here for the emoji, whichever message asked: what to do with it.
+    var emojiPick by remember { mutableStateOf<((String) -> Unit)?>(null) }
 
     // The thread is found from the numbers when only they are known, and the
     // numbers from the thread when only it is known (a notification).
@@ -642,6 +648,18 @@ private fun ThreadContent(
           }
         },
         overlay = {
+          // The "+" of the reaction bar: with our Keyboard as the phone's keyboard, it opens on its emoji page and
+          // the first emoji tapped is the reaction; else Android's own emoji picker (EmojiPickerDialog).
+          emojiPick?.let { target ->
+              val ourKeyboard = remember { KeyboardEmoji.isCurrent(context) }
+              val chosen: (String) -> Unit = { emoji ->
+                  emojiPick = null
+                  haptics.done()
+                  target(emoji)
+              }
+              if (ourKeyboard) KeyboardEmojiTarget(onPick = chosen, onClose = { emojiPick = null })
+              else EmojiPickerDialog(onPick = chosen) { emojiPick = null }
+          }
           // Short answers to the last message, from the phone's own engine, over the field.
           val newest = list.maxByOrNull { it.date }
           var usedFor by remember { mutableStateOf<String?>(null) }
@@ -871,6 +889,9 @@ private fun ThreadContent(
                             }
                         }) else null,
                         smsMine = row.smsMine,
+                        reactionBar = reactionBar,
+                        onReactionUsed = { emoji -> reactionStore.used(emoji) },
+                        onPickEmoji = { target -> emojiPick = target },
                         onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },
                         onPollShown = { scope.launch { chat.recount(row.message.mms, row.message.id) } },
                         sender = if (group && row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null,
@@ -1158,6 +1179,12 @@ private fun Bubble(
     smsReactions: List<String> = emptyList(),
     smsMine: List<String> = emptyList(),
     onSmsReact: ((String) -> Unit)? = null,
+    /** The six reactions of the long press bar: the user's most used, then the defaults. */
+    reactionBar: List<String> = com.yaz.sms.data.settings.ReactionHistory.DEFAULTS,
+    /** A reaction the user just sent, to be counted. */
+    onReactionUsed: (String) -> Unit = {},
+    /** The "+" of the bar: hands the screen what to do with the emoji it picks. */
+    onPickEmoji: (((String) -> Unit)) -> Unit = {},
     onRetry: () -> Unit,
     onDelete: () -> Unit,
     onQuote: () -> Unit,
@@ -1216,13 +1243,22 @@ private fun Bubble(
     val ringGround = MaterialTheme.colorScheme.surface
     val ringTrack = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
     var confirmDeleteAll by remember { mutableStateOf(false) }
-    var pickingEmoji by remember { mutableStateOf(false) }
     var selecting by remember { mutableStateOf(false) }
-    if (pickingEmoji) EmojiPickerDialog(onPick = { emoji ->
-        pickingEmoji = false
-        haptics.done()
-        onReact(emoji)
-    }) { pickingEmoji = false }
+    // A reaction chosen in the bar or picked: sent the way this conversation sends one (the chat, or SMS in Google's or
+    // Apple's words), a reaction the user already gave taken back. That toggle is Element X's reaction click,
+    // TimelineItemReactionsView's onReactionClick and MessagesReactionButton (highlighted = the user's own), in
+    // https://github.com/element-hq/element-x-android/blob/develop/features/messages/impl/src/main/kotlin/io/element/android/features/messages/impl/timeline/components/TimelineItemReactionsView.kt
+    // ; it is counted for the bar when added, not when taken back (ReactionStore).
+    fun react(emoji: String) {
+        if (rich == null && onSmsReact != null) {
+            if (emoji !in smsMine) onReactionUsed(emoji)
+            onSmsReact(emoji)
+        } else {
+            val taking = emoji in rich?.myReactions.orEmpty()
+            if (!taking) onReactionUsed(emoji)
+            onReact(if (taking) null else emoji)
+        }
+    }
     if (selecting) SelectTextDialog(said) { selecting = false }
     if (confirmDeleteAll && chatId != null) {
         ZoneAlertDialog(
@@ -1480,7 +1516,7 @@ private fun Bubble(
                     // A double tap gives a heart, over the rich chat.
                     onDoubleClick = if (rich != null) ({
                         haptics.done()
-                        onReact(if ("❤️" in rich.reactions) null else "❤️")
+                        react("❤️")
                     }) else null,
                     onLongClick = {
                         haptics.firm()
@@ -1509,8 +1545,8 @@ private fun Bubble(
         if (menuOpen) MessageMenu(
                 bounds = bounds,
                 mine = mine,
-                reactions = if (rich != null || onSmsReact != null) Reactions else null,
-                chosen = if (rich != null) rich.reactions else smsMine,
+                reactions = if (rich != null || onSmsReact != null) reactionBar else null,
+                chosen = if (rich != null) rich.myReactions else smsMine,
                 actions = listOfNotNull(
                     MessageAction(AppIcons.Reply, "Reply") { onQuote() },
                     if (bubbleEffect != null || screenEffect != null) MessageAction(AppIcons.Play, "Replay") {
@@ -1545,9 +1581,11 @@ private fun Bubble(
                     if (chatId != null && rich?.mine == true) MessageAction(AppIcons.Delete, "Delete for everyone", danger = true) { confirmDeleteAll = true } else null,
                     MessageAction(AppIcons.Delete, if (chatId != null && rich?.mine == true) "Delete for me" else "Delete", danger = true) { onDelete() }
                 ),
-                onReact = { emoji -> if (rich == null && onSmsReact != null) onSmsReact(emoji) else onReact(if (emoji in rich?.reactions.orEmpty()) null else emoji) },
+                onReact = { emoji -> react(emoji) },
                 onDismiss = { menuOpen = false },
-                onMoreReactions = if (rich != null) ({ pickingEmoji = true }) else null
+                // The picker lives in the screen, not in this list item (see ThreadScreen's emojiPick): the item leaves
+                // the composition when the keyboard shrinks the list.
+                onMoreReactions = if (rich != null || onSmsReact != null) ({ onPickEmoji { emoji -> react(emoji) } }) else null
             ) {
                 if (big != null) BigEmojiRow(big, 0)
                 // The bubble's own shape, its cluster corners, with what it holds (tiles that open nothing).
@@ -1578,12 +1616,12 @@ private fun Bubble(
         if (place != null && checks.isEmpty()) PlaceCard(place)
         else if (sound != null && checks.isEmpty() && m.parts.isEmpty()) LinkPreviewCapsule(sound)
         // A poll's votes are in its card, not here.
-        val shownReactions = rich?.reactions.orEmpty().filter { poll == null || com.yaz.sms.core.sms.Polls.choiceOf(it) < 0 } + smsReactions
-        if (shownReactions.isNotEmpty()) {
-            FloatingPane(shape = CircleShape, modifier = Modifier.padding(top = 2.dp)) {
-                Text(shownReactions.joinToString(" "), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
-            }
-        }
+        // Identical reactions gathered in one chip with their count, the user's own in accent glass
+        // (Element X's TimelineItemReactionsView, see ReactionChips).
+        val chatKeys = rich?.reactions.orEmpty().filter { poll == null || com.yaz.sms.core.sms.Polls.choiceOf(it) < 0 }
+        val reactionGroups = com.yaz.sms.core.sms.ReactionGroups.ofCounts(chatKeys, rich?.counts.orEmpty(), rich?.myReactions.orEmpty()) +
+            com.yaz.sms.core.sms.ReactionGroups.ofList(smsReactions, smsMine)
+        ReactionChips(reactionGroups, mine, Modifier.padding(top = 2.dp))
         // Pinned for both sides, or changed after it was sent.
         if (rich?.pinned == true || rich?.edited == true) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp, start = 8.dp, end = 8.dp)) {

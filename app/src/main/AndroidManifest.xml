@@ -71,6 +71,9 @@
         <!-- The Contacts app's door for cards shared over the chat (signature level). -->
         <provider android:authorities="com.yaz.contacts.cards" />
         <provider android:authorities="com.yaz.contacts.debug.cards" />
+        <!-- Our Keyboard app, to know it is the current keyboard (its signature compared). -->
+        <package android:name="com.yaz.keyboard" />
+        <package android:name="com.yaz.keyboard.debug" />
         <intent>
             <action android:name="com.dialer.app.action.SHOW_NUMBER" />
             <data android:scheme="tel" />

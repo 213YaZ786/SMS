@@ -149,6 +149,8 @@ dependencies {
     implementation(libs.koin.android)
     implementation(libs.koin.compose)
     implementation(libs.media3.exoplayer)
+    // Films too big for the carrier's MMS size are transcoded to fit (MmsVideo).
+    implementation("androidx.media3:media3-transformer:${libs.versions.media3.get()}")
     // GIF frames, decoded only inside the isolated DecoderService.
     implementation(libs.glide.gifdecoder)
     // QR codes of the invite to chat without a number (Apache 2.0).

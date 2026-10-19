@@ -292,28 +292,6 @@ fun Composer(
         // MentionsPickerFragmentV2 over the composer, the query from ComposeText (core/chat/Mentions.kt).
         val mentionQuery = if (mentionNames.isEmpty() || sel.length > 0 || take != null || editing != null) null else com.yaz.sms.core.chat.Mentions.queryAt(text, sel.end)
         val mentionMatches = mentionQuery?.let { com.yaz.sms.core.chat.Mentions.search(mentionNames, it.text) }.orEmpty()
-        androidx.compose.animation.AnimatedVisibility(visible = mentionMatches.isNotEmpty()) {
-            var shown by remember { mutableStateOf(mentionMatches) }
-            if (mentionMatches.isNotEmpty()) shown = mentionMatches
-            FloatingPane(shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                Column(Modifier.padding(vertical = 6.dp)) {
-                    shown.forEach { who ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().clickable(onClickLabel = "Mention $who") {
-                                haptics.tick()
-                                val (t, c) = com.yaz.sms.core.chat.Mentions.insert(text, sel.end, who)
-                                text = t
-                                sel = androidx.compose.ui.text.TextRange(c)
-                            }.padding(horizontal = 16.dp, vertical = 10.dp)
-                        ) {
-                            Icon(AppIcons.AlternateEmail, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                            Text(who, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp))
-                        }
-                    }
-                }
-            }
-        }
         if (choosingLive && onLive != null) LiveDurationSheet(
             onPick = { seconds ->
                 choosingLive = false
@@ -334,6 +312,23 @@ fun Composer(
                 pickDrop.value?.invoke(drop)
             }
         }
+        // The members offered while an @ is typed, as pills on the start side of the row that carries Send later's
+        // clock at its end, over the bar (MentionLine).
+        MentionLine(
+            names = mentionMatches,
+            laterReady = onSchedule != null && editing == null && take == null && text.isNotBlank() && attachments.isEmpty(),
+            onMention = { who ->
+                val (t, c) = com.yaz.sms.core.chat.Mentions.insert(text, sel.end, who)
+                text = t
+                sel = androidx.compose.ui.text.TextRange(c)
+            },
+            onLater = {
+                haptics.tick()
+                val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                onSchedule?.invoke(text, sub)
+                text = ""
+            }
+        )
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
             val recording = take
             if (recording != null && recording.locked) {
@@ -540,28 +535,7 @@ fun Composer(
                 }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            // Send later, in sight above Send as soon as there are words.
-            val laterReady = onSchedule != null && editing == null && take == null && text.isNotBlank() && attachments.isEmpty()
-            androidx.compose.animation.AnimatedVisibility(
-                visible = laterReady,
-                enter = scaleIn(spring(dampingRatio = 0.5f, stiffness = 500f)) + fadeIn(),
-                exit = scaleOut() + fadeOut()
-            ) {
-                FloatingPane(
-                    shape = CircleShape,
-                    onClick = {
-                        haptics.tick()
-                        val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
-                        onSchedule?.invoke(text, sub)
-                        text = ""
-                    },
-                    modifier = Modifier.padding(bottom = 8.dp).size(40.dp)
-                ) {
-                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                        Icon(AppIcons.Schedule, contentDescription = "Send later", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                    }
-                }
-            }
+            // Send later's clock is in the row above (MentionLine), over Send.
             Box(if (micMode) Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
