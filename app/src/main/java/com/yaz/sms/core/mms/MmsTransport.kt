@@ -51,7 +51,7 @@ object MmsTransport {
     private const val DEFAULT_MAX = 300 * 1024
 
     /** Writes and sends a picture message to [recipients]: text and attachments in one. */
-    fun send(context: Context, recipients: List<String>, text: String, attachments: List<Attachment>, subId: Int): Uri? {
+    fun send(context: Context, recipients: List<String>, text: String, attachments: List<Attachment>, subId: Int, inThread: Long? = null): Uri? {
         val app = context.applicationContext
         val sub = if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) subId else SubscriptionManager.getDefaultSmsSubscriptionId()
         val budget = maxSize(app, sub) - 2 * 1024 - text.toByteArray().size
@@ -81,7 +81,7 @@ object MmsTransport {
             }
             messageSize = (0 until body.partsNum).sumOf { (body.getPart(it).data?.size ?: 0).toLong() }
         }
-        val uri = MmsStore.saveOutgoing(app, recipients, body, sub) ?: return null
+        val uri = MmsStore.saveOutgoing(app, recipients, body, sub, inThread) ?: return null
         val sent = runCatching {
             val bytes = PduComposer(app, req).make() ?: error("compose")
             val file = file(app, "send-${uri.lastPathSegment}")

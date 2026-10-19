@@ -59,9 +59,7 @@ import com.yaz.sms.core.dial.Numbers
 import com.yaz.sms.core.dial.T9
 import com.yaz.sms.core.sms.Filter
 import com.yaz.sms.core.sms.Lists
-import com.yaz.sms.core.sms.Screening
-import com.yaz.sms.core.sms.Verdict
-import com.yaz.sms.data.settings.KnownStore
+import com.yaz.sms.core.sms.SpamJudge
 import com.yaz.sms.data.contacts.PhoneBook
 import com.yaz.sms.data.contacts.PhoneIndex
 import com.yaz.sms.data.settings.SettingsStore
@@ -128,31 +126,27 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     androidx.compose.runtime.LaunchedEffect(settings.checkLinks) {
         if (settings.checkLinks) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.yaz.sms.core.link.BadHosts.refresh(context) }
     }
-    // Unknown senders (Screening, iOS 26 Screen Unknown Senders): not in the contacts, not marked
-    // known, fewer than three replies, no encrypted chat with them. Each conversation's verdict is
-    // kept while its newest message and its known state stay the same, so a change of the store
-    // reads only what moved.
-    val knownStore: KnownStore = koinInject()
-    val marked by knownStore.known.collectAsState()
-    // Spam: the senders reported or cleared answer at once, the classifier trained on the labelled
-    // messages follows off the main thread (SpamStore.filter).
+    // Spam (SpamJudge): the senders reported or cleared answer at once, the classifier trained on the
+    // labelled messages follows off the main thread (SpamStore.filter). The classifier judges only a
+    // sender not in the contacts, with fewer than three replies and no encrypted chat. Each
+    // conversation's verdict is kept while its newest message and its known state stay the same,
+    // so a change of the store reads only what moved.
     val spamStore: SpamStore = koinInject()
     val spamData by spamStore.data.collectAsState()
     val spamFilter by androidx.compose.runtime.produceState(spamStore.filter(spamData, withModel = false), spamData) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { spamStore.filter(spamData) }
     }
     val chatLinks by chat.links.collectAsState()
-    val country = remember { com.yaz.sms.core.dial.SalesCalls.country(context) }
-    val kept = remember { HashMap<Long, Pair<List<Any>, Verdict?>>() }
-    val screened: Map<Long, Verdict>? = remember(all, index, marked, chatLinks, settings.screenUnknown, spamFilter) {
-        if (!settings.screenUnknown) null else buildMap {
+    val kept = remember { HashMap<Long, Pair<List<Any>, Boolean>>() }
+    val spamThreads: Set<Long> = remember(all, index, chatLinks, settings.spamProtection, spamFilter) {
+        if (!settings.spamProtection) emptySet() else buildSet {
             for (c in all) {
-                val isKnown = Screening.isKnown(index.find(T9.clean(c.address)) != null, marked, c.address, c.sent) ||
+                val isKnown = SpamJudge.isKnown(index.find(T9.clean(c.address)) != null, c.sent) ||
                     (!c.group && chat.linkFor(c.address) != null)
-                val key = listOf<Any>(c.date, c.snippet, c.fromMe, isKnown, country ?: "", spamFilter)
-                val verdict = kept[c.threadId]?.takeIf { it.first == key }?.second
-                    ?: Screening.verdict(c, isKnown, country, spamFilter).also { kept[c.threadId] = key to it }
-                if (verdict != null) put(c.threadId, verdict)
+                val key = listOf<Any>(c.date, c.snippet, c.fromMe, isKnown, spamFilter)
+                val spam = kept[c.threadId]?.takeIf { it.first == key }?.second
+                    ?: SpamJudge.isSpam(c, isKnown, spamFilter).also { kept[c.threadId] = key to it }
+                if (spam) add(c.threadId)
             }
         }
     }
@@ -171,9 +165,9 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // A trashed conversation tapped: it is restored to be read.
     var restoring by remember { mutableStateOf<Conversation?>(null) }
     val rememberedHaptics = rememberHaptics()
-    val shown = remember(all, filter, settings.pinned, settings.archived, trashed, query, index, screened) {
+    val shown = remember(all, filter, settings.pinned, settings.archived, trashed, query, index, spamThreads) {
         val q = query.trim().lowercase()
-        Lists.shown(all, filter, settings.pinned, settings.archived, known = { c -> index.find(T9.clean(c.address)) != null }, trashed = trashed, screened = screened).filter { c ->
+        Lists.shown(all, filter, settings.pinned, settings.archived, trashed = trashed, spam = spamThreads).filter { c ->
             q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
         }
     }
@@ -196,11 +190,10 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // To answer: each card once. The cards already shown are read when the
     // screen comes back, and the ones shown now are kept as seen when it goes.
     var seenAtOpen by remember { mutableStateOf(store.current.answerSeen) }
-    val waiting = remember(live, settings.archived, filter, query, seenAtOpen, screened) {
-        // Unknown senders wait in Unknown, not among the cards.
-        val now = System.currentTimeMillis()
+    val waiting = remember(live, settings.archived, filter, query, seenAtOpen, spamThreads) {
+        // Spam waits in Spam, not among the cards.
         if (filter != Filter.ALL || query.isNotBlank()) emptyList()
-        else Lists.toAnswer(live.filterNot { Lists.isScreened(it, screened, now) }, settings.archived, seenAtOpen)
+        else Lists.toAnswer(live.filterNot { it.threadId in spamThreads }, settings.archived, seenAtOpen)
     }
     val shownCards by androidx.compose.runtime.rememberUpdatedState(waiting)
     // A new card to answer comes in on top: in sight when the list was at its top.
@@ -235,15 +228,15 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     var blocking by remember { mutableStateOf<Conversation?>(null) }
     fun reportSpam(c: Conversation, block: Boolean) {
         scope.launch {
-            spamStore.report(Screening.senderKey(c.address), Spams.received(messages.thread(c.threadId, Spams.MAX_PER_REPORT * 2)))
+            spamStore.report(SpamJudge.senderKey(c.address), Spams.received(messages.thread(c.threadId, Spams.MAX_PER_REPORT * 2)))
             if (block) NumberActions.block(context, c.address)
         }
     }
     fun notSpam(c: Conversation) {
-        scope.launch { spamStore.notSpam(Screening.senderKey(c.address), Spams.received(messages.thread(c.threadId, Spams.MAX_PER_REPORT * 2))) }
+        scope.launch { spamStore.notSpam(SpamJudge.senderKey(c.address),Spams.received(messages.thread(c.threadId, Spams.MAX_PER_REPORT * 2))) }
     }
-    // A person with a number or a name, not a group nor someone met over the chat: what Screening can sort.
-    fun canReport(c: Conversation) = settings.screenUnknown && !c.group && c.address.isNotBlank() && '@' !in c.address
+    // A person with a number or a name, not a group nor someone met over the chat: what SpamJudge can sort.
+    fun canReport(c: Conversation) = settings.spamProtection && !c.group && c.address.isNotBlank() && '@' !in c.address
 
     // Deleted for good, from the Trash: the messages up to each cutoff (Messages.deleteUpTo, AOSP
     // Messaging's MmsUtils.deleteThread), then the chat side of them and the entry go. An entry
@@ -314,20 +307,10 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
 
     val archive = filter == Filter.ARCHIVED
     val inTrash = filter == Filter.TRASH
-    // Unknown, with its Transactions and Promotions, is a place of the same kind (iOS 26 Messages'
-    // Unknown Senders filter and its categories).
-    val inUnknown = filter == Filter.UNKNOWN || filter == Filter.TRANSACTIONS || filter == Filter.PROMOTIONS
-    // Spam is a place of its own beside Unknown (Google Messages' Spam & blocked).
+    // Spam is a place of its own (Google Messages' Spam & blocked).
     val inSpam = filter == Filter.SPAM
-    // The Archive, the Trash, Unknown and Spam are places side by side, away from the inbox.
-    val apart = archive || inTrash || inUnknown || inSpam
-    // Unknown shows what waits in it: the unread conversations screened away, spam apart.
-    val unknownUnread = remember(screened, all, settings.archived, trashed) {
-        if (screened == null) 0 else all.count {
-            screened[it.threadId].let { v -> v != null && v.category != com.yaz.sms.core.sms.Category.SPAM } &&
-                it.unread > 0 && !Lists.isArchived(it, settings.archived) && !Lists.isTrashed(it, trashed)
-        }
-    }
+    // The Archive, the Trash and Spam are places side by side, away from the inbox.
+    val apart = archive || inTrash || inSpam
     // One line at the top (the user, 2026-10-16): the search behind a magnifier that
     // opens into the field, as Material 3's search from an app bar icon, and one
     // Unread toggle; no title on the list, as Google Messages shows none.
@@ -362,7 +345,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         wasSearching = open
     }
     TabFrame(
-        title = if (archive) "Archive" else if (inTrash) "Trash" else if (inUnknown) "Unknown" else null,
+        title = if (archive) "Archive" else if (inTrash) "Trash" else null,
         onOpenSettings = onOpenSettings,
         // Top left, facing Settings: the archive, and back from it or from the Trash.
         leading = {
@@ -412,16 +395,9 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 listOfNotNull(
                     Filter.ARCHIVED to "Archive",
                     Filter.TRASH to "Trash",
-                    if (settings.screenUnknown) Filter.UNKNOWN to (if (unknownUnread > 0) "Unknown · $unknownUnread" else "Unknown") else null,
-                    if (settings.screenUnknown) Filter.SPAM to "Spam" else null
-                ),
-                selected = { value -> if (value == Filter.UNKNOWN) inUnknown else value == filter }
+                    if (settings.spamProtection) Filter.SPAM to "Spam" else null
+                )
             ) {
-                picked = null
-                filter = it
-            }
-            // Unknown: all of it, or only what looks like a transaction or a promotion.
-            if (inUnknown && canFilter) Kinds(filter) {
                 picked = null
                 filter = it
             }
@@ -540,9 +516,6 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     filter == Filter.UNREAD -> "All read"
                     filter == Filter.ARCHIVED -> "Nothing in the archive"
                     filter == Filter.TRASH -> "Trash is empty"
-                    filter == Filter.UNKNOWN -> "No one unknown"
-                    filter == Filter.TRANSACTIONS -> "No transactions"
-                    filter == Filter.PROMOTIONS -> "No promotions"
                     filter == Filter.SPAM -> "No spam"
                     else -> "No messages yet"
                 },
@@ -550,7 +523,6 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     query.isNotBlank() -> "No name, number or message matches \"$query\"."
                     filter == Filter.ALL -> "Write to someone with the button below."
                     filter == Filter.TRASH -> "Conversations you trash stay here 30 days."
-                    inUnknown -> "Messages from numbers you don't know come here."
                     inSpam -> "Report a conversation as spam to put it here."
                     else -> "Archive a conversation with a long press; it comes back with its next message."
                 },
@@ -688,16 +660,10 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 peeking = null
             },
             onDelete = { moveToTrash(listOf(c)) },
-            // Only for an unknown sender, and not in Spam: its conversation comes back to the list,
-            // and its messages teach the classifier they are fine.
-            onKnown = if (screened?.get(c.threadId).let { it != null && it.category != com.yaz.sms.core.sms.Category.SPAM }) ({
-                knownStore.mark(Screening.senderKey(c.address))
-                notSpam(c)
-            }) else null,
-            onReportSpam = if (canReport(c) && screened?.get(c.threadId)?.category != com.yaz.sms.core.sms.Category.SPAM) ({ reporting = c }) else null,
-            onNotSpam = if (screened?.get(c.threadId)?.category == com.yaz.sms.core.sms.Category.SPAM) ({ notSpam(c) }) else null,
+            onReportSpam = if (canReport(c) && c.threadId !in spamThreads) ({ reporting = c }) else null,
+            onNotSpam = if (c.threadId in spamThreads) ({ notSpam(c) }) else null,
             // In Spam: Block asks first, as the selection's Block does.
-            onBlock = if (screened?.get(c.threadId)?.category == com.yaz.sms.core.sms.Category.SPAM && !c.group &&
+            onBlock = if (c.threadId in spamThreads && !c.group &&
                 c.address.count(Char::isDigit) >= 3 && NumberActions.canBlock(context)
             ) ({ blocking = c }) else null
         )
@@ -761,7 +727,7 @@ private fun Filters(
         }
     }
     if (stacked) {
-        // Four places (Archive, Trash, Unknown, Spam) wrap onto a second line when a phone is too narrow, never sideways
+        // Three places (Archive, Trash, Spam) wrap onto a second line when a phone is too narrow, never sideways
         // (Jetpack Compose FlowRow, https://developer.android.com/develop/ui/compose/layouts/flow).
         androidx.compose.foundation.layout.FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
@@ -775,31 +741,6 @@ private fun Filters(
     ) {
         SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).weight(1f, fill = false).fillMaxWidth(), floating = true)
         chipsRow()
-    }
-}
-
-/**
- * The kinds of Unknown, one choice among All, Transactions and Promotions: a group of chips with one
- * selected, as Jetpack Compose Material 3's FilterChip rows are used
- * (https://developer.android.com/develop/ui/compose/components/chip#filter), in this screen's own glass
- * chips (the ones of Filters above).
- */
-@Composable
-private fun Kinds(filter: Filter, onFilter: (Filter) -> Unit) {
-    val haptics = rememberHaptics()
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
-    ) {
-        listOf(Filter.UNKNOWN to "All", Filter.TRANSACTIONS to "Transactions", Filter.PROMOTIONS to "Promotions").forEach { (value, label) ->
-            FloatingPane(shape = CircleShape, accent = filter == value, onClick = {
-                haptics.tick()
-                onFilter(value)
-            }) {
-                Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
-            }
-        }
     }
 }
 

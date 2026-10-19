@@ -89,8 +89,6 @@ internal fun Peek(
     onDelete: () -> Unit,
     /** Starts the multi select on this conversation (AOSP Messaging's select mode). */
     onSelect: () -> Unit = {},
-    /** Marks the sender known, so its messages come back to the list (shown only for an unknown sender). */
-    onKnown: (() -> Unit)? = null,
     /** Report spam (Google Messages): asks first, in the caller's dialog; shown for a person with a number. */
     onReportSpam: (() -> Unit)? = null,
     /** Not spam, for a conversation in Spam. */
@@ -208,7 +206,6 @@ internal fun Peek(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                     ) {
                         if (onNotSpam != null) Action(AppIcons.ReportOff, "Not spam") { onNotSpam(); onDismiss() }
-                        if (onKnown != null) Action(AppIcons.CheckCircle, "Mark as known") { onKnown(); onDismiss() }
                         Action(AppIcons.PushPin, if (pinned) "Unpin" else "Pin") { onPin(!pinned); onDismiss() }
                         if (c.unread > 0) Action(AppIcons.DoneAll, "Read") { onRead(); onDismiss() }
                         Action(if (archived) AppIcons.Unarchive else AppIcons.Archive, if (archived) "Unarchive" else "Archive") { onArchive(!archived); onDismiss() }

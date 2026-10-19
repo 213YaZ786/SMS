@@ -2,9 +2,9 @@
 # usage: maestro/run-spam.sh [adb serial]   (an emulator: the notification check sends a text through its console)
 # Spam (Google Messages' Report spam / Not spam, https://support.google.com/messages/answer/9061432;
 # classifier ported from SpamBlocker, https://github.com/aj3423/SpamBlocker): seeds conversations from numbers
-# in no contact through the debug build's DebugBulkReceiver (the style of run-screening.sh), runs spam.yaml
+# in no contact through the debug build's DebugBulkReceiver, runs spam.yaml
 # (https://docs.maestro.dev), then checks with a text sent through the emulator's modem that spam does not
-# notify and a person does. Needs the debug build, SMS as the default SMS app, screening on.
+# notify and a person does. Needs the debug build, SMS as the default SMS app, Spam protection on.
 set -e
 here="$(cd "$(dirname "$0")" && pwd)"
 adb=(~/Android/Sdk/platform-tools/adb ${1:+-s "$1"})

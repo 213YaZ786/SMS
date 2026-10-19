@@ -225,6 +225,10 @@ private fun ThreadContent(
     // The encrypted chat's events concern this conversation only when it goes over the chat.
     val overChat = remember(links, people) { people.size > 1 || people.any { '@' in it || chat.linkFor(it) != null } }
     val chatKey = if (overChat) chatChanges else 0
+    // True once the conversation has been read as it is now: what was there when it opened is not
+    // news, only what comes after it drops in (Google Messages and iOS Messages show a conversation
+    // at its newest message at once; only a message arriving while it is open animates in).
+    var read by remember { mutableStateOf(false) }
     LaunchedEffect(thread, changes, chatKey, window) {
         val t = thread ?: return@LaunchedEffect
         // Opened for the first time: the newest few first, on screen at once, then the page.
@@ -235,6 +239,7 @@ private fun ThreadContent(
             if (first.isNotEmpty()) androidx.compose.runtime.snapshotFlow { rowsOfList }.first { it === first }
         }
         list = messages.thread(t, window)
+        read = true
     }
     LaunchedEffect(thread, list, shown) {
         val t = thread ?: return@LaunchedEffect
@@ -335,18 +340,21 @@ private fun ThreadContent(
     // A message held back to go at a chosen time.
     var scheduling by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var scheduled by remember { mutableStateOf(com.yaz.sms.core.sms.Timed.scheduled(context)) }
-    // Received messages that arrive while the conversation is open drop in.
+    // Received messages that arrive while the conversation is open drop in: those newer than
+    // the newest one read when it opened, so neither the first read nor an older page counts.
     var known by remember { mutableStateOf<Set<String>?>(null) }
+    var newestKnown by remember { mutableStateOf(0L) }
     // Sent with an effect: it plays here at once, and the bubble remembers it a while.
     val sentEffects = remember { androidx.compose.runtime.mutableStateMapOf<String, Pair<com.yaz.sms.core.sms.Effects.Effect, Long>>() }
     var playing by remember { mutableStateOf<Triple<com.yaz.sms.core.sms.Effects.Effect, String, androidx.compose.ui.geometry.Offset?>?>(null) }
     var fresh by remember { mutableStateOf<Set<String>>(emptySet()) }
     val haptics = rememberHaptics()
-    LaunchedEffect(list) {
+    LaunchedEffect(list, read) {
+        if (!read) return@LaunchedEffect
         val received = list.filter { it.box == MessageBox.RECEIVED }.map { it.uid }.toSet()
         val before = known
         if (before != null) {
-            val new = received - before
+            val new = list.filter { it.box == MessageBox.RECEIVED && it.uid !in before && it.date > newestKnown }.map { it.uid }.toSet()
             if (new.isNotEmpty()) {
                 fresh = fresh + new
                 haptics.tick()
@@ -362,6 +370,7 @@ private fun ThreadContent(
             }
         }
         known = received
+        newestKnown = maxOf(newestKnown, list.maxOfOrNull { it.date } ?: 0L)
     }
     fun sendNow(p: Pending) {
         scope.launch(Dispatchers.IO) {
@@ -383,8 +392,8 @@ private fun ThreadContent(
                 return@launch
             }
             val text = p.quoted?.let { "«${excerpt(it)}»\n${p.text}" } ?: p.text
-            if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, p.sub)
-            else SmsSender.send(context, to, text, p.sub)
+            if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, p.sub, thread)
+            else SmsSender.send(context, to, text, p.sub, thread)
             // The first message to a number asks, unseen, whether it has SMS too.
             if (!group) chat.hello(to)
         }
@@ -799,7 +808,12 @@ private fun ThreadContent(
                     is Row.Bubble -> {
                     val wash by animateFloatAsState(if (lit == row.message.uid) 1f else 0f, androidx.compose.animation.core.tween(500), label = "lit")
                     Box(
-                        Modifier.fillMaxWidth().animateItem(fadeOutSpec = androidx.compose.animation.core.tween(450))
+                        // No entrance for the rows a conversation opens with (fadeInSpec null until it has been
+                        // read); a message added after that fades in (LazyItemScope.animateItem, the default spring).
+                        Modifier.fillMaxWidth().animateItem(
+                            fadeInSpec = if (read) spring(stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow) else null,
+                            fadeOutSpec = androidx.compose.animation.core.tween(450)
+                        )
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f * wash), RoundedCornerShape(16.dp))
                     ) {
                       val mineRow = row.message.box != MessageBox.RECEIVED
@@ -826,7 +840,7 @@ private fun ThreadContent(
                         onSmsReact = if (!group && !row.message.rich && row.message.body.isNotBlank()) ({ emoji ->
                             val removed = emoji in row.smsMine
                             val said = com.yaz.sms.core.sms.Effects.read(row.message.body).first
-                            scope.launch(Dispatchers.IO) { SmsSender.send(context, to, com.yaz.sms.core.sms.SmsReactions.write(emoji, said, removed), row.message.subId) }
+                            scope.launch(Dispatchers.IO) { SmsSender.send(context, to, com.yaz.sms.core.sms.SmsReactions.write(emoji, said, removed), row.message.subId, thread) }
                         }) else null,
                         smsMine = row.smsMine,
                         onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },

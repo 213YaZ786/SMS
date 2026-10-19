@@ -22,12 +22,14 @@ object SmsSender {
     const val EXTRA_PARTS = "parts"
 
     /** The message's place in the store, or null when it could not even be written. */
-    fun send(context: Context, address: String, text: String, subId: Int = SubscriptionManager.INVALID_SUBSCRIPTION_ID): Uri? {
+    fun send(context: Context, address: String, text: String, subId: Int = SubscriptionManager.INVALID_SUBSCRIPTION_ID, inThread: Long? = null): Uri? {
         // Ordinary spaces only: a reaction's hair spaces (U+200A) are its structure.
         val body = text.trim(' ', '\n', '\t', '\r')
         if (body.isEmpty() || address.isBlank()) return null
         val app = context.applicationContext
-        val thread = runCatching { Telephony.Threads.getOrCreateThreadId(app, address) }.getOrNull() ?: return null
+        // [inThread]: the conversation open, which may list oneself beside the person (OwnNumbers):
+        // the answer stays in it, as AOSP Messaging answers in the conversation it shows.
+        val thread = inThread ?: runCatching { Telephony.Threads.getOrCreateThreadId(app, address) }.getOrNull() ?: return null
         val sub = if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) subId else SubscriptionManager.getDefaultSmsSubscriptionId()
         val uri = runCatching {
             app.contentResolver.insert(

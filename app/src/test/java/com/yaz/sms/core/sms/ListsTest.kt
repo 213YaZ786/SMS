@@ -49,12 +49,12 @@ class ListsTest {
     }
 
     @Test
-    fun aTrashedConversationIsNeitherUnreadNorUnknownNorArchivedNorAnswered() {
+    fun aTrashedConversationIsNeitherUnreadNorSpamNorArchivedNorAnswered() {
         val all = listOf(c(1, 1, unread = 2), c(2, 2, unread = 1, address = "0699999999"))
         val trashed = mapOf(1L to Trashed(now, now - hour), 2L to Trashed(now, now - 2 * hour))
         val archived = mapOf(1L to now - hour)
         assertEquals(emptyList<Long>(), Lists.shown(all, Filter.UNREAD, emptyList(), emptyMap(), trashed = trashed).map { it.threadId })
-        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.UNKNOWN, emptyList(), emptyMap(), trashed = trashed).map { it.threadId })
+        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.SPAM, emptyList(), emptyMap(), trashed = trashed, spam = setOf(1L, 2L)).map { it.threadId })
         assertEquals(emptyList<Long>(), Lists.shown(all, Filter.ARCHIVED, emptyList(), archived, trashed = trashed).map { it.threadId })
         // Restored, the archived one is back in the archive.
         assertEquals(listOf(1L), Lists.shown(all, Filter.ARCHIVED, emptyList(), archived).map { it.threadId })
@@ -88,58 +88,30 @@ class ListsTest {
         assertEquals(null, Lists.latestCode(listOf(old), now))
     }
 
-    // iOS 26 Messages' Unknown Senders (https://support.apple.com/en-us/125068) over SpamBlocker's
-    // checkers (https://github.com/aj3423/SpamBlocker, Checker.kt): the screened conversations leave
-    // the main list for Unknown, Transactions and Promotions; a code stays eight hours.
+    // Google Messages keeps Spam & blocked apart from the inbox (https://support.google.com/messages/answer/9061432):
+    // a spam conversation leaves the main list and Unread, and only Spam lists it. Nothing else leaves the list.
     @Test
-    fun screenedConversationsLeaveTheMainList() {
-        val all = listOf(c(1, 1), c(2, 2), c(3, 3), c(4, 4), c(5, 20, address = "GOOGLE"))
-        val screened = mapOf(
-            2L to Verdict(Category.PROMOTIONS, Screening.BY_OPT_OUT),
-            3L to Verdict(Category.TRANSACTIONS, Screening.BY_PARCEL),
-            4L to Verdict(Category.UNKNOWN, Screening.BY_DEFAULT),
-            5L to Verdict(Category.TRANSACTIONS, Screening.BY_CODE)
-        )
-        fun ids(filter: Filter) = Lists.shown(all, filter, emptyList(), emptyMap(), screened = screened, now = now).map { it.threadId }
-        // The code of 20 hours ago has gone with its eight hours.
-        assertEquals(listOf(1L), ids(Filter.ALL))
-        assertEquals(listOf(2L, 3L, 4L, 5L), ids(Filter.UNKNOWN))
-        assertEquals(listOf(3L, 5L), ids(Filter.TRANSACTIONS))
-        assertEquals(listOf(2L), ids(Filter.PROMOTIONS))
+    fun spamLeavesTheMainListAndNothingElseDoes() {
+        val all = listOf(c(1, 1, unread = 1), c(2, 2, unread = 1), c(3, 3, unread = 1, address = "GOOGLE"))
+        val spam = setOf(2L)
+        fun ids(filter: Filter) = Lists.shown(all, filter, emptyList(), emptyMap(), spam = spam).map { it.threadId }
+        assertEquals(listOf(1L, 3L), ids(Filter.ALL))
+        assertEquals(listOf(1L, 3L), ids(Filter.UNREAD))
+        assertEquals(listOf(2L), ids(Filter.SPAM))
     }
 
     @Test
-    fun aRecentCodeIsAlsoInTheMainList() {
-        val all = listOf(c(1, 2, address = "GOOGLE"), c(2, 1))
-        val screened = mapOf(1L to Verdict(Category.TRANSACTIONS, Screening.BY_CODE))
-        assertEquals(listOf(2L, 1L), Lists.shown(all, Filter.ALL, emptyList(), emptyMap(), screened = screened, now = now).map { it.threadId })
-        assertEquals(listOf(1L), Lists.shown(all, Filter.UNKNOWN, emptyList(), emptyMap(), screened = screened, now = now).map { it.threadId })
-        assertEquals(listOf(1L), Lists.shown(all, Filter.TRANSACTIONS, emptyList(), emptyMap(), screened = screened, now = now).map { it.threadId })
-    }
-
-    @Test
-    fun withScreeningOffEverythingIsAsBefore() {
+    fun withoutSpamEverythingIsInTheMainListAndSpamIsEmpty() {
         val all = listOf(c(1, 1), c(2, 2))
-        assertEquals(listOf(1L, 2L), Lists.shown(all, Filter.ALL, emptyList(), emptyMap(), screened = null).map { it.threadId })
-        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.PROMOTIONS, emptyList(), emptyMap(), screened = null).map { it.threadId })
+        assertEquals(listOf(1L, 2L), Lists.shown(all, Filter.ALL, emptyList(), emptyMap()).map { it.threadId })
+        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.SPAM, emptyList(), emptyMap()).map { it.threadId })
     }
 
     @Test
-    fun anArchivedOrTrashedUnknownIsNotInUnknown() {
+    fun anArchivedOrTrashedSpamIsNotInSpam() {
         val all = listOf(c(1, 1), c(2, 2))
-        val screened = mapOf(
-            1L to Verdict(Category.UNKNOWN, Screening.BY_DEFAULT),
-            2L to Verdict(Category.UNKNOWN, Screening.BY_DEFAULT)
-        )
         val archived = mapOf(1L to now)
         val trashed = mapOf(2L to Trashed(now, now))
-        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.UNKNOWN, emptyList(), archived, trashed = trashed, screened = screened, now = now).map { it.threadId })
-    }
-
-    @Test
-    fun unknownIsPeopleNotInTheContacts() {
-        val all = listOf(c(1, 1, address = "0611111111"), c(2, 2, address = "0622222222"), c(3, 3, address = "LaPoste"))
-        val shown = Lists.shown(all, Filter.UNKNOWN, emptyList(), emptyMap(), known = { it.address == "0611111111" })
-        assertEquals(listOf(2L), shown.map { it.threadId })
+        assertEquals(emptyList<Long>(), Lists.shown(all, Filter.SPAM, emptyList(), archived, trashed = trashed, spam = setOf(1L, 2L)).map { it.threadId })
     }
 }

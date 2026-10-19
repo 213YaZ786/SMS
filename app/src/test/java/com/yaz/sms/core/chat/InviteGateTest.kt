@@ -17,17 +17,11 @@ class InviteGateTest {
     private val stranger = "+33799887766"
 
     private fun accepted(
-        asked: Boolean = false, marked: Set<String> = emptySet(), contact: Boolean = false, sent: Boolean = false
-    ) = InviteGate.accepted(asked, marked, stranger, { contact }, { sent })
+        asked: Boolean = false, contact: Boolean = false, sent: Boolean = false
+    ) = InviteGate.accepted(asked, { contact }, { sent })
 
     @Test
     fun aSystemContactIsAccepted() = assertTrue(accepted(contact = true))
-
-    @Test
-    fun aNumberMarkedKnownIsAcceptedWhateverItsFormat() {
-        assertTrue(accepted(marked = setOf("799887766")))
-        assertTrue(InviteGate.accepted(false, setOf("799887766"), "07 99 88 77 66", { false }, { false }))
-    }
 
     @Test
     fun aThreadTheUserWroteInIsAccepted() = assertTrue(accepted(sent = true))
@@ -38,16 +32,14 @@ class InviteGateTest {
     @Test
     fun aStrangerIsIgnored() {
         assertFalse(accepted())
-        assertFalse(accepted(marked = setOf("611223344")))
     }
 
     @Test
     fun theStoresAreReadOnlyWhenTheCheaperAnswersAreNo() {
         var reads = 0
-        assertTrue(InviteGate.accepted(true, emptySet(), stranger, { reads++; false }, { reads++; false }))
-        assertTrue(InviteGate.accepted(false, setOf("799887766"), stranger, { reads++; false }, { reads++; false }))
+        assertTrue(InviteGate.accepted(true, { reads++; false }, { reads++; false }))
         assertEquals(0, reads)
-        assertTrue(InviteGate.accepted(false, emptySet(), stranger, { reads++; true }, { reads++; false }))
+        assertTrue(InviteGate.accepted(false, { reads++; true }, { reads++; false }))
         assertEquals(1, reads)
     }
 

@@ -1,7 +1,7 @@
 package com.yaz.sms.core.spam
 
 /**
- * What the spam checkers of Screening ask: the senders the user reported (true) or cleared
+ * What the spam tests of SpamJudge ask: the senders the user reported (true) or cleared
  * (false), and the classifier trained on the messages the user labelled. The questions are
  * SpamBlocker's Checker.NaiveBayes (MIT, https://github.com/aj3423/SpamBlocker,
  * app/src/main/java/spam/blocker/service/checker/Checker.kt: the model is asked only when it
@@ -11,7 +11,7 @@ package com.yaz.sms.core.spam
  * spam list is blocked before any content is read).
  */
 class SpamFilter(
-    /** Screening.senderKey to true (reported) or false (cleared by Not spam). */
+    /** SpamJudge.senderKey to true (reported) or false (cleared by Not spam). */
     val senders: Map<String, Boolean> = emptyMap(),
     private val model: ComplementNaiveBayes? = null
 ) {

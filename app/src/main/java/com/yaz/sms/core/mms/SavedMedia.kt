@@ -21,7 +21,7 @@ data class SavedFile(val items: List<SavedEntry> = emptyList())
 
 /**
  * The rules of the list of saved media, pure. The list is kept like Fossify Messages keeps its
- * blocked keywords and like KnownStore keeps the known senders (data/settings/KnownStore.kt: a
+ * blocked keywords and like StarStore keeps the starred messages (data/settings/StarStore.kt: a
  * capped set, a read file filtered as StarStore's Stars.parse does); the oldest go first when
  * the cap is passed, as MediaProvider drops its oldest trashed items first.
  */
@@ -57,7 +57,7 @@ object SavedEntries {
 /**
  * The media this app saved to the phone, with the message each came from, for the Files app to
  * say who sent a saved attachment (SavedDoor). Kept in the app's no-backup folder in a small file
- * of its own, written atomically, the way KnownStore keeps its set (core/common/AtomicWrite.kt).
+ * of its own, written atomically, the way StarStore keeps its set (core/common/AtomicWrite.kt).
  * Nothing here leaves the device except through SavedDoor, behind a signature permission.
  */
 class SavedMedia(private val file: File) {

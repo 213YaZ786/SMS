@@ -45,6 +45,26 @@ class DebugBulkReceiver : BroadcastReceiver() {
             android.util.Log.d("DebugBulk", "group message $saved")
             return
         }
+        // --es to "+1555521555x,..." with --es body: a downloaded MMS as the network gives it (from `from`, TO
+        // the addresses given: oneself alone for a one to one), through the real MmsStore.saveReceived. --ei sub N.
+        intent.getStringExtra("to")?.let { to ->
+            val conf = com.yaz.sms.core.mms.pdu.RetrieveConf().apply {
+                setFrom(com.yaz.sms.core.mms.pdu.EncodedStringValue(from))
+                to.split(',').map { it.trim() }.filter { it.isNotEmpty() }.forEach { addTo(com.yaz.sms.core.mms.pdu.EncodedStringValue(it)) }
+                date = System.currentTimeMillis() / 1000
+                body = com.yaz.sms.core.mms.pdu.PduBody().apply {
+                    addPart(com.yaz.sms.core.mms.pdu.PduPart().apply {
+                        setContentType("text/plain".toByteArray())
+                        setCharset(com.yaz.sms.core.mms.pdu.CharacterSets.UTF_8)
+                        setContentLocation("text0.txt".toByteArray())
+                        setData(intent.getStringExtra("body").orEmpty().ifEmpty { "MMS test" }.toByteArray(Charsets.UTF_8))
+                    })
+                }
+            }
+            val thread = com.yaz.sms.core.mms.MmsStore.saveReceived(context, conf, intent.getIntExtra("sub", -1))
+            android.util.Log.d("DebugBulk", "received mms thread $thread")
+            return
+        }
         // --ez waiting true: a picture message announced, not downloaded (the tap-to-download tile).
         if (intent.getBooleanExtra("waiting", false)) {
             val ind = com.yaz.sms.core.mms.pdu.NotificationInd().apply {

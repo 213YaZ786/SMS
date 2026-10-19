@@ -20,8 +20,8 @@ data class MentionsOffFile(val threads: Set<Long> = emptySet())
  * mentionSetting (AGPL-3.0, https://github.com/signalapp/Signal-Android, RecipientTable.NotificationSetting
  * ALWAYS_NOTIFY / DO_NOT_NOTIFY, read in notifications/v2/NotificationStateProvider.kt breaksThroughMute:
  * a message that mentions the user breaks through a muted conversation when the setting is ALWAYS_NOTIFY).
- * Kept here in a small file of its own, written atomically, the way KnownStore and StarStore keep theirs
- * (data/settings/KnownStore.kt). Only the conversations switched off are written.
+ * Kept here in a small file of its own, written atomically, the way StarStore keeps its set
+ * (data/settings/StarStore.kt). Only the conversations switched off are written.
  */
 class MentionSetting private constructor(context: Context) {
 

@@ -4,12 +4,10 @@ import com.yaz.sms.data.settings.Trashed
 import com.yaz.sms.data.sms.Conversation
 
 /** Which conversations the list shows. */
-enum class Filter { ALL, UNREAD, UNKNOWN, TRANSACTIONS, PROMOTIONS, SPAM, ARCHIVED, TRASH }
+enum class Filter { ALL, UNREAD, SPAM, ARCHIVED, TRASH }
 
 /** How the list of conversations is put together, apart from the screen. */
 object Lists {
-
-    private const val HOUR_MS = 60L * 60 * 1000
 
     /** Archived: put away after its last message. A newer message brings it back. */
     fun isArchived(c: Conversation, archived: Map<Long, Long>): Boolean = archived[c.threadId]?.let { c.date <= it } == true
@@ -23,39 +21,22 @@ object Lists {
     fun isTrashed(c: Conversation, trashed: Map<Long, Trashed>): Boolean = trashed[c.threadId]?.let { c.date <= it.cutoff } == true
 
     /**
-     * A conversation screened away from the main list: it has a verdict in [screened] and is not
-     * a time sensitive one still inside its eight hours (iOS 26 Messages,
-     * https://support.apple.com/en-us/125068, with the checkers of SpamBlocker,
-     * https://github.com/aj3423/SpamBlocker, service/checker/Checker.kt, in Screening).
-     */
-    fun isScreened(c: Conversation, screened: Map<Long, Verdict>?, now: Long): Boolean =
-        screened?.get(c.threadId)?.let { !Screening.staysListed(it, c, now) } == true
-
-    /**
-     * The conversations of [filter], pinned ones first, then newest first. With [screened] (the
-     * unknown senders and what they are, null when the setting is off) the main list leaves them
-     * out and Unknown, Transactions and Promotions list them.
+     * The conversations of [filter], pinned ones first, then newest first. The threads in [spam]
+     * leave the main list and the unread ones for Spam, as Google Messages keeps its Spam & blocked
+     * apart from the inbox (https://support.google.com/messages/answer/9061432).
      */
     fun shown(
         all: List<Conversation>, filter: Filter, pinned: List<Long>, archived: Map<Long, Long>,
-        known: (Conversation) -> Boolean = { true },
         trashed: Map<Long, Trashed> = emptyMap(),
-        screened: Map<Long, Verdict>? = null,
-        now: Long = System.currentTimeMillis()
+        spam: Set<Long> = emptySet()
     ): List<Conversation> {
         val kept = all.filter { c ->
             val gone = isTrashed(c, trashed)
-            val away = isScreened(c, screened, now)
+            val away = c.threadId in spam
             when (filter) {
                 Filter.ALL -> !isArchived(c, archived) && !gone && !away
                 Filter.UNREAD -> c.unread > 0 && !isArchived(c, archived) && !gone && !away
-                // Screened: every unknown sender but spam, which has its own place. Otherwise people not in the contacts: no group, no bank or delivery service.
-                Filter.UNKNOWN ->
-                    if (screened != null) screened[c.threadId].let { it != null && it.category != Category.SPAM } && !isArchived(c, archived) && !gone
-                    else !c.group && !isService(c) && !known(c) && !isArchived(c, archived) && !gone
-                Filter.TRANSACTIONS -> screened?.get(c.threadId)?.category == Category.TRANSACTIONS && !isArchived(c, archived) && !gone
-                Filter.PROMOTIONS -> screened?.get(c.threadId)?.category == Category.PROMOTIONS && !isArchived(c, archived) && !gone
-                Filter.SPAM -> screened?.get(c.threadId)?.category == Category.SPAM && !isArchived(c, archived) && !gone
+                Filter.SPAM -> away && !isArchived(c, archived) && !gone
                 Filter.ARCHIVED -> isArchived(c, archived) && !gone
                 Filter.TRASH -> gone
             }

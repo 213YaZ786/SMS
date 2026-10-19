@@ -14,7 +14,6 @@ import com.yaz.sms.core.mms.MmsStore
 import com.yaz.sms.core.sms.SmsSender
 import com.yaz.sms.core.sms.SmsStore
 import com.yaz.sms.core.sms.MessageNotifier
-import com.yaz.sms.data.settings.KnownStore
 import com.yaz.sms.data.settings.SettingsStore
 import java.io.File
 import java.security.SecureRandom
@@ -533,11 +532,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         if (known == null || known.myNonce.isEmpty()) answer(from, known)
     }
 
-    /** Whether the invite of [from] is acted on: InviteGate, with Android's contacts, the numbers marked known and the messages sent. */
+    /** Whether the invite of [from] is acted on: InviteGate, with Android's contacts and the messages sent. */
     private fun invitedBy(from: String, known: ChatLink?): Boolean {
-        val marked = runCatching { org.koin.core.context.GlobalContext.get().get<KnownStore>().known.value }.getOrDefault(emptySet())
         return InviteGate.accepted(
-            asked = InviteGate.asked(known), marked = marked, address = from,
+            asked = InviteGate.asked(known),
             contact = { ContactLookup.isContact(context, from) }, sent = { InviteGate.sentTo(context, from) }
         )
     }

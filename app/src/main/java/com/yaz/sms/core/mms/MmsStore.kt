@@ -5,8 +5,6 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.provider.Telephony
-import android.telephony.TelephonyManager
-import com.yaz.sms.core.dial.T9
 import com.yaz.sms.core.mms.pdu.CharacterSets
 import com.yaz.sms.core.mms.pdu.EncodedStringValue
 import com.yaz.sms.core.mms.pdu.PduBody
@@ -34,10 +32,8 @@ object MmsStore {
         val from = conf.from?.string.orEmpty()
         val to = conf.to.orEmpty().map { it.string }
         val cc = conf.cc.orEmpty().map { it.string }
-        val self = selfNumbers(context)
-        val others = (listOf(from) + to + cc)
-            .filter { it.isNotBlank() && self.none { me -> T9.sameDigits(T9.clean(me), T9.clean(it)) } }
-            .distinct()
+        // Its people without oneself, as AOSP Messaging's PduPersister (see OwnNumbers).
+        val others = OwnNumbers.peopleOf(from, to + cc, OwnNumbers.of(context), OwnNumbers.knownFor(context, subId))
         val thread = Telephony.Threads.getOrCreateThreadId(context, others.toSet().ifEmpty { setOf(from) })
         val now = System.currentTimeMillis() / 1000
         val uri = context.contentResolver.insert(
@@ -144,8 +140,8 @@ object MmsStore {
     }.getOrNull() ?: android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId()
 
     /** A message about to go out, kept in the outbox until the network answers. */
-    fun saveOutgoing(context: Context, recipients: List<String>, body: PduBody, subId: Int): Uri? = runCatching {
-        val thread = Telephony.Threads.getOrCreateThreadId(context, recipients.toSet())
+    fun saveOutgoing(context: Context, recipients: List<String>, body: PduBody, subId: Int, inThread: Long? = null): Uri? = runCatching {
+        val thread = inThread ?: Telephony.Threads.getOrCreateThreadId(context, recipients.toSet())
         val uri = context.contentResolver.insert(
             Telephony.Mms.Outbox.CONTENT_URI,
             ContentValues().apply {
@@ -302,12 +298,6 @@ object MmsStore {
             }
         )
     }
-
-    /** This phone's own numbers, when Android tells them, to leave them out of a group. */
-    @Suppress("DEPRECATION")
-    private fun selfNumbers(context: Context): List<String> = runCatching {
-        listOfNotNull(context.getSystemService(TelephonyManager::class.java)?.line1Number?.takeIf { it.isNotBlank() })
-    }.getOrDefault(emptyList())
 }
 
 /** What a part is, in a word, where its picture cannot be shown. */

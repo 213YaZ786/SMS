@@ -61,8 +61,8 @@ off in Settings.
 AGPL-3.0 (MIT up to 0.14.14). Bubbles and media in the conversation
 port Element X's (AGPL-3.0) and Signal's (AGPL-3.0); the trash ports
 Fossify Messages' recycle bin (GPL-3.0); starred messages port Zulip's,
-Apache License 2.0; the screening of unknown senders ports SpamBlocker's
-checkers (MIT), AOSP ExtServices' code detection (Apache License 2.0) and
+Apache License 2.0; the spam filter ports SpamBlocker's classifier and
+order of tests (MIT), AOSP ExtServices' code detection (Apache License 2.0) and
 the keyword filters of QUIK and Fossify Messages (GPL-3.0). Icons from Google's Material Icons, Apache License 2.0. Picture
 messages use code from AOSP Messaging, Apache License 2.0. The encrypted
 chat runs chatmail core (github.com/chatmail/core), Mozilla Public

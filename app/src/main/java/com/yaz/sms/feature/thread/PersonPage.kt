@@ -97,17 +97,10 @@ fun PersonPage(
     val context = LocalContext.current
     val groupUi = remember { GroupUi() }
     if (groupTools != null) GroupDialogs(groupTools, groupUi)
-    // Mark as known (iOS 26 Messages: an unknown sender's conversation moves to the list), kept in
-    // KnownStore. Koin is read the way MessageNotifier reads it, so a screen drawn without the
-    // app's container (the screenshot tests) simply has no such button.
+    // Koin is read the way MessageNotifier reads it, so a screen drawn without the app's
+    // container (the screenshot tests) simply has no spam buttons.
     val koin = remember { org.koin.core.context.GlobalContext.getOrNull() }
-    val knownStore = remember(koin) { koin?.get<com.yaz.sms.data.settings.KnownStore>() }
-    val markedFlow = remember(knownStore) { knownStore?.known ?: kotlinx.coroutines.flow.MutableStateFlow(emptySet<String>()) }
-    val marked by markedFlow.collectAsState()
-    val senderKey = remember(address) { com.yaz.sms.core.sms.Screening.senderKey(address) }
-    val canMark = knownStore != null && koin?.get<com.yaz.sms.data.settings.SettingsStore>()?.current?.screenUnknown == true && !group &&
-        contactId == null && address.isNotBlank() && '@' !in address &&
-        messages.count { it.box != com.yaz.sms.data.sms.Box.RECEIVED } < com.yaz.sms.core.sms.Screening.REPLIES_TO_KNOW
+    val senderKey = remember(address) { com.yaz.sms.core.sms.SpamJudge.senderKey(address) }
     // Report spam and Not spam on the person's page, as Google Messages has them in a conversation's
     // details (https://support.google.com/messages/answer/9061432); the store and the training are
     // SpamBlocker's (https://github.com/aj3423/SpamBlocker, LocalAI.kt updateCategory), as the list's.
@@ -240,14 +233,6 @@ fun PersonPage(
                             maxItemsInEachRow = 2,
                             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
                         ) {
-                            // An unknown sender first: its messages come back to the list, or leave it again.
-                            if (canMark) {
-                                val isMarked = senderKey in marked
-                                Row(AppIcons.CheckCircle, if (isMarked) "Mark as unknown" else "Mark as known") {
-                                    if (isMarked) knownStore?.unmark(senderKey) else knownStore?.mark(senderKey)
-                                    if (!isMarked && isSpam) labelSpam(false)
-                                }
-                            }
                             if (digits && NumberActions.canShowCalls(context)) Row(AppIcons.Recents, "Calls with them") { NumberActions.showCalls(context, address) }
                             // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
                             if (!group && contactId != null && contactId > 0) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }

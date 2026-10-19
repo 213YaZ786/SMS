@@ -67,7 +67,7 @@ data class Conversation(
     val addresses: List<String> = listOf(address),
     /** A text left in the composer, shown over the snippet as Bugle shows its drafts. */
     val draft: String? = null,
-    /** How many messages the user sent in it: three make an unknown sender known (Screening). */
+    /** How many messages the user sent in it: three make a sender known to the spam classifier (SpamJudge). */
     val sent: Int = 0
 ) {
     val group: Boolean get() = addresses.size > 1
@@ -147,8 +147,8 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             Telephony.Mms.CONTENT_URI, arrayOf(Telephony.Mms.THREAD_ID),
             "${Telephony.Mms.MESSAGE_BOX} = ${Telephony.Mms.MESSAGE_BOX_INBOX} AND ${Telephony.Mms.READ} = 0", null, null
         )?.use { c -> while (c.moveToNext()) c.getLong(0).let { unread[it] = (unread[it] ?: 0) + 1 } }
-        // The messages the user sent, per conversation, in one read (Screening.sentCounts).
-        val sentCounts = com.yaz.sms.core.sms.Screening.sentCounts(context)
+        // The messages the user sent, per conversation, in one read (SpamJudge.sentCounts).
+        val sentCounts = com.yaz.sms.core.sms.SpamJudge.sentCounts(context)
         // The newest of each conversation, an SMS (type) or a picture message (msg_box).
         class Last(val thread: Long, val id: Long, val date: Long, val body: String, val address: String, val sms: Boolean, val box: Int)
         val last = ArrayList<Last>()
@@ -213,10 +213,13 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             while (c.moveToNext()) canonical[c.getString(0)] = c.getString(1).orEmpty()
         }
         val out = HashMap<Long, List<String>>()
+        // A thread Android made of the sender and oneself reads as the sender's (AOSP Messaging
+        // PduPersister leaves one's own number out of a received message's people).
+        val own = com.yaz.sms.core.mms.OwnNumbers.of(context)
         context.contentResolver.query(Uri.parse("content://mms-sms/conversations?simple=true"), arrayOf("_id", "recipient_ids"), null, null, null)?.use { c ->
             while (c.moveToNext()) {
                 val ids = c.getString(1).orEmpty().split(' ').filter { it.isNotBlank() }
-                out[c.getLong(0)] = ids.mapNotNull { canonical[it] }.filter { it.isNotBlank() }
+                out[c.getLong(0)] = com.yaz.sms.core.mms.OwnNumbers.withoutOwn(ids.mapNotNull { canonical[it] }.filter { it.isNotBlank() }, own)
             }
         }
         out

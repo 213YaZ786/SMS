@@ -3,14 +3,13 @@ package com.yaz.sms.core.chat
 import android.content.Context
 import android.net.Uri
 import android.provider.Telephony
-import com.yaz.sms.core.sms.Screening
 
 /**
  * Who may make the phone act on a data SMS invite. Signal-Android's message requests
  * (AGPL-3.0, https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/recipients/RecipientUtil.java,
  * isMessageRequestAccepted and isCallRequestAccepted): a sender is accepted when it is a system
  * contact, when profile sharing is on, or when the user has sent a message in the thread. Here:
- * a contact, a number marked known, a number we asked ourselves (our invite sent, or its chat
+ * a contact, a number we asked ourselves (our invite sent, or its chat
  * proven), or one the user has sent an SMS or MMS to. Anyone else is ignored: nothing started,
  * nothing sent. The chat still comes when the user writes to that number: ThreadScreen sends
  * our invite, the other side answers with its own, and the sender is then accepted.
@@ -25,8 +24,8 @@ object InviteGate {
      * went to it. [contact] and [sent] are asked only when the cheaper answers are no (they read
      * Android's stores).
      */
-    fun accepted(asked: Boolean, marked: Set<String>, address: String, contact: () -> Boolean, sent: () -> Boolean): Boolean =
-        asked || Screening.senderKey(address) in marked || contact() || sent()
+    fun accepted(asked: Boolean, contact: () -> Boolean, sent: () -> Boolean): Boolean =
+        asked || contact() || sent()
 
     /** Our invite may go back to this number now: none went in the last day. */
     fun mayAnswer(link: ChatLink?, now: Long): Boolean =

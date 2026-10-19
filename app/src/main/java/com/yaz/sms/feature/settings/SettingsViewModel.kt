@@ -20,7 +20,7 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     fun setQuietSales(on: Boolean) = store.update { it.copy(quietSales = on) }
     // A Boolean preference set from a switch, as Fossify Messages' blockUnknownNumbers
     // (https://github.com/FossifyOrg/Messages, helpers/Config.kt and SettingsActivity.kt).
-    fun setScreenUnknown(on: Boolean) = store.update { it.copy(screenUnknown = on) }
+    fun setSpamProtection(on: Boolean) = store.update { it.copy(spamProtection = on) }
     fun setAutoMmsDownload(on: Boolean) = store.update { it.copy(autoMmsDownload = on) }
     fun setAutoMmsRoaming(on: Boolean) = store.update { it.copy(autoMmsRoaming = on) }
     // The same setter as the ones above, for Signal-Android's media auto-download choice.

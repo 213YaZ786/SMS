@@ -19,7 +19,7 @@ data class SpamSample(val hash: Int, val spam: Boolean, val text: String)
 
 /**
  * What the file holds: the labelled samples, oldest first, and the senders reported (true) or
- * cleared (false) by Screening.senderKey.
+ * cleared (false) by SpamJudge.senderKey.
  */
 @Serializable
 data class SpamFile(val samples: List<SpamSample> = emptyList(), val senders: Map<String, Boolean> = emptyMap())
