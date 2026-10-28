@@ -25,7 +25,10 @@ import androidx.compose.ui.platform.LocalContext
  * of doing nothing. As AOSP Messaging's PermissionCheckActivity
  * https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/ui/PermissionCheckActivity.java
  * (a result back in under 250 ms, AUTOMATED_RESULT_THRESHOLD_MILLLIS, is Android refusing without asking; its
- * Settings button opens ACTION_APPLICATION_DETAILS_SETTINGS on "package:" + the package name), and as Android's
+ * Settings button opens ACTION_APPLICATION_DETAILS_SETTINGS on "package:" + the package name), as Signal's
+ * PermissionDeniedBottomSheet (shown once a permission was denied before; its Settings button opens the same page)
+ * https://github.com/signalapp/Signal-Android/blob/main/core/ui/src/main/java/org/signal/core/ui/permissions/PermissionDeniedBottomSheet.kt
+ * and as Android's
  * permission docs: shouldShowRequestPermissionRationale is false after a refusal that will not be asked again
  * https://developer.android.com/training/permissions/requesting#explain
  *

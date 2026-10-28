@@ -36,9 +36,11 @@ import java.util.Locale
  * Voice messages written out by the Voice app, the phone's speech recognition: SMS keeps no engine and no model.
  * The message is decoded to 16 kHz mono 16-bit PCM (AudioDecode), written into a pipe and handed to Voice's
  * recognition service through SpeechRecognizer with RecognizerIntent.EXTRA_AUDIO_SOURCE (Android 13), the session
- * lasting as long as the sound (EXTRA_SEGMENTED_SESSION = EXTRA_AUDIO_SOURCE), as AOSP's CTS drives a recognition
- * service from a file (AbstractRecognitionServiceTest)
- * https://android.googlesource.com/platform/cts/+/refs/heads/main/tests/tests/voiceRecognition/src/android/voicerecognition/cts/AbstractRecognitionServiceTest.java
+ * lasting as long as the sound (EXTRA_SEGMENTED_SESSION = EXTRA_AUDIO_SOURCE, RecognizerIntent's reference
+ * https://developer.android.com/reference/android/speech/RecognizerIntent). The recognizer is made for one named
+ * service and driven from the main looper as AOSP's CTS client does (SpeechRecognitionActivity: createSpeechRecognizer
+ * with a ComponentName, every call posted on the main looper)
+ * https://android.googlesource.com/platform/cts/+/refs/heads/main/tests/tests/voiceRecognition/src/android/voicerecognition/cts/SpeechRecognitionActivity.java
  * and as Voice's own debug client does (RecognizerTestActivity: the pipe, the intent, the listener).
  * The words are kept in the app's own files, so each message is heard once.
  */
