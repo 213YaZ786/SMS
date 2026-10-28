@@ -151,17 +151,28 @@ object SmsReactions {
 
     /** The newest message before [index] whose text is [quoted], whole or cut short with an ellipsis. */
     private fun targetOf(list: List<Message>, index: Int, quoted: String): Message? {
-        val q = squash(quoted)
-        if (q.isEmpty()) return null
-        val cut = q.endsWith('…') || q.endsWith("...")
-        val head = q.removeSuffix("…").removeSuffix("...").trimEnd()
         for (j in index - 1 downTo maxOf(0, index - 500)) {
             val m = list[j]
-            val text = squash(m.body)
-            if (text.isEmpty()) continue
-            if (text == q || (cut && head.isNotEmpty() && text.startsWith(head))) return m
+            if (quotes(m.body, quoted)) return m
         }
         return null
+    }
+
+    /**
+     * Whether [quoted] (a reaction's quoted text, whole or cut short with an ellipsis) quotes the message text
+     * [body]. The per message test of Quik's findTargetMessage (text matched against the messages of the thread,
+     * at most 500 candidates; https://raw.githubusercontent.com/quik-sms/quik/master/data/src/main/java/com/moez/QKSMS/repository/EmojiReactionRepositoryImpl.kt),
+     * as this file's targetOf already made it, taken out so the conversation list can ask it of the rows it reads
+     * (feature/conversations/LastMessagePreview.kt).
+     */
+    fun quotes(body: String, quoted: String): Boolean {
+        val q = squash(quoted)
+        if (q.isEmpty()) return false
+        val text = squash(body)
+        if (text.isEmpty()) return false
+        val cut = q.endsWith('…') || q.endsWith("...")
+        val head = q.removeSuffix("…").removeSuffix("...").trimEnd()
+        return text == q || (cut && head.isNotEmpty() && text.startsWith(head))
     }
 
     private fun squash(text: String) = text.trim().replace(Regex("\\s+"), " ")

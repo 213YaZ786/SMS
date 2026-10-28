@@ -264,6 +264,11 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             modifier = cardModifier,
             members = remember(c.addresses, index) { membersOf(c) },
             name = nameOf(c),
+            // The thread's rule (ThreadScreen holdMedia): the media of a message received from a number not in the
+            // contacts wait for a tap while Settings "Show media from unknown numbers" is off; a group is held
+            // when any of its people is unknown.
+            holdMedia = !settings.showStrangerMedia && !c.fromMe &&
+                (if (c.group) c.addresses.any { index.find(T9.clean(it)) == null } else index.find(T9.clean(c.address)) == null),
             photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
             look = if (c.group) null else index.find(T9.clean(c.address))?.look,
             pinned = c.threadId in settings.pinned,
@@ -522,15 +527,13 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 },                modifier = Modifier.fillMaxSize().padding(padding)
             )
             else -> BoxWithConstraints(Modifier.fillMaxSize()) {
-              // From the Medium width class the cards go in 2 columns, 3 when Expanded and each card keeps
-              // at least 320 dp; a phone upright keeps one (navigation/WindowWidth.kt).
+              // As many columns as fit, each card at least 280 dp (its face column and a bubble of words), as
+              // Android's "Feed" canonical layout, GridCells.Adaptive(minSize): a phone upright keeps one, a
+              // tablet in landscape takes three (the user, 2026-10-28: two left room unused).
+              // https://developer.android.com/guide/topics/large-screens/large-screen-canonical-layouts
               val gap = 8.dp
               val inner = maxWidth - 32.dp
-              val columns = when (com.yaz.sms.navigation.WidthClass.of(maxWidth)) {
-                  com.yaz.sms.navigation.WidthClass.COMPACT -> 1
-                  com.yaz.sms.navigation.WidthClass.MEDIUM -> 2
-                  com.yaz.sms.navigation.WidthClass.EXPANDED -> if ((inner - gap * 2) / 3 >= 320.dp) 3 else 2
-              }
+              val columns = ((inner + gap) / (280.dp + gap)).toInt().coerceIn(1, 4)
               val cell = (inner - gap * (columns - 1)) / columns
               val oneColumn = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth()
               LazyColumn(
@@ -771,6 +774,8 @@ private fun Filters(
 private fun ConversationLine(
     c: Conversation,
     name: String?,
+    /** The newest message's media wait for a tap (a stranger's, Settings asking so): nothing is read or decoded. */
+    holdMedia: Boolean,
     photo: String?,
     look: com.yaz.sms.core.dial.ContactLook.Look?,
     pinned: Boolean,
@@ -952,7 +957,7 @@ private fun ConversationLine(
                             color = if (unread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    LastMessageBubble(c, unread, Modifier.padding(top = 4.dp).align(Alignment.Start))
+                    LastMessageBubble(c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia, modifier = Modifier.padding(top = 4.dp).align(Alignment.Start))
                 }
             }
         }
@@ -977,8 +982,16 @@ private val CARD_BUBBLE = RoundedCornerShape(
  * ConversationListItemView.setSubject). Three lines at most. Not clickable: the card is the tap target.
  */
 @Composable
-private fun LastMessageBubble(c: Conversation, unread: Boolean, modifier: Modifier = Modifier) {
-    val words = com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
+private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hold: Boolean, modifier: Modifier = Modifier) {
+    // What the newest message is besides words (LastMessagePreview.kt): a reaction, a picture or a film, a sound,
+    // a card, a place, a file, a link alone. Null for words and for a draft.
+    val lead = remember(c) { Lead.of(c) }
+    if (lead is Lead.Reaction) {
+        ReactionBubble(c, lead, who, unread, CARD_BUBBLE, modifier)
+        return
+    }
+    val said = lead?.caption(c) ?: c.snippet
+    val words = com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(said)))
     val draft = c.draft?.let { com.yaz.sms.core.sms.Markup.plain(it) }
     val subject = c.subject?.takeIf { c.draft == null }
     // A message of a subject alone has no snippet line.
@@ -988,11 +1001,12 @@ private fun LastMessageBubble(c: Conversation, unread: Boolean, modifier: Modifi
             append(" ")
             append(draft)
         }
-        c.snippet.isEmpty() -> null
-        c.failed -> androidx.compose.ui.text.AnnotatedString("Not sent: $words")
+        said.isEmpty() -> null
+        // With a lead, "Not sent:" stands on a line of its own above it.
+        c.failed && lead == null -> androidx.compose.ui.text.AnnotatedString("Not sent: $words")
         else -> androidx.compose.ui.text.AnnotatedString(words)
     }
-    if (text == null && subject == null) return
+    if (text == null && subject == null && lead == null) return
     val mine = (c.fromMe && !c.failed) || draft != null
     val ink = when {
         mine -> androidx.compose.ui.graphics.Color.Unspecified
@@ -1011,12 +1025,17 @@ private fun LastMessageBubble(c: Conversation, unread: Boolean, modifier: Modifi
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            if (lead != null) {
+                if (c.failed) Text("Not sent:", style = MaterialTheme.typography.bodyMedium, color = ink, fontWeight = FontWeight.Bold)
+                LeadView(lead, who, hold, ink, weight)
+            }
             if (text != null) Text(
                 text,
                 style = MaterialTheme.typography.bodyMedium,
                 color = ink,
                 fontWeight = weight,
-                maxLines = if (subject != null) 2 else 3,
+                modifier = if (lead != null) Modifier.padding(top = 4.dp) else Modifier,
+                maxLines = if (lead != null) 2 else if (subject != null) 2 else 3,
                 overflow = TextOverflow.Ellipsis
             )
         }

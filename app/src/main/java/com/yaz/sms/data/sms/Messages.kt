@@ -74,7 +74,14 @@ data class Conversation(
     /** How many messages the user sent in it: three make a sender known to the spam classifier (SpamJudge). */
     val sent: Int = 0,
     /** The newest message's subject when it is a picture message with one (AOSP Messaging lists it over the snippet). */
-    val subject: String? = null
+    val subject: String? = null,
+    /**
+     * The newest picture message's parts (pictures, films, sounds, cards, files) and its words apart from them,
+     * already read for the snippet by MmsStore.parts; kept for the list's last-message bubble. Source: this
+     * file's own readConversations (MmsStore.parts for the newest message of each conversation).
+     */
+    val parts: List<MmsPart> = emptyList(),
+    val caption: String = ""
 ) {
     val group: Boolean get() = addresses.size > 1
 }
@@ -197,7 +204,9 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     addresses = addresses.ifEmpty { listOf("") },
                     draft = drafts[m.thread]?.first,
                     sent = sentCounts[m.thread] ?: 0,
-                    subject = if (m.id in waiting) null else subjects[m.id]
+                    subject = if (m.id in waiting) null else subjects[m.id],
+                    parts = if (m.id in waiting) emptyList() else media,
+                    caption = if (m.id in waiting) "" else text
                 )
             }
         }.let { listed ->

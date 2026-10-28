@@ -163,17 +163,23 @@ dependencies {
 // deltachat-rpc-server (MPL-2.0, github.com/chatmail/core), fetched at
 // its pinned version and checked against its SHA-256 before it is packed
 // as a native library, so the repository holds no binary.
+// Built by this repository's .github/workflows/engine.yml from core 2.62.0's sources with the dependencies
+// whose known flaws have a compatible fix moved to it (rustls, rustls-webpki 0.103, tokio, webpki-roots,
+// event-listener, quinn-proto): its release engine-2.62.0-p1, the patched Cargo.lock beside the binaries.
 val chatmailVersion = "2.62.0"
+val chatmailRelease = "https://github.com/213YaZ786/SMS/releases/download/engine-2.62.0-p1"
 val chatmailBinaries = mapOf(
-    "arm64-v8a" to ("deltachat-rpc-server-arm64-v8a-android" to "4b215745f22c25661d8a3787345ef5b5f65d6d6747d7f40763c463e85ab61922"),
-    "armeabi-v7a" to ("deltachat-rpc-server-armeabi-v7a-android" to "6120c9b87af69405632427385c7b8447ac177701c825290e2df53a89147d2e35")
+    "arm64-v8a" to ("deltachat-rpc-server-arm64-v8a-android" to "40ee702e7b10c657f3ecfe6dfdbc58cc0522dbe37fef6fe44754a01cc51ccc13"),
+    "armeabi-v7a" to ("deltachat-rpc-server-armeabi-v7a-android" to "bb604d9ed349af082979f81fba6d320d55d69ce40a60a823093cd3bfeb3c829d")
 )
 val chatmailDir = layout.buildDirectory.dir("chatmail/jniLibs")
 val fetchChatmail by tasks.registering {
     val out = chatmailDir
     val binaries = chatmailBinaries
     val version = chatmailVersion
+    val release = chatmailRelease
     inputs.property("version", version)
+    inputs.property("release", release)
     outputs.dir(out)
     doLast {
         fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
@@ -182,7 +188,7 @@ val fetchChatmail by tasks.registering {
             val target = out.get().dir(abi).file("libchatmail.so").asFile
             if (target.exists() && sha256(target.readBytes()) == sha) return@forEach
             target.parentFile.mkdirs()
-            val bytes = URI("https://github.com/chatmail/core/releases/download/v$version/$name").toURL().openStream().use { it.readBytes() }
+            val bytes = URI("$release/$name").toURL().openStream().use { it.readBytes() }
             check(sha256(bytes) == sha) { "chatmail $abi: checksum does not match" }
             target.writeBytes(bytes)
         }

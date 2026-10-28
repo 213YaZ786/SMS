@@ -43,6 +43,8 @@ fun TabFrame(
         },
         overlay = overlay
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(horizontal = inset)) { content(padding) }
+        // The list takes the whole width: its grid of cards fills a wide window (Android's "Feed" layout); a
+        // single column keeps itself to LINE_WIDTH, centred.
+        Box(Modifier.fillMaxSize()) { content(padding) }
     }
 }

@@ -173,7 +173,7 @@ internal fun isLocationCard(part: MmsPart): Boolean =
  * (https://github.com/airmessage/airmessage-android/blob/0758ea0273f942881fd8de605aa349b40a1c404c/app/src/main/java/me/tagavari/airmessage/messaging/FileDisplayMetadata.kt),
  * the first [com.yaz.sms.core.sms.Places.CARD_MAX] bytes of it and no more.
  */
-private fun readLocation(context: Context, uri: Uri): com.yaz.sms.core.sms.Places.Place? = runCatching {
+internal fun readLocation(context: Context, uri: Uri): com.yaz.sms.core.sms.Places.Place? = runCatching {
     context.contentResolver.openInputStream(uri)?.use { input ->
         val buffer = ByteArray(com.yaz.sms.core.sms.Places.CARD_MAX)
         var n = 0
