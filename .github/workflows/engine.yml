@@ -58,10 +58,10 @@ jobs:
           nix shell nixpkgs#cargo --command sh -eu -c '
             cargo update rustls@0.23.45 --precise 0.23.46
             cargo update rustls-webpki@0.103.15 --precise 0.103.16
-            cargo update tokio --precise 1.53.3
+            cargo update tokio@1.53.1 --precise 1.53.3
             cargo update webpki-roots@0.26.8 --precise 0.26.11
-            cargo update event-listener --precise 5.4.2
-            cargo update quinn-proto --precise 0.11.18
+            cargo update event-listener@5.4.0 --precise 5.4.2
+            cargo update quinn-proto@0.11.16 --precise 0.11.18
           '
           git diff --stat Cargo.lock
 

@@ -51,9 +51,11 @@ fun MentionLine(
     val haptics = rememberHaptics()
     AnimatedVisibility(visible = names.isNotEmpty() || laterReady || styles != null, modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
+            // Centred on the whole row (the user, 2026-10-28): as much room on the start side as the clock takes
+            // at the end (40 dp and its 8 + 6 dp of padding).
             FlowRow(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f).padding(start = if (laterReady) 54.dp else 0.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 styles?.invoke()

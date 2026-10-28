@@ -544,9 +544,13 @@ private fun ThreadContent(
             dayShown = false
         }
     }
-    // A message added at the bottom while reading there comes into sight, not under the field.
+    // A message added at the bottom while reading there comes into sight, not under the field. Several
+    // added at once (Send again ×N) push the row in sight up by as many: they count in "reading there".
+    var waitingBefore by remember { mutableStateOf(0) }
     LaunchedEffect(rows.lastOrNull()?.key, waiting.size) {
-        if (listState.firstVisibleItemIndex <= 2) listState.animateScrollToItem(0)
+        val added = (waiting.size - waitingBefore).coerceAtLeast(0)
+        waitingBefore = waiting.size
+        if (listState.firstVisibleItemIndex <= 2 + added) listState.animateScrollToItem(0)
     }
     // The person's page, opened from their face: the calls, the tools, what was shared.
     var personOpen by remember { mutableStateOf(false) }
