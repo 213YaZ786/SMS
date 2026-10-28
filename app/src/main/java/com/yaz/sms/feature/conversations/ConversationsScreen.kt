@@ -187,31 +187,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     var forever by remember { mutableStateOf<Set<Long>?>(null) }
     var emptying by remember { mutableStateOf(false) }
     androidx.activity.compose.BackHandler(picked != null) { picked = null }
-    // To answer: each card once. The cards already shown are read when the
-    // screen comes back, and the ones shown now are kept as seen when it goes.
-    var seenAtOpen by remember { mutableStateOf(store.current.answerSeen) }
-    val waiting = remember(live, settings.archived, filter, query, seenAtOpen, spamThreads) {
-        // Spam waits in Spam, not among the cards.
-        if (filter != Filter.ALL || query.isNotBlank()) emptyList()
-        else Lists.toAnswer(live.filterNot { it.threadId in spamThreads }, settings.archived, seenAtOpen)
-    }
-    val shownCards by androidx.compose.runtime.rememberUpdatedState(waiting)
-    // A new card to answer comes in on top: in sight when the list was at its top.
+    // No "To answer" cards (the user, 2026-10-28): the pinned faces and the unread counts say it already.
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    androidx.compose.runtime.LaunchedEffect(waiting.firstOrNull()?.let(Lists::key)) {
-        if (waiting.isNotEmpty() && listState.firstVisibleItemIndex <= 1) listState.animateScrollToItem(0)
-    }
-    LifecycleResumeEffect(Unit) {
-        seenAtOpen = store.current.answerSeen
-        onPauseOrDispose {
-            val keys = shownCards.map(Lists::key)
-            if (keys.isNotEmpty()) store.update { s ->
-                // Only cards of messages still unread are worth keeping.
-                val alive = all.filter { it.unread > 0 }.map(Lists::key).toSet()
-                s.copy(answerSeen = (s.answerSeen + keys).filter { it in alive || it in keys }.toSet())
-            }
-        }
-    }
 
     // Into the Trash: nothing is deleted, the date of each conversation's newest message is kept
     // as its cutoff. Same cutoff rule as AOSP Messaging's DeleteConversationAction
@@ -513,7 +490,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
             !loaded -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { LoadingMark(size = 72.dp) }
-            shown.isEmpty() && waiting.isEmpty() -> EmptyZone(
+            shown.isEmpty() -> EmptyZone(
                 title = when {
                     query.isNotBlank() -> "Nothing found"
                     filter == Filter.UNREAD -> "All read"
@@ -544,11 +521,6 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             ) {
                 if (code != null && filter == Filter.ALL && query.isBlank()) {
                     item(key = "code") { CodeChip(code.first, code.second, nameOf(code.first)) }
-                }
-                if (waiting.isNotEmpty()) {
-                    item(key = "waiting") {
-                        Waiting(waiting, index, ::nameOf) { c -> onOpenThread(c.threadId, c.addresses.joinToString(",")) }
-                    }
                 }
                 // The first nine pinned conversations leave the rows for avatars on top (iOS Messages), in
                 // the inbox only: not in a search, the Archive, the Trash, Spam nor the Unread view.
@@ -762,68 +734,6 @@ private fun Filters(
     ) {
         SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).weight(1f, fill = false).fillMaxWidth(), floating = true)
         chipsRow()
-    }
-}
-
-/** The people waiting for an answer, side by side on one or two lines: a tap opens the conversation. */
-@Composable
-private fun Waiting(waiting: List<Conversation>, index: PhoneIndex, nameOf: (Conversation) -> String?, onOpen: (Conversation) -> Unit) {
-    val context = LocalContext.current
-    Column(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth()) {
-        Text(
-            "To answer",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 8.dp)
-        )
-        // Side by side, the next ones on a second line, never scrolled
-        // sideways; past two lines they stay in the list below.
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val gap = 10.dp
-            val columns = ((maxWidth + gap) / (120.dp + gap)).toInt().coerceIn(2, 5)
-            Column(verticalArrangement = Arrangement.spacedBy(gap)) {
-                waiting.take(columns * 2).chunked(columns).forEach { line ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                        line.forEach { c ->
-                            // A group under its name or its members, never as its first member alone.
-                            val entry = if (c.group) null else index.find(T9.clean(c.address))
-                            val name = nameOf(c) ?: Numbers.format(context, c.address)
-                            Face(name, entry?.photo, entry?.look, timeLabel(context, c.date), Modifier.weight(1f)) { onOpen(c) }
-                        }
-                        repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Face(name: String, photo: String?, look: com.yaz.sms.core.dial.ContactLook.Look?, under: String, modifier: Modifier, onClick: () -> Unit) {
-    val haptics = rememberHaptics()
-    val press = remember { MutableInteractionSource() }
-    val pressed by press.collectIsPressedAsState()
-    val sink by animateFloatAsState(if (pressed) 0.92f else 1f, spring(dampingRatio = 0.45f, stiffness = 700f), label = "sink")
-    val shape = RoundedCornerShape(24.dp)
-    ZoneSurface(
-        shape = shape,
-        modifier = modifier
-            .graphicsLayer {
-                scaleX = sink
-                scaleY = sink
-            }
-            .clip(shape)
-            .combinedClickable(interactionSource = press, indication = null, onClick = {
-                haptics.tick()
-                onClick()
-            })
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp)) {
-            ContactAvatar(name, photo, 44.dp, look = look)
-            Spacer(Modifier.height(6.dp))
-            Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-            Text(under, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
-        }
     }
 }
 
