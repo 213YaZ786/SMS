@@ -280,31 +280,45 @@ private fun VisualLead(part: MmsPart, who: String, ink: Color, weight: FontWeigh
     val kind by rememberKind(part.uri)
     val side = with(LocalDensity.current) { 240.dp.roundToPx() }
     val declaredFilm = ContentType.isVideoType(part.contentType)
-    // The words that stay when no thumbnail is there: Signal's createFinalBodyWithMediaIcon returns the body with
-    // its media word when the bitmap is null (ConversationListItem.java); the word is this app's mediaWord.
-    @Composable
-    fun word() = LeadLine(if (declaredFilm) AppIcons.Play else AppIcons.Image, mediaWord(part.contentType), null, "${if (declaredFilm) "Video" else "Photo"} from $who", ink, weight, time, modifier)
+    val key = part.uri.toString()
+    // The box keeps its size from the first frame, as Element X's TimelineItemAspectRatioBox (AGPL-3.0,
+    // https://github.com/element-hq/element-x-android/blob/develop/features/messages/impl/src/main/kotlin/io/element/android/features/messages/impl/timeline/components/event/TimelineItemAspectRatioBox.kt)
+    // and this app's feature/thread/Gallery.kt MediaAspectBox / MediaCell keep theirs while the decoder works: a declared picture or film is the thumbnail's
+    // box at once (THUMB_HEIGHT, the ratio last seen or Element X's default), the placeholder icon inside it, so a
+    // card of the grid never grows when the kind is read or the picture decoded and CardRow's row never jumps.
+    // Signal's createFinalBodyWithMediaIcon keeps the words when the bitmap is null (ConversationListItem.java); here
+    // the caption under it stays, the icon stands in the box.
+    val seen = remember(key) { seenThumbRatios.get(key) }
     when {
-        kind == null -> word()
+        kind == null -> Thumb(null, film = declaredFilm, length = null, spoken = "${if (declaredFilm) "Video" else "Photo"} from $who", time = time, modifier = modifier, known = seen)
         isPicture(part, kind) -> {
             val picture by rememberPicture(part.uri, side)
             val shown = picture
-            if (shown == null) word() else Thumb(shown, film = false, length = null, spoken = "Photo from $who", time = time, modifier = modifier)
+            if (shown != null && shown.height > 0) seenThumbRatios.put(key, shown.width.toFloat() / shown.height)
+            Thumb(shown, film = false, length = null, spoken = "Photo from $who", time = time, modifier = modifier, known = seen)
         }
         isFilm(part, kind) -> {
             val still by rememberVideoStill(part.uri, side)
             val frame = still?.frame
-            if (frame == null) word() else Thumb(
+            if (frame != null && frame.height > 0) seenThumbRatios.put(key, frame.width.toFloat() / frame.height)
+            Thumb(
                 frame, film = true, length = still?.durationMs,
-                spoken = "Video from $who" + (still?.durationMs?.let { ", ${formatShort(it)}" } ?: ""), time = time, modifier = modifier
+                spoken = "Video from $who" + (still?.durationMs?.let { ", ${formatShort(it)}" } ?: ""), time = time, modifier = modifier, known = seen
             )
         }
         else -> {
+            // MediaCheck's verdict: not a picture nor a film. The same box, the file's icon in it instead of the image.
             val name = part.name?.filter { !it.isISOControl() }?.trim()?.take(80)?.takeIf { it.isNotEmpty() } ?: "File"
-            LeadLine(AppIcons.AttachFile, name, fileKind(part), "File $name from $who", ink, weight, time, modifier)
+            Thumb(null, film = false, length = null, spoken = "File $name from $who", time = time, modifier = modifier, known = seen, icon = AppIcons.AttachFile)
         }
     }
 }
+
+/** The ratios of the thumbnails already decoded, so a card keeps its box when it scrolls back in (Gallery.kt's seenRatios). */
+private val seenThumbRatios = android.util.LruCache<String, Float>(256)
+
+/** Element X's TimelineItemAspectRatioBox default, used until the real ratio is known. */
+private const val DEFAULT_THUMB_RATIO = 1.33f
 
 /**
  * The thumbnail: [THUMB_HEIGHT] high at most (the height of the face column), its ratio kept (within 3:4 and
@@ -315,8 +329,12 @@ private fun VisualLead(part: MmsPart, who: String, ink: Color, weight: FontWeigh
  * length on a pill (feature/thread/Gallery.kt FilmFace, Element X's VideoOverlay), smaller for a list.
  */
 @Composable
-private fun Thumb(frame: androidx.compose.ui.graphics.ImageBitmap, film: Boolean, length: Long?, spoken: String, time: CardTime?, modifier: Modifier = Modifier) {
-    val ratio = frame.takeIf { it.height > 0 }?.let { it.width.toFloat() / it.height }?.coerceIn(0.75f, 3f) ?: 1f
+private fun Thumb(
+    frame: androidx.compose.ui.graphics.ImageBitmap?, film: Boolean, length: Long?, spoken: String, time: CardTime?, modifier: Modifier = Modifier,
+    known: Float? = null, icon: ImageVector = AppIcons.Image
+) {
+    // [frame] null: the box is laid out all the same at its height, with [icon] (a film's play mark) in it.
+    val ratio = (frame?.takeIf { it.height > 0 }?.let { it.width.toFloat() / it.height } ?: known ?: DEFAULT_THUMB_RATIO).coerceIn(0.75f, 3f)
     val scrim = MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)
     // The time on the small dark pill in the bottom end corner, as the thread does over a lone picture (WithFooter's
     // Overlay, MessageFooter onMedia: Gallery.kt, MessageBody.kt); a film's length then moves to the top.
@@ -330,8 +348,10 @@ private fun Thumb(frame: androidx.compose.ui.graphics.ImageBitmap, film: Boolean
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
             .clearAndSetSemantics { contentDescription = spoken }
     ) {
-        Image(frame, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.08f)))
+        if (frame != null) {
+            Image(frame, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.08f)))
+        } else if (!film) Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(28.dp))
         if (film) {
             Box(Modifier.size(36.dp).background(scrim, CircleShape), contentAlignment = Alignment.Center) {
                 Icon(AppIcons.Play, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))

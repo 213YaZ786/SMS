@@ -91,7 +91,7 @@ class SavedDoor : ContentProvider() {
          * only through PrivateNames, as PhoneIndex.find asks it; else the number written the local way; never empty.
          */
         fun nameOf(context: Context, entries: List<PhoneEntry>): (String) -> String {
-            val index = PhoneIndex(entries)
+            val index = PhoneIndex(entries, Numbers.countryIso(context))
             val known = HashMap<String, String>()
             return { sender ->
                 known.getOrPut(sender) {

@@ -145,15 +145,14 @@ class SavedDoorTest {
     private val fatima = contact(2, "Fatima Zahra El Idrissi", "+212 6 12 34 56 78")
 
     @Test
-    fun `a number fitting two contacts by its last digits is named as the conversation title names it`() {
+    fun `a number sharing only the last digits with contacts of other countries is no one of them`() {
+        // +33 6 12 34 56 78 ends as Carmen's +34 and Fatima's +212 do: Android's rule (areSamePhoneNumber) says three numbers.
         val sender = "+33612345678"
         for (book in listOf(listOf(carmen, fatima), listOf(fatima, carmen))) {
-            val title = com.yaz.sms.data.contacts.PhoneIndex(book).find(com.yaz.sms.core.dial.T9.clean(sender))!!.name
-            assertEquals(title, SavedDoor.nameOf(context, book)(sender))
+            assertNull(com.yaz.sms.data.contacts.PhoneIndex(book, "FR").find(com.yaz.sms.core.dial.T9.clean(sender)))
+            val name = SavedDoor.nameOf(context, book)(sender)
+            assertTrue(name.any(Char::isDigit))
         }
-        // The book's order decides, as the title's does: the first of the two.
-        assertEquals("Carmen García López", SavedDoor.nameOf(context, listOf(carmen, fatima))(sender))
-        assertEquals("Fatima Zahra El Idrissi", SavedDoor.nameOf(context, listOf(fatima, carmen))(sender))
     }
 
     @Test

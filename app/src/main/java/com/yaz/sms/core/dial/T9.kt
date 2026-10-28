@@ -1,6 +1,8 @@
 package com.yaz.sms.core.dial
 
+import android.telephony.PhoneNumberUtils
 import java.text.Normalizer
+import java.util.Locale
 
 /** One number of a contact, as the dialpad searches it. */
 data class PhoneEntry(
@@ -70,11 +72,25 @@ object T9 {
         return (byName.sortedWith(order) + byNumber.sortedWith(order)).take(limit)
     }
 
-    /** Equal digits, or the same last nine: 06 12… and +33 6 12… are one number. */
-    fun sameDigits(a: String, b: String): Boolean {
+    /**
+     * The same number: equal digits, or the same last nine AND Android's own rule says so in [region]
+     * (the phone's country): 06 12… and +33 6 12… are one number in France, +33 6 12… and +34 6 12… never are.
+     * Ported from Android's PhoneNumberUtils.areSamePhoneNumber (API 31; libphonenumber's isNumberMatch: EXACT or NSN
+     * match, SHORT_NSN only with the same national number and country code):
+     * https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/telephony/java/android/telephony/PhoneNumberUtils.java
+     * and libphonenumber's PhoneNumberUtil.isNumberMatch:
+     * https://github.com/google/libphonenumber/blob/master/java/libphonenumber/src/com/google/i18n/phonenumbers/PhoneNumberUtil.java
+     * The tail is only the fast filter in front of it (AOSP's CallerInfo loose match alone mixes countries).
+     * Without a [region] (a caller with no context: the user's own numbers, MMS addresses) two numbers that
+     * both carry their country code are judged by Android's rule, and a national one against another keeps the
+     * tail match, since its country is unknown.
+     */
+    fun sameDigits(a: String, b: String, region: String? = null): Boolean {
         val x = a.removePrefix("+")
         val y = b.removePrefix("+")
         if (x == y) return x.isNotEmpty()
-        return x.length >= 9 && y.length >= 9 && x.takeLast(9) == y.takeLast(9)
+        if (x.length < 9 || y.length < 9 || x.takeLast(9) != y.takeLast(9)) return false
+        if (region == null && !(a.startsWith("+") && b.startsWith("+"))) return true
+        return runCatching { PhoneNumberUtils.areSamePhoneNumber(a, b, region ?: Locale.getDefault().country) }.getOrDefault(false)
     }
 }

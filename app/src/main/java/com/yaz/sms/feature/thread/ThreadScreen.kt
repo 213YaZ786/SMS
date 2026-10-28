@@ -277,7 +277,7 @@ private fun ThreadContent(
         // In its bubble the notification holds the bubble: it is only quieted.
         if (bubble) MessageNotifier(context).settle(t) else MessageNotifier(context).cancel(t)
     }
-    val index = remember(contacts, com.yaz.sms.core.dial.PrivateNames.version.intValue) { PhoneIndex(contacts) }
+    val index = remember(contacts, com.yaz.sms.core.dial.PrivateNames.version.intValue) { PhoneIndex(contacts, Numbers.countryIso(context)) }
     val to = people.firstOrNull().orEmpty()
     val group = people.size > 1
     // A group's people still in it, and whether the user left (the chat's group follows its members).
