@@ -311,18 +311,13 @@ private fun rememberTitleCollapse(): TitleCollapse {
 }
 
 /**
- * The large title's height at rest: the header takes about a quarter of the window on a phone held
- * upright, less on a phone on its side and on a tablet, so the content stays in sight.
+ * The large title's height at rest: the title and its status line with a little room, never more
+ * (the user, 2026-10-28: a quarter of the window left an empty band above the content on a phone).
  */
 @Composable
 private fun largeTitleHeight(): Dp {
     val window = LocalConfiguration.current
-    val statusBar = with(LocalDensity.current) { WindowInsets.statusBars.getTop(this).toDp() }
-    return when {
-        window.screenHeightDp < 480 -> 72.dp
-        window.screenWidthDp < 600 -> (window.screenHeightDp.dp * 0.25f - statusBar - (TopActionSize + 16.dp)).coerceIn(112.dp, 240.dp)
-        else -> 112.dp
-    }
+    return if (window.screenHeightDp < 480) 72.dp else 96.dp
 }
 
 /**
