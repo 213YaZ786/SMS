@@ -40,15 +40,23 @@ import com.yaz.sms.ui.icon.AppIcons
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun MentionLine(names: List<String>, laterReady: Boolean, onMention: (String) -> Unit, onLater: () -> Unit) {
+fun MentionLine(
+    names: List<String>,
+    laterReady: Boolean,
+    onMention: (String) -> Unit,
+    onLater: () -> Unit,
+    // The text styles, when shown, on this same row before the pills (the user, 2026-10-28: on the clock's line).
+    styles: (@Composable () -> Unit)? = null
+) {
     val haptics = rememberHaptics()
-    AnimatedVisibility(visible = names.isNotEmpty() || laterReady, modifier = Modifier.fillMaxWidth()) {
+    AnimatedVisibility(visible = names.isNotEmpty() || laterReady || styles != null, modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
             FlowRow(
                 modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                styles?.invoke()
                 names.forEach { who ->
                     FloatingPane(shape = CircleShape, onClick = {
                         haptics.tick()

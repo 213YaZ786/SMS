@@ -293,28 +293,26 @@ fun Composer(
             },
             onDismiss = { choosingEffect = false }
         )
-        // The styles, over the field: a tap wraps the selection (or the word) in one.
-        androidx.compose.animation.AnimatedVisibility(visible = formatting && text.isNotEmpty() && take == null) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                listOf(
-                    com.yaz.sms.core.sms.Markup.Style.BOLD to AppIcons.FormatBold,
-                    com.yaz.sms.core.sms.Markup.Style.ITALIC to AppIcons.FormatItalic,
-                    com.yaz.sms.core.sms.Markup.Style.UNDERLINE to AppIcons.FormatUnderlined,
-                    com.yaz.sms.core.sms.Markup.Style.STRIKE to AppIcons.FormatStrikethrough
-                ).forEach { (style, icon) ->
-                    FloatingPane(shape = CircleShape, onClick = {
-                        haptics.tick()
-                        val (t, r) = com.yaz.sms.core.sms.Markup.wrap(text, sel.min, sel.max, style)
-                        text = t
-                        sel = androidx.compose.ui.text.TextRange(r.first, r.last)
-                    }, modifier = Modifier.size(44.dp)) {
-                        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                            Icon(icon, contentDescription = style.name.lowercase(), tint = MaterialTheme.colorScheme.primary)
-                        }
+        // The styles: a tap wraps the selection (or the word) in one. Shown on MentionLine's row, beside the clock.
+        val styleButtons: (@Composable () -> Unit)? = if (formatting && text.isNotEmpty() && take == null) ({
+            listOf(
+                com.yaz.sms.core.sms.Markup.Style.BOLD to AppIcons.FormatBold,
+                com.yaz.sms.core.sms.Markup.Style.ITALIC to AppIcons.FormatItalic,
+                com.yaz.sms.core.sms.Markup.Style.UNDERLINE to AppIcons.FormatUnderlined,
+                com.yaz.sms.core.sms.Markup.Style.STRIKE to AppIcons.FormatStrikethrough
+            ).forEach { (style, icon) ->
+                FloatingPane(shape = CircleShape, onClick = {
+                    haptics.tick()
+                    val (t, r) = com.yaz.sms.core.sms.Markup.wrap(text, sel.min, sel.max, style)
+                    text = t
+                    sel = androidx.compose.ui.text.TextRange(r.first, r.last)
+                }, modifier = Modifier.size(40.dp)) {
+                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                        Icon(icon, contentDescription = style.name.lowercase(), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     }
                 }
             }
-        }
+        }) else null
         // The members offered while an @ is being typed: a tap puts "@Name " in its place. Signal's
         // MentionsPickerFragmentV2 over the composer, the query from ComposeText (core/chat/Mentions.kt).
         val mentionQuery = if (mentionNames.isEmpty() || sel.length > 0 || take != null || editing != null) null else com.yaz.sms.core.chat.Mentions.queryAt(text, sel.end)
@@ -354,7 +352,8 @@ fun Composer(
                 val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
                 onSchedule?.invoke(text, sub)
                 text = ""
-            }
+            },
+            styles = styleButtons
         )
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
             val recording = take
