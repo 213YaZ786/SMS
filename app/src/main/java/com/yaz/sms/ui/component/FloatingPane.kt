@@ -108,10 +108,10 @@ fun FloatingPane(
  * The top of a screen whose content fills the whole window: no bar, only
  * standalone panes of glass floating over it, a round action at each end.
  * The screen's name does nothing, so it has no pane: plain text on the page,
- * at the start after the leading action (Google's Settings, Signal, Element X;
- * iOS 26's large title without a background). What scrolls under it fades out
- * first, see [FloatingFrame]. A [center] slot (clickable pills) stays centred
- * between the two actions.
+ * centred between the two actions (the user, 2026-10-28: "text must be
+ * centered"; iOS 26's inline title, centred without a background). What
+ * scrolls under it fades out first, see [FloatingFrame]. A [center] slot
+ * (clickable pills) is centred the same way.
  */
 @Composable
 fun FloatingTop(
@@ -130,16 +130,10 @@ fun FloatingTop(
         modifier.fillMaxWidth().heightIn(min = TopActionSize + 16.dp).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // With a centre slot both action slots keep their room, so it stays centred;
-        // a plain title starts right after the leading action, or at the start.
-        if (center != null || leading != null) {
-            Box(Modifier.size(TopActionSize), contentAlignment = Alignment.Center) { leading?.invoke() }
-        }
+        // Both action slots keep their room, so the name or the centre slot stays centred.
+        Box(Modifier.size(TopActionSize), contentAlignment = Alignment.Center) { leading?.invoke() }
         // A gap on each side: a long name ends in "…" before reaching the round actions.
-        Box(
-            Modifier.weight(1f).padding(start = if (center != null || leading != null) 12.dp else 0.dp, end = 12.dp),
-            contentAlignment = if (center != null) Alignment.Center else Alignment.CenterStart
-        ) {
+        Box(Modifier.weight(1f).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
             when {
                 center != null -> center()
                 title != null -> Text(
@@ -147,6 +141,7 @@ fun FloatingTop(
                     style = MaterialTheme.typography.headlineSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
                     modifier = if (collapse == null) Modifier.semantics { heading() }
                     else Modifier
                         .graphicsLayer { alpha = ((collapse() - 0.5f) * 2f).coerceIn(0f, 1f) }
@@ -154,9 +149,7 @@ fun FloatingTop(
                 )
             }
         }
-        if (center != null || trailing != null) {
-            Box(Modifier.size(TopActionSize), contentAlignment = Alignment.Center) { trailing?.invoke() }
-        }
+        Box(Modifier.size(TopActionSize), contentAlignment = Alignment.Center) { trailing?.invoke() }
     }
 }
 

@@ -1,14 +1,26 @@
 package com.yaz.sms.ui.component
 
 import com.yaz.sms.ui.glass.LocalGlass
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.BasicAlertDialog
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.unit.Dp
 import androidx.compose.material3.AlertDialogDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.Color
@@ -23,6 +35,7 @@ import androidx.compose.ui.window.DialogProperties
  *
  * Shared across the apps of this base: edit Modules/shared, then run sync.sh.
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ZoneAlertDialog(
     onDismissRequest: () -> Unit,
@@ -36,30 +49,92 @@ fun ZoneAlertDialog(
     properties: DialogProperties = DialogProperties()
 ) {
     val glass = LocalGlass.current
-    AlertDialog(
+    // Material's BasicAlertDialog gives the window, the 280..560 dp width and the pane title
+    // TalkBack reads (AlertDialog.kt, BasicAlertDialog:
+    // https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/AlertDialog.kt).
+    BasicAlertDialog(
         onDismissRequest = onDismissRequest,
         // In its own window the pane cannot see the app: Android blurs what lies
         // behind it instead, and the pane is a clear sheet of glass over that.
-        confirmButton = {
-            if (glass != null) BlurBehind()
-            // Material's AlertDialog puts ButtonsMainAxisSpacing (8 dp) between the two buttons
-            // (https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/AlertDialog.kt);
-            // the rest up to ButtonGap is added before the confirm button.
-            if (dismissButton != null) Box(Modifier.padding(start = ButtonGap - 8.dp)) { confirmButton() } else confirmButton()
-        },
         modifier = if (glass == null) modifier else modifier.dialogGlass(shape, glass),
-        dismissButton = dismissButton,
-        icon = icon,
-        title = title,
-        text = text,
-        shape = shape,
-        containerColor = if (glass == null) AlertDialogDefaults.containerColor else Color.Transparent,
-        iconContentColor = AlertDialogDefaults.iconContentColor,
-        titleContentColor = if (glass == null) AlertDialogDefaults.titleContentColor else MaterialTheme.colorScheme.onSurface,
-        textContentColor = if (glass == null) AlertDialogDefaults.textContentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-        tonalElevation = if (glass == null) AlertDialogDefaults.TonalElevation else 0.dp,
         properties = properties
-    )
+    ) {
+        if (glass != null) BlurBehind()
+        ZoneAlertContent(
+            confirmButton = confirmButton,
+            dismissButton = dismissButton,
+            icon = icon,
+            title = title,
+            text = text,
+            shape = shape,
+            containerColor = if (glass == null) AlertDialogDefaults.containerColor else Color.Transparent,
+            tonalElevation = if (glass == null) AlertDialogDefaults.TonalElevation else 0.dp,
+            iconContentColor = AlertDialogDefaults.iconContentColor,
+            titleContentColor = if (glass == null) AlertDialogDefaults.titleContentColor else MaterialTheme.colorScheme.onSurface,
+            textContentColor = if (glass == null) AlertDialogDefaults.textContentColor else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/**
+ * Material 3's AlertDialogContent (AlertDialog.kt of
+ * https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/AlertDialog.kt):
+ * the same 24 dp padding, 16 dp under the icon and the title, 24 dp under the text, the same
+ * styles (headlineSmall, bodyMedium, labelLarge) and content colours; the text slot keeps
+ * weight(1f, fill = false) so a long list scrolls. Changed, as iOS's alerts (the user,
+ * 2026-10-28, "text must be centered"): icon, title and text centred, and the buttons in one
+ * row sharing the whole width equally (a confirm alone takes it all), where Material packs
+ * them at the end.
+ */
+@Composable
+private fun ZoneAlertContent(
+    confirmButton: @Composable () -> Unit,
+    dismissButton: (@Composable () -> Unit)?,
+    icon: (@Composable () -> Unit)?,
+    title: (@Composable () -> Unit)?,
+    text: (@Composable () -> Unit)?,
+    shape: Shape,
+    containerColor: Color,
+    tonalElevation: Dp,
+    iconContentColor: Color,
+    titleContentColor: Color,
+    textContentColor: Color
+) {
+    val centred = TextAlign.Center
+    Surface(shape = shape, color = containerColor, tonalElevation = tonalElevation) {
+        Column(Modifier.padding(24.dp)) {
+            icon?.let { slot ->
+                CompositionLocalProvider(LocalContentColor provides iconContentColor) {
+                    Box(Modifier.padding(bottom = 16.dp).align(Alignment.CenterHorizontally)) { slot() }
+                }
+            }
+            title?.let { slot ->
+                CompositionLocalProvider(LocalContentColor provides titleContentColor) {
+                    ProvideTextStyle(LocalTextStyle.current.merge(MaterialTheme.typography.headlineSmall).copy(textAlign = centred)) {
+                        Box(Modifier.padding(bottom = 16.dp).fillMaxWidth(), contentAlignment = Alignment.TopCenter) { slot() }
+                    }
+                }
+            }
+            text?.let { slot ->
+                CompositionLocalProvider(LocalContentColor provides textContentColor) {
+                    ProvideTextStyle(LocalTextStyle.current.merge(MaterialTheme.typography.bodyMedium).copy(textAlign = centred)) {
+                        Box(
+                            Modifier.weight(weight = 1f, fill = false).padding(bottom = 24.dp).fillMaxWidth(),
+                            contentAlignment = Alignment.TopCenter
+                        ) { slot() }
+                    }
+                }
+            }
+            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.primary) {
+                ProvideTextStyle(LocalTextStyle.current.merge(MaterialTheme.typography.labelLarge)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(ButtonGap)) {
+                        dismissButton?.let { slot -> Box(Modifier.weight(1f), propagateMinConstraints = true) { slot() } }
+                        Box(Modifier.weight(1f), propagateMinConstraints = true) { confirmButton() }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**

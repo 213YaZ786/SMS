@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.koin.core.component.KoinComponent
+import org.koin.core.component.get
 import org.koin.core.component.inject
 
 /** A message written now to go later. */
@@ -150,7 +151,12 @@ class TimedReceiver : BroadcastReceiver(), KoinComponent {
                         val one = s.to.singleOrNull()
                         // Over the encrypted chat when the number, or every member of the group, has it.
                         if (chat.send(s.to, s.text, emptyList(), null)) return@launch
-                        if (one != null) SmsSender.send(app, one, s.text, s.sub)
+                        // A group set to "One SMS each" keeps it here too: a group MMS would show every number
+                        // to everyone (PendingSends.broadcast, AOSP Messaging's broadcast SMS).
+                        val each = if (one == null) runCatching { android.provider.Telephony.Threads.getOrCreateThreadId(app, s.to.toSet()) }.getOrNull()
+                            ?.takeIf { com.yaz.sms.data.settings.BroadcastStore.of(app).contains(it) } else null
+                        if (each != null) get<PendingSends>().broadcast(each, s.to, s.text, s.sub)
+                        else if (one != null) SmsSender.send(app, one, s.text, s.sub)
                         else com.yaz.sms.core.mms.MmsTransport.send(app, s.to, s.text, emptyList(), s.sub)
                     }
                 }

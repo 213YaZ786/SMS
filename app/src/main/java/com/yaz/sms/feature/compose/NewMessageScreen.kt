@@ -38,6 +38,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yaz.sms.core.dial.People
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.yaz.sms.data.contacts.PhoneBook
 import com.yaz.sms.ui.component.ContactAvatar
 import com.yaz.sms.ui.component.EmptyZone
@@ -80,6 +83,25 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp
     val chat: com.yaz.sms.core.chat.RichChat = koinInject()
     val chatOn = chat.enabled
+    // Two ways to write to several people, as AOSP Messaging's "Group messaging" setting offers them
+    // (InsertNewMessageAction.executeAction, https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/datamodel/action/InsertNewMessageAction.java:
+    // one group MMS, or a broadcast SMS, one SMS to each); here chosen per group. Group (MMS) by default, as AOSP.
+    // The choice marks the thread Android gives those people (BroadcastStore), read by PendingSends.
+    var each by rememberSaveable { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    fun writeToThem() {
+        val numbers = chosen
+        val oneEach = each && numbers.size >= 2
+        scope.launch {
+            if (numbers.size >= 2) withContext(Dispatchers.IO) {
+                val store = com.yaz.sms.data.settings.BroadcastStore.of(context)
+                runCatching { android.provider.Telephony.Threads.getOrCreateThreadId(context, numbers.toSet()) }.getOrNull()
+                    ?.let { if (oneEach) store.mark(it) else store.unmark(it) }
+            }
+            onPick(numbers.joinToString(","))
+        }
+    }
     var inviting by remember { mutableStateOf(false) }
     if (inviting) InviteDialog(onDismiss = { inviting = false }) { address ->
         inviting = false
@@ -93,7 +115,7 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
                 title = if (group) "New group" else "New message",
                 leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) },
                 trailing = {
-                    if (group && chosen.isNotEmpty()) FloatingAction(AppIcons.Send, "Write to them", { onPick(chosen.joinToString(",")) })
+                    if (group && chosen.isNotEmpty()) FloatingAction(AppIcons.Send, "Write to them", { writeToThem() })
                     else FloatingAction(AppIcons.Group, if (group) "One person" else "A group", {
                         group = !group
                         chosen = emptyList()
@@ -109,6 +131,24 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
                         val name = people.firstOrNull { p -> p.numbers.any { it.number == n } }?.name ?: n
                         FloatingPane(shape = CircleShape, accent = true, onClick = { chosen = chosen - n }) {
                             Text(name.substringBefore(' '), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+                        }
+                    }
+                }
+            }
+            if (group && chosen.size >= 2) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    listOf("Group (MMS)" to false, "One SMS each" to true).forEach { (label, value) ->
+                        FloatingPane(shape = CircleShape, accent = each == value, modifier = Modifier.weight(1f), onClick = { each = value }) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)
+                            )
                         }
                     }
                 }

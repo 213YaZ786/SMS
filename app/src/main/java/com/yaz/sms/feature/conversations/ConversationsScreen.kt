@@ -260,6 +260,20 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // Conversations over the encrypted chat carry a lock in the list.
     val links by chat.links.collectAsState()
     fun encrypted(c: Conversation): Boolean = if (c.group) chat.groupReady(c.addresses) else chat.linkFor(c.address) != null
+    // A tap and a long press, the same on a row and on a pinned avatar.
+    val openConversation: (Conversation) -> Unit = { c ->
+        val taking = picked
+        // A trashed conversation is restored to be read (Google Messages).
+        if (taking == null && filter == Filter.TRASH) restoring = c
+        else if (taking == null) onOpenThread(c.threadId, c.addresses.joinToString(","))
+        else picked = (if (c.threadId in taking) taking - c.threadId else taking + c.threadId).ifEmpty { null }
+    }
+    val peekConversation: (Conversation) -> Unit = { c ->
+        val taking = picked
+        // In the Trash a long press selects; a glance would read what is not to be read.
+        if (taking == null && filter != Filter.TRASH) peeking = c
+        else picked = (if (taking != null && c.threadId in taking) taking - c.threadId else (taking ?: emptySet()) + c.threadId).ifEmpty { null }
+    }
     val line: @Composable (Conversation) -> Unit = { c ->
         ConversationLine(
             c,
@@ -267,19 +281,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
             look = if (c.group) null else index.find(T9.clean(c.address))?.look,
             pinned = c.threadId in settings.pinned,
-            onOpen = {
-                val taking = picked
-                // A trashed conversation is restored to be read (Google Messages).
-                if (taking == null && filter == Filter.TRASH) restoring = c
-                else if (taking == null) onOpenThread(c.threadId, c.addresses.joinToString(","))
-                else picked = (if (c.threadId in taking) taking - c.threadId else taking + c.threadId).ifEmpty { null }
-            },
-            onPeek = {
-                val taking = picked
-                // In the Trash a long press selects; a glance would read what is not to be read.
-                if (taking == null && filter != Filter.TRASH) peeking = c
-                else picked = (if (taking != null && c.threadId in taking) taking - c.threadId else (taking ?: emptySet()) + c.threadId).ifEmpty { null }
-            },
+            onOpen = { openConversation(c) },
+            onPeek = { peekConversation(c) },
             encrypted = remember(links, c.threadId) { encrypted(c) },
             left = if (picked != null || filter == Filter.TRASH) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE),
             right = if (picked != null || filter == Filter.TRASH) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE),
@@ -547,8 +550,26 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                         Waiting(waiting, index, ::nameOf) { c -> onOpenThread(c.threadId, c.addresses.joinToString(",")) }
                     }
                 }
+                // The first nine pinned conversations leave the rows for avatars on top (iOS Messages), in
+                // the inbox only: not in a search, the Archive, the Trash, Spam nor the Unread view.
+                val faces = if (filter == Filter.ALL && query.isBlank()) shown.filter { it.threadId in settings.pinned }.take(PINNED_FACES_MAX) else emptyList()
+                if (faces.isNotEmpty()) {
+                    item(key = "pinned") {
+                        PinnedFaces(
+                            faces,
+                            face = { c ->
+                                val entry = if (c.group) null else index.find(T9.clean(c.address))
+                                PinnedFace(nameOf(c) ?: Numbers.format(context, c.address), entry?.photo, entry?.look)
+                            },
+                            selected = { c -> picked?.contains(c.threadId) },
+                            onOpen = openConversation,
+                            onPeek = peekConversation
+                        )
+                    }
+                }
+                val onFaces = faces.mapTo(HashSet()) { it.threadId }
                 // People first; every service (banks, deliveries, codes) in one stack.
-                val (services, people) = shown.partition { Lists.isService(it) && filter == Filter.ALL && query.isBlank() }
+                val (services, people) = shown.filterNot { it.threadId in onFaces }.partition { Lists.isService(it) && filter == Filter.ALL && query.isBlank() }
                 if (services.isNotEmpty() && people.isNotEmpty()) item(key = "people") { Heading("People") }
                 items(people, key = { it.threadId }) { c -> line(c) }
                 if (services.isNotEmpty()) {

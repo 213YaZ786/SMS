@@ -30,12 +30,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
+import androidx.compose.foundation.text.input.then
+import androidx.compose.foundation.text.input.maxLength
+import androidx.core.text.isDigitsOnly
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -314,7 +321,12 @@ private val Minus: ImageVector by lazy {
 @Composable
 fun SendAgainDialog(words: String, attachments: Int, onSend: (Int) -> Unit, onDismiss: () -> Unit) {
     val haptics = rememberHaptics()
-    var count by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(1) }
+    // The count is typed in a small field (Android's text input docs: a state-based BasicTextField, digits only
+    // by an InputTransformation), or stepped with the buttons, which rewrite the field. Empty or 0 is no count.
+    val field = androidx.compose.foundation.text.input.rememberTextFieldState("1")
+    val typed = field.text.toString().toIntOrNull()
+    val count = typed?.takeIf { it in 1..SEND_AGAIN_MAX }
+    val number = typed ?: 0
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Send again") },
@@ -333,28 +345,85 @@ fun SendAgainDialog(words: String, attachments: Int, onSend: (Int) -> Unit, onDi
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                 ) {
                     BoldIconButton(onClick = {
-                        if (count > 1) {
-                            count--
+                        if (number > 1) {
+                            field.setTextAndPlaceCursorAtEnd((number - 1).toString())
                             haptics.tick()
                         } else haptics.reject()
-                    }, enabled = count > 1) { Icon(Minus, contentDescription = "Fewer copies") }
-                    Text("$count", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurface)
+                    }, enabled = number > 1) { Icon(Minus, contentDescription = "Fewer copies") }
+                    CountField(field)
                     BoldIconButton(onClick = {
-                        if (count < SEND_AGAIN_MAX) {
-                            count++
+                        if (number < SEND_AGAIN_MAX) {
+                            field.setTextAndPlaceCursorAtEnd((number + 1).toString())
                             haptics.tick()
                         } else haptics.reject()
-                    }, enabled = count < SEND_AGAIN_MAX) { Icon(com.yaz.sms.ui.icon.AppIcons.Add, contentDescription = "More copies") }
+                    }, enabled = number < SEND_AGAIN_MAX) { Icon(com.yaz.sms.ui.icon.AppIcons.Add, contentDescription = "More copies") }
                 }
             }
         },
         confirmButton = {
-            BoldButton(filled = true, onClick = {
+            BoldButton(filled = true, enabled = count != null, onClick = {
                 haptics.done()
-                onSend(count)
+                count?.let(onSend)
             }) { Text("Send") }
         },
         dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * The count of "Send again" typed directly: a state-based BasicTextField, number keyboard, one line, two digits
+ * at most and digits only, from Android's text input docs (the phone-number example:
+ * `InputTransformation.maxLength(10).then { if (!asCharSequence().isDigitsOnly()) revertAllChanges() }`),
+ * https://developer.android.com/develop/ui/compose/text/user-input
+ * A number over [SEND_AGAIN_MAX] is replaced by what was just typed (held from 1 to the maximum), so the field never shows a count that will not be sent.
+ * Digits centred, in the size of the number it replaces.
+ */
+@Composable
+private fun CountField(state: androidx.compose.foundation.text.input.TextFieldState) {
+    // Over the maximum, what was just typed replaces the number ("3" in a field holding "1" gives 3, not 13
+    // or 31): the new text minus `originalText`, the buffer's text before the edit. InputTransformation and
+    // TextFieldBuffer.originalText, Compose's user-input page:
+    // https://developer.android.com/develop/ui/compose/text/user-input
+    val transformation = remember {
+        androidx.compose.foundation.text.input.InputTransformation {
+            val now = asCharSequence().toString()
+            if (!now.isDigitsOnly()) {
+                revertAllChanges()
+            } else if ((now.toIntOrNull() ?: 0) > SEND_AGAIN_MAX) {
+                val before = originalText.toString()
+                val typedNow = when {
+                    before.isNotEmpty() && now.startsWith(before) -> now.removePrefix(before)
+                    before.isNotEmpty() && now.endsWith(before) -> now.removeSuffix(before)
+                    else -> now.takeLast(1)
+                }.ifEmpty { now.takeLast(1) }
+                replace(0, length, (typedNow.toIntOrNull() ?: SEND_AGAIN_MAX).coerceIn(1, SEND_AGAIN_MAX).toString())
+            }
+        }.then(androidx.compose.foundation.text.input.InputTransformation.maxLength(2))
+    }
+    androidx.compose.foundation.text.BasicTextField(
+        state = state,
+        modifier = Modifier
+            .width(72.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            .padding(vertical = 6.dp)
+            // Tapped, the number is selected whole, so "3" typed replaces it (with the cursor before
+            // the 1, "3" made 31, held at 10). TextFieldState.edit and its selection, Compose's
+            // user-input page: https://developer.android.com/develop/ui/compose/text/user-input
+            .onFocusChanged { focus ->
+                if (focus.isFocused) state.edit { selection = androidx.compose.ui.text.TextRange(0, length) }
+            }
+            .semantics { contentDescription = "Number of copies" },
+        textStyle = MaterialTheme.typography.headlineMedium.copy(
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        ),
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+        ),
+        lineLimits = androidx.compose.foundation.text.input.TextFieldLineLimits.SingleLine,
+        inputTransformation = transformation,
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary)
     )
 }
 

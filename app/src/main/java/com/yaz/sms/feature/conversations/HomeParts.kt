@@ -11,7 +11,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -175,6 +179,136 @@ internal fun ServicesStack(services: List<Conversation>, open: Boolean, onToggle
 
 /** Fills the box its siblings set, under them. */
 private fun Modifier.matchParentSizeOf(): Modifier = this.fillMaxWidth().height(64.dp)
+
+/** What a pinned avatar shows of a conversation: its name, photo and look. */
+internal class PinnedFace(name: String, photo: String?, look: com.yaz.sms.core.dial.ContactLook.Look?) {
+    val name: String = name
+    val photo: String? = photo
+    val look: com.yaz.sms.core.dial.ContactLook.Look? = look
+}
+
+/** iOS Messages keeps at most nine pinned conversations as avatars. */
+internal const val PINNED_FACES_MAX = 9
+
+/**
+ * The pinned conversations as round avatars wrapping over the top of the list, as iOS Messages shows
+ * its pinned conversations: the name under the avatar, and an unread one carries its count on the avatar
+ * and its last message in a small bubble of glass above it. Wrapped in a FlowRow, never scrolled sideways
+ * (Jetpack Compose FlowRow, androidx/compose/foundation/foundation-layout/.../FlowLayout.kt,
+ * https://android.googlesource.com/platform/frameworks/support/+/refs/heads/androidx-main/compose/foundation/foundation-layout/src/commonMain/kotlin/androidx/compose/foundation/layout/FlowLayout.kt:
+ * maxItemsInEachRow and itemVerticalAlignment), three to a row on a phone, more as the window widens.
+ * The press sink and the count badge are this screen's own Face and ConversationLine. A tap opens, a long
+ * press glances (the same Peek as a row); [selected] is null out of the multi select.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+internal fun PinnedFaces(
+    pinned: List<Conversation>,
+    face: (Conversation) -> PinnedFace,
+    selected: (Conversation) -> Boolean?,
+    onOpen: (Conversation) -> Unit,
+    onPeek: (Conversation) -> Unit
+) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth()) {
+        val gap = 8.dp
+        val columns = ((maxWidth + gap) / (104.dp + gap)).toInt().coerceIn(3, PINNED_FACES_MAX)
+        val cell = (maxWidth - gap * (columns - 1)) / columns
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(gap, Alignment.CenterHorizontally),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
+            itemVerticalAlignment = Alignment.Bottom,
+            maxItemsInEachRow = columns,
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp)
+        ) {
+            pinned.take(PINNED_FACES_MAX).forEach { c ->
+                key(c.threadId) { PinnedFaceItem(c, face(c), selected(c), Modifier.width(cell), { onOpen(c) }, { onPeek(c) }) }
+            }
+        }
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun PinnedFaceItem(c: Conversation, face: PinnedFace, selected: Boolean?, modifier: Modifier, onOpen: () -> Unit, onPeek: () -> Unit) {
+    val haptics = rememberHaptics()
+    val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by press.collectIsPressedAsState()
+    val sink by animateFloatAsState(if (pressed) 0.92f else 1f, spring(dampingRatio = 0.45f, stiffness = 700f), label = "sink")
+    val unread = c.unread > 0
+    val last = if (unread && !c.fromMe) com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet))).trim() else ""
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = sink
+                scaleY = sink
+            }
+            .clip(RoundedCornerShape(16.dp))
+            .combinedClickable(
+                interactionSource = press,
+                indication = null,
+                onClickLabel = "Open",
+                onLongClickLabel = "Glance",
+                onClick = {
+                    haptics.tick()
+                    onOpen()
+                },
+                onLongClick = {
+                    haptics.firm()
+                    onPeek()
+                }
+            )
+    ) {
+        // The last message of an unread conversation, two lines at most, above the avatar.
+        if (last.isNotEmpty()) {
+            ZoneSurface(shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+                Text(
+                    last,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+        Box {
+            // Taken in the multi select: the check stands where the face was.
+            if (selected == true) Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(64.dp).background(MaterialTheme.colorScheme.primary, CircleShape)
+            ) {
+                Icon(AppIcons.Done, contentDescription = "Selected", tint = MaterialTheme.colorScheme.onPrimary)
+            }
+            else com.yaz.sms.ui.component.ContactAvatar(face.name, face.photo, 64.dp, look = face.look)
+            if (unread) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 4.dp, y = (-2).dp)
+                        .size(20.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                ) {
+                    Text(
+                        if (c.unread > 9) "9+" else c.unread.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
+            }
+        }
+        Text(
+            face.name,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    }
+}
 
 /** The digits roll up into place one after the other, as Dialer's timer does. */
 @Composable

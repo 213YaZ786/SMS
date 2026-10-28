@@ -6,6 +6,7 @@ import com.yaz.sms.core.chat.RichChat
 import com.yaz.sms.core.mms.Attachment
 import com.yaz.sms.core.mms.MediaPrivacy
 import com.yaz.sms.core.mms.MmsTransport
+import com.yaz.sms.data.settings.BroadcastStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -187,6 +188,14 @@ class PendingSends(context: Context, private val scope: CoroutineScope, private 
                     return@withContext
                 }
                 val text = p.quoted?.let { "«${excerpt(it)}»\n${p.text}" } ?: p.text
+                // A group marked "One SMS each": words alone go as AOSP's broadcast; pictures stay a group MMS.
+                if (group && attachments.isEmpty()) {
+                    val thread = p.thread ?: runCatching { android.provider.Telephony.Threads.getOrCreateThreadId(context, people.toSet()) }.getOrNull()
+                    if (thread != null && BroadcastStore.of(context).contains(thread)) {
+                        broadcast(thread, people, text, p.sub)
+                        return@withContext
+                    }
+                }
                 if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, p.sub, p.thread)
                 else SmsSender.send(context, to, text, p.sub, p.thread)
                 // The first message to a number asks, unseen, whether it has SMS too.
@@ -198,6 +207,38 @@ class PendingSends(context: Context, private val scope: CoroutineScope, private 
             // A send that failed unexpectedly is given back, never lost.
             giveBack(p)
         }
+    }
+
+    /**
+     * One SMS to each person, as AOSP Messaging's broadcast SMS (InsertNewMessageAction.executeAction and
+     * insertBroadcastSmsMessage, https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/datamodel/action/InsertNewMessageAction.java):
+     * first one sent record in the group's thread, its address the people joined by a space, status complete,
+     * dated one millisecond later; then insertSendingSmsMessage with no conversation, so SmsSender gives each
+     * message the thread of that person alone (getOrCreateSmsThreadId) and it is sent and reported there.
+     */
+    internal fun broadcast(thread: Long, people: List<String>, text: String, sub: Int) {
+        val own = com.yaz.sms.core.mms.OwnNumbers.of(context)
+        val others = people.filterNot { com.yaz.sms.core.mms.OwnNumbers.isOwn(it, own) }.distinct()
+        val body = text.trim(' ', '\n', '\t', '\r')
+        if (others.isEmpty() || body.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val subId = if (sub != android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) sub else android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId()
+        runCatching {
+            context.contentResolver.insert(
+                android.provider.Telephony.Sms.Sent.CONTENT_URI,
+                android.content.ContentValues().apply {
+                    put(android.provider.Telephony.Sms.ADDRESS, others.joinToString(" "))
+                    put(android.provider.Telephony.Sms.BODY, body)
+                    put(android.provider.Telephony.Sms.DATE, now + 1)
+                    put(android.provider.Telephony.Sms.READ, 1)
+                    put(android.provider.Telephony.Sms.SEEN, 1)
+                    put(android.provider.Telephony.Sms.STATUS, android.provider.Telephony.Sms.STATUS_COMPLETE)
+                    put(android.provider.Telephony.Sms.THREAD_ID, thread)
+                    put(android.provider.Telephony.Sms.SUBSCRIPTION_ID, subId)
+                }
+            )
+        }
+        for (to in others) SmsSender.send(context, to, body, sub)
     }
 
     /** The start of a quoted message, short enough for the first line. */

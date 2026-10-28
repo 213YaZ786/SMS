@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -38,8 +39,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import com.yaz.sms.ui.component.BoldButton
@@ -68,6 +67,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -100,21 +100,45 @@ private enum class SettingsSection(val title: String, val icon: ImageVector) {
     ABOUT("About", AppIcons.Info)
 }
 
+/** What a tile of Settings shows: an icon, a short name, and under it its state or value (Quick Settings' tile). */
+private sealed interface SettingsTile {
+    val id: String
+    val name: String
+    val title: String
+    val icon: ImageVector
+    val summary: String
+}
+
 /**
  * A setting that is only a switch, shown as a tile. [name] is the short name on the tile, [title] the full
  * one (TalkBack, the dialog), [summary] the explanation the long press shows. A tile that [enabled] is false
  * depends on another setting: it shows, dimmed, and does not toggle.
  */
 private class SwitchTile(
-    val id: String,
-    val name: String,
-    val title: String,
-    val icon: ImageVector,
-    val summary: String,
+    override val id: String,
+    override val name: String,
+    override val title: String,
+    override val icon: ImageVector,
+    override val summary: String,
     val checked: Boolean,
     val enabled: Boolean = true,
     val onChange: (Boolean) -> Unit
-)
+) : SettingsTile
+
+/**
+ * A setting that opens a choice, a page or a link, shown as a tile: [value] is its current value, the second
+ * line (Quick Settings' secondary label, AOSP SystemUI QSTileViewImpl); [summary] the full text a long press
+ * shows. Without [onClick] (the version) a tap shows the summary too.
+ */
+private class ActionTile(
+    override val id: String,
+    override val name: String,
+    override val title: String,
+    override val icon: ImageVector,
+    val value: String,
+    override val summary: String,
+    val onClick: (() -> Unit)? = null
+) : SettingsTile
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewModel()) {
@@ -221,111 +245,112 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
         )
     )
 
-    // The rows of a section: what opens a choice or a page stays a row.
-    val rows: @Composable (SettingsSection) -> Unit = { which ->
-        when (which) {
-            SettingsSection.CHAT -> if (settings.richChat) RowsZone {
-                SettingRow(
-                    title = "Relays",
-                    summary = when {
-                        relays.isEmpty() -> if (settings.relay.isBlank()) "Automatic: the fastest, with backups" else settings.relay
-                        relays.size == 1 -> relays[0]
-                        else -> relays[0] + " · backups: " + relays.drop(1).joinToString(", ")
-                    },
-                    onClick = { dialog = OpenDialog.RELAY }
-                )
-            }
-            SettingsSection.MESSAGES -> RowsZone {
-                SettingRow(
-                    title = "Swipe left",
-                    summary = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE).label,
-                    onClick = { dialog = OpenDialog.SWIPE_LEFT }
-                )
-                SettingRow(
-                    title = "Swipe right",
-                    summary = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE).label,
-                    onClick = { dialog = OpenDialog.SWIPE_RIGHT }
-                )
-                SettingRow(
-                    title = "Undo send",
+    // What opens a choice, a page or a link: tiles of the same grid, the value as the second line.
+    val actions: Map<SettingsSection, List<ActionTile>> = mapOf(
+        SettingsSection.CHAT to listOfNotNull(
+            if (settings.richChat) ActionTile(
+                id = "relays", name = "Relays", title = "Relays", icon = AppIcons.Dns,
+                value = relays.firstOrNull() ?: settings.relay.ifBlank { "Automatic" },
+                summary = when {
+                    relays.isEmpty() -> if (settings.relay.isBlank()) "Automatic: the fastest, with backups" else settings.relay
+                    relays.size == 1 -> relays[0]
+                    else -> relays[0] + " · backups: " + relays.drop(1).joinToString(", ")
+                },
+                onClick = { dialog = OpenDialog.RELAY }
+            ) else null
+        ),
+        SettingsSection.MESSAGES to run {
+            val left = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE).label
+            val right = com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE).label
+            val number = settings.ownNumber.ifBlank { simNumber ?: "Not set" }
+            val reaction = reactionFormatLabel(settings.reactionFormat)
+            listOf(
+                ActionTile(
+                    id = "swipeLeft", name = "Swipe left", title = "Swipe left", icon = AppIcons.SwipeLeft,
+                    value = left, summary = left, onClick = { dialog = OpenDialog.SWIPE_LEFT }
+                ),
+                ActionTile(
+                    id = "swipeRight", name = "Swipe right", title = "Swipe right", icon = AppIcons.SwipeRight,
+                    value = right, summary = right, onClick = { dialog = OpenDialog.SWIPE_RIGHT }
+                ),
+                ActionTile(
+                    id = "undo", name = "Undo send", title = "Undo send", icon = AppIcons.Undo,
+                    value = if (settings.undoSeconds == 0) "Off" else "${settings.undoSeconds} s",
                     summary = if (settings.undoSeconds == 0) "Off" else "${settings.undoSeconds} seconds to take a message back",
                     onClick = { dialog = OpenDialog.UNDO }
-                )
+                ),
                 // The number Android may not give: a group never splits for want of it (OwnNumbers).
-                SettingRow(
-                    title = "My number",
-                    summary = settings.ownNumber.ifBlank { simNumber ?: "Not set" },
-                    onClick = { dialog = OpenDialog.OWN_NUMBER }
-                )
-                SettingRow(
-                    title = "Reactions sent to others",
-                    summary = reactionFormatLabel(settings.reactionFormat),
-                    onClick = { dialog = OpenDialog.REACTION_FORMAT }
-                )
-                SettingRow(
-                    title = "Notifications",
-                    summary = "Sound, vibration and how they show",
+                ActionTile(
+                    id = "number", name = "My number", title = "My number", icon = AppIcons.Smartphone,
+                    value = number, summary = number, onClick = { dialog = OpenDialog.OWN_NUMBER }
+                ),
+                ActionTile(
+                    id = "reactions", name = "Reactions", title = "Reactions sent to others", icon = AppIcons.Mood,
+                    value = reaction, summary = reaction, onClick = { dialog = OpenDialog.REACTION_FORMAT }
+                ),
+                ActionTile(
+                    id = "notifications", name = "Notifications", title = "Notifications", icon = AppIcons.NotificationsOn,
+                    value = "Sound, vibration", summary = "Sound, vibration and how they show",
                     onClick = { open(context, Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)) }
-                )
-                SettingRow(
-                    title = "Blocked numbers",
-                    summary = "The list Android keeps for every app",
+                ),
+                ActionTile(
+                    id = "blocked", name = "Blocked numbers", title = "Blocked numbers", icon = AppIcons.Block,
+                    value = "Android's list", summary = "The list Android keeps for every app",
                     onClick = { open(context, context.getSystemService(TelecomManager::class.java).createManageBlockedNumbersIntent()) }
-                )
-                SettingRow(
-                    title = "Messaging app",
-                    summary = "The app Android uses for messages",
+                ),
+                ActionTile(
+                    id = "default", name = "Messaging app", title = "Messaging app", icon = AppIcons.Message,
+                    value = "Default apps", summary = "The app Android uses for messages",
                     onClick = { open(context, Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)) }
                 )
-            }
-            SettingsSection.APPEARANCE -> RowsZone {
-                SettingRow(
-                    title = "Theme",
-                    summary = themeLabel(settings.themeMode),
-                    onClick = { dialog = OpenDialog.THEME }
-                )
-                SettingRow(
-                    title = "Text size",
-                    summary = textScaleLabel(settings.textScale) + ", on top of Android's font size",
-                    onClick = { dialog = OpenDialog.TEXT_SIZE }
-                )
-            }
-            SettingsSection.ABOUT -> RowsZone {
-                SettingRow(
-                    title = "Updates",
-                    summary = updatesLabel(settings.updates),
-                    onClick = { dialog = OpenDialog.UPDATES }
-                )
-                SettingRow(
-                    title = "SMS ${BuildConfig.VERSION_NAME}",
-                    summary = "A messaging app with no account, no tracking and no ads.",
-                    onClick = null
-                )
-                SettingRow(
-                    title = "Encrypted chat engine",
-                    summary = "chatmail core, Mozilla Public License 2.0",
-                    onClick = { uriHandler.openUri("https://github.com/chatmail/core") }
-                )
-                SettingRow(
-                    title = "Animated emoji",
-                    summary = "Noto Animated Emoji by Google, CC BY 4.0",
-                    onClick = { uriHandler.openUri("https://googlefonts.github.io/noto-emoji-animation/") }
-                )
-                SettingRow(
-                    title = "Source code",
-                    summary = "github.com/213YaZ786/SMS",
-                    onClick = { uriHandler.openUri("https://github.com/213YaZ786/SMS") }
-                )
-            }
-        }
-    }
+            )
+        },
+        SettingsSection.APPEARANCE to listOf(
+            ActionTile(
+                id = "theme", name = "Theme", title = "Theme", icon = AppIcons.Brightness,
+                value = themeLabel(settings.themeMode), summary = themeLabel(settings.themeMode),
+                onClick = { dialog = OpenDialog.THEME }
+            ),
+            ActionTile(
+                id = "textSize", name = "Text size", title = "Text size", icon = AppIcons.FormatSize,
+                value = textScaleLabel(settings.textScale),
+                summary = textScaleLabel(settings.textScale) + ", on top of Android's font size",
+                onClick = { dialog = OpenDialog.TEXT_SIZE }
+            )
+        ),
+        SettingsSection.ABOUT to listOf(
+            ActionTile(
+                id = "updates", name = "Updates", title = "Updates", icon = AppIcons.Update,
+                value = updatesLabel(settings.updates), summary = updatesLabel(settings.updates),
+                onClick = { dialog = OpenDialog.UPDATES }
+            ),
+            ActionTile(
+                id = "version", name = "SMS", title = "SMS ${BuildConfig.VERSION_NAME}", icon = AppIcons.Info,
+                value = BuildConfig.VERSION_NAME, summary = "A messaging app with no account, no tracking and no ads."
+            ),
+            ActionTile(
+                id = "engine", name = "Chat engine", title = "Encrypted chat engine", icon = AppIcons.Memory,
+                value = "chatmail core", summary = "chatmail core, Mozilla Public License 2.0",
+                onClick = { uriHandler.openUri("https://github.com/chatmail/core") }
+            ),
+            ActionTile(
+                id = "emoji", name = "Animated emoji", title = "Animated emoji", icon = AppIcons.Mood,
+                value = "Noto, CC BY 4.0", summary = "Noto Animated Emoji by Google, CC BY 4.0",
+                onClick = { uriHandler.openUri("https://googlefonts.github.io/noto-emoji-animation/") }
+            ),
+            ActionTile(
+                id = "source", name = "Source code", title = "Source code", icon = AppIcons.Code,
+                value = "github.com/213YaZ786/SMS", summary = "github.com/213YaZ786/SMS",
+                onClick = { uriHandler.openUri("https://github.com/213YaZ786/SMS") }
+            )
+        )
+    )
 
-    // One section's page: its name, its switches as tiles, then its rows.
+    // One section's page: its name, then its tiles: the switches first, then what opens something.
     val page: @Composable ColumnScope.(SettingsSection) -> Unit = { which ->
         SectionTitle(which.title)
-        val list = tiles[which].orEmpty()
+        val list: List<SettingsTile> = tiles[which].orEmpty() + actions[which].orEmpty()
         if (list.isNotEmpty()) TileGrid(list) { tileId = it.id }
-        rows(which)
     }
 
     // The window decides: a list and a page side by side from Medium up, as a phone held upright
@@ -367,8 +392,11 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
         }
     }
 
-    tiles.values.flatten().firstOrNull { it.id == tileId }?.let { tile ->
-        TileDialog(tile, onDismiss = { tileId = "" })
+    (tiles.values.flatten() + actions.values.flatten()).firstOrNull { it.id == tileId }?.let { tile ->
+        when (tile) {
+            is SwitchTile -> TileDialog(tile, onDismiss = { tileId = "" })
+            is ActionTile -> InfoDialog(tile, onDismiss = { tileId = "" })
+        }
     }
 
     when (dialog) {
@@ -549,38 +577,32 @@ private fun SectionTitle(title: String) {
     )
 }
 
-/** The rows of a section on one rounded zone. */
-@Composable
-private fun RowsZone(content: @Composable ColumnScope.() -> Unit) {
-    ZoneSurface(
-        shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp)
-    ) {
-        Column(content = content)
-    }
-}
-
 /**
- * The switches of a section as tiles, in equal cells, 2 columns on a phone upright, 3 then 4 as the
+ * The tiles of a section, in equal cells, 2 columns on a phone upright, 3 then 4 as the
  * room grows (a cell is at least 160 dp). The cells of Android's Quick Settings: AOSP SystemUI's TileLayout
  * (equal cells, the column count from the window's size class),
  * https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/packages/SystemUI/src/com/android/systemui/qs/TileLayout.java
  * A last row that is not full is centred, so no side is left empty.
  */
 @Composable
-private fun TileGrid(tiles: List<SwitchTile>, onExplain: (SwitchTile) -> Unit) {
+private fun TileGrid(tiles: List<SettingsTile>, onExplain: (SettingsTile) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         val columns = (maxWidth / 160.dp).toInt().coerceIn(2, 4)
         // The cell is a column's share of the width, whatever the row holds.
         val cell = (maxWidth - 12.dp * (columns - 1)) / columns
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             tiles.chunked(columns).forEach { row ->
+                // The tiles of a row are as tall as the tallest (a value on two lines).
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier.fillMaxWidth().height(IntrinsicSize.Min),
                     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)
                 ) {
                     row.forEach { tile ->
-                        SwitchTileView(tile, Modifier.width(cell)) { onExplain(tile) }
+                        val tileModifier = Modifier.width(cell).fillMaxHeight()
+                        when (tile) {
+                            is SwitchTile -> SwitchTileView(tile, tileModifier) { onExplain(tile) }
+                            is ActionTile -> ActionTileView(tile, tileModifier) { onExplain(tile) }
+                        }
                     }
                 }
             }
@@ -599,50 +621,115 @@ private fun TileGrid(tiles: List<SwitchTile>, onExplain: (SwitchTile) -> Unit) {
 @Composable
 private fun SwitchTileView(tile: SwitchTile, modifier: Modifier = Modifier, onExplain: () -> Unit) {
     val haptics = rememberHaptics()
+    val on = tile.checked
+    val state = if (on) "On" else "Off"
+    TileFace(
+        icon = tile.icon,
+        name = tile.name,
+        state = state,
+        on = on,
+        modifier = modifier,
+        dimmed = !tile.enabled,
+        onClick = {
+            if (tile.enabled) {
+                haptics.toggle(!on)
+                tile.onChange(!on)
+            }
+        },
+        onLongClick = {
+            haptics.firm()
+            onExplain()
+        },
+        semantics = {
+            contentDescription = tile.title
+            role = Role.Switch
+            toggleableState = ToggleableState(on)
+            stateDescription = if (tile.enabled) state else "$state, unavailable"
+        }
+    )
+}
+
+/**
+ * One setting that opens something, as a tile of the same look: the icon, the name, its current value as the
+ * second line (QSTileViewImpl's secondary label), never "On" and never in the accent: only a switch that is on
+ * is. A tap does what the row's tap did, a long press shows the full text. TalkBack gets a button with the full
+ * name and the value as its state.
+ */
+@Composable
+private fun ActionTileView(tile: ActionTile, modifier: Modifier = Modifier, onExplain: () -> Unit) {
+    val haptics = rememberHaptics()
+    TileFace(
+        icon = tile.icon,
+        name = tile.name,
+        state = tile.value,
+        on = false,
+        modifier = modifier,
+        dimmed = false,
+        onClick = {
+            haptics.tick()
+            val open = tile.onClick
+            if (open != null) open() else onExplain()
+        },
+        onLongClick = {
+            haptics.firm()
+            onExplain()
+        },
+        semantics = {
+            contentDescription = tile.title
+            role = Role.Button
+            stateDescription = tile.value
+        }
+    )
+}
+
+/**
+ * The look of a tile, a Quick Settings tile: the icon over the name, the state or value under it on one or
+ * two lines. Android's QSTileViewImpl (icon, label, secondary label; the long press for details),
+ * https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/packages/SystemUI/src/com/android/systemui/qs/tileimpl/QSTileViewImpl.kt
+ * Active tiles ([on]) are washed with the accent (ZoneSurface accent). The tap target is the transparent
+ * inner area, as Modules' glass note asks.
+ */
+@Composable
+private fun TileFace(
+    icon: ImageVector,
+    name: String,
+    state: String,
+    on: Boolean,
+    modifier: Modifier,
+    dimmed: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    semantics: androidx.compose.ui.semantics.SemanticsPropertyReceiver.() -> Unit
+) {
     // SystemUI's own sizes (res/values/dimens.xml: qs_tile_height 80dp, qs_corner_radius 28dp): a tile is
     // as tall as its content needs, not square, so a section fits on one screen; our icon stands over the
     // name instead of beside it, hence 96 dp at least.
     val shape = RoundedCornerShape(28.dp)
-    val on = tile.checked
-    val state = if (on) "On" else "Off"
+    val quiet = MaterialTheme.colorScheme.onSurfaceVariant
     ZoneSurface(shape = shape, accent = on, modifier = modifier.heightIn(min = 96.dp)) {
         Column(
             Modifier
-                .fillMaxWidth()
-                .heightIn(min = 96.dp)
+                .fillMaxSize()
                 .clip(shape)
                 .combinedClickable(
-                    role = Role.Switch,
                     onLongClickLabel = "Explain",
-                    onLongClick = {
-                        haptics.firm()
-                        onExplain()
-                    },
-                    onClick = {
-                        if (tile.enabled) {
-                            haptics.toggle(!on)
-                            tile.onChange(!on)
-                        }
-                    }
+                    onLongClick = onLongClick,
+                    onClick = onClick
                 )
-                .semantics(mergeDescendants = true) {
-                    contentDescription = tile.title
-                    toggleableState = ToggleableState(on)
-                    stateDescription = if (tile.enabled) state else "$state, unavailable"
-                }
-                .graphicsLayer { alpha = if (tile.enabled) 1f else 0.38f }
+                .semantics(mergeDescendants = true, properties = semantics)
+                .graphicsLayer { alpha = if (dimmed) 0.38f else 1f }
                 .padding(12.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
-                tile.icon,
+                icon,
                 contentDescription = null,
                 modifier = Modifier.size(24.dp),
-                tint = if (on) androidx.compose.material3.LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant
+                tint = if (on) androidx.compose.material3.LocalContentColor.current else quiet
             )
             Text(
-                tile.name,
+                name,
                 style = MaterialTheme.typography.labelLarge,
                 textAlign = TextAlign.Center,
                 maxLines = 2,
@@ -652,11 +739,25 @@ private fun SwitchTileView(tile: SwitchTile, modifier: Modifier = Modifier, onEx
             Text(
                 state,
                 style = MaterialTheme.typography.labelSmall,
-                color = if (on) androidx.compose.material3.LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (on) androidx.compose.material3.LocalContentColor.current else quiet,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 2.dp).clearAndSetSemantics {}
             )
         }
     }
+}
+
+/** An action tile's long press (or the version's tap): the setting's full name and its full text. */
+@Composable
+private fun InfoDialog(tile: ActionTile, onDismiss: () -> Unit) {
+    ZoneAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(tile.title) },
+        text = { Text(tile.summary, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        confirmButton = { BoldButton(onClick = onDismiss) { Text("Done") } }
+    )
 }
 
 /** A tile's long press: the setting's full name and explanation, and its switch. */
@@ -689,29 +790,6 @@ private fun TileDialog(tile: SwitchTile, onDismiss: () -> Unit) {
             }
         },
         confirmButton = { BoldButton(onClick = onDismiss) { Text("Done") } }
-    )
-}
-
-@Composable
-private fun SettingRow(
-    title: String,
-    summary: String?,
-    onClick: (() -> Unit)?
-) {
-    val haptics = rememberHaptics()
-    ListItem(
-        headlineContent = { Text(title, color = MaterialTheme.colorScheme.onSurface) },
-        supportingContent = summary?.let { { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        // Every row answers with a tick.
-        modifier = if (onClick != null) {
-            Modifier.clickable {
-                haptics.tick()
-                onClick()
-            }
-        } else {
-            Modifier
-        }
     )
 }
 
