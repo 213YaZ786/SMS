@@ -9,12 +9,6 @@ plugins {
     alias(libs.plugins.roborazzi)
 }
 
-// whisper.cpp, the engine that writes voice messages out: see fetchWhisper below.
-val whisperVersion = "1.9.4"
-val whisperSha = "57e280cee375ab02425b806ad5146b99f6eb9357e3c2b31357c8a6af2e2e44ae"
-val whisperRoot = layout.buildDirectory.dir("whisper").get().asFile
-val whisperSrc = File(whisperRoot, "whisper.cpp-$whisperVersion")
-
 android {
     namespace = "com.yaz.sms"
     // 37 because Compose compiles against it, and the phone app follows the
@@ -27,19 +21,6 @@ android {
         targetSdk = 37
         versionCode = 51
         versionName = "0.15.11"
-        // Voice messages written out on the phone: whisper.cpp, for 64-bit ARM phones.
-        externalNativeBuild {
-            cmake {
-                abiFilters("arm64-v8a")
-                arguments("-DWHISPER_SRC=${whisperSrc.absolutePath}", "-DANDROID_STL=c++_shared")
-            }
-        }
-    }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-        }
     }
 
     signingConfigs {
@@ -155,6 +136,18 @@ dependencies {
     implementation(libs.glide.gifdecoder)
     // QR codes of the invite to chat without a number (Apache 2.0).
     implementation("com.google.zxing:core:3.5.4")
+    // Installs assets/dexopt/baseline.prof (from baseline-prof.txt) at the first launch after each update,
+    // so the app is compiled even when it does not come from Play (Google, Apache-2.0,
+    // https://github.com/androidx/androidx/tree/androidx-main/profileinstaller/profileinstaller).
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+
+    // Guava comes in transitively at 33.3.1-android (GHSA-xxph-c9ww-hj94): forced to the fixed release
+    // with a dependency constraint (https://docs.gradle.org/current/userguide/dependency_constraints.html).
+    constraints {
+        implementation("com.google.guava:guava:33.7.2-android") {
+            because("GHSA-xxph-c9ww-hj94")
+        }
+    }
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
@@ -164,34 +157,6 @@ dependencies {
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
-}
-
-// whisperVersion and its source's checksum are pinned at the top.
-// The engine that writes voice messages out: whisper.cpp (MIT,
-// github.com/ggml-org/whisper.cpp), its source fetched at the pinned
-// release and checked against its SHA-256, then compiled here; the speech
-// model itself is fetched by the app, only when the user asks for it.
-val fetchWhisper by tasks.registering {
-    val root = whisperRoot
-    val src = whisperSrc
-    val version = whisperVersion
-    val sha = whisperSha
-    inputs.property("version", version)
-    outputs.dir(src)
-    doLast {
-        if (File(src, "CMakeLists.txt").exists()) return@doLast
-        val bytes = URI("https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v$version.tar.gz").toURL().openStream().use { it.readBytes() }
-        val got = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-        check(got == sha) { "whisper.cpp: checksum does not match" }
-        root.mkdirs()
-        val archive = File(root, "whisper.tar.gz").apply { writeBytes(bytes) }
-        val tar = ProcessBuilder("tar", "xzf", archive.path, "-C", root.path).inheritIO().start()
-        check(tar.waitFor() == 0) { "whisper.cpp: could not unpack" }
-        archive.delete()
-    }
-}
-tasks.configureEach {
-    if (name.startsWith("configureCMake") || name.startsWith("buildCMake") || name.startsWith("generateJsonModel")) dependsOn(fetchWhisper)
 }
 
 // The engine of the rich chat: chatmail core's own Android build of

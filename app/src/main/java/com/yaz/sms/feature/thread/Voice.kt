@@ -230,8 +230,8 @@ private fun VoiceFrame(inBubble: Boolean, mine: Boolean, content: @Composable ()
 
 /**
  * The words of a voice message under it, heard on the phone the first
- * time it is shown; three lines, the rest on a tap. Before the speech
- * model is on the phone, a tap offers to fetch it, its size said first.
+ * time it is shown, by the Voice app; three lines, the rest on a tap.
+ * Without Voice on the phone, nothing shows.
  */
 @Composable
 private fun Transcript(part: MmsPart) {
@@ -239,14 +239,10 @@ private fun Transcript(part: MmsPart) {
     val store: com.yaz.sms.data.settings.SettingsStore = org.koin.compose.koinInject()
     val settings by store.settings.collectAsState()
     if (!transcriber.available || !settings.transcribeVoice) return
-    val haptics = rememberHaptics()
     val key = part.uri.toString()
     val texts by transcriber.texts.collectAsState()
     val states by transcriber.states.collectAsState()
-    val model by transcriber.model.state.collectAsState()
-    LaunchedEffect(key, model) { transcriber.transcribe(part.uri) }
-    var asking by remember { mutableStateOf(false) }
-    if (asking) SpeechModelDialog(transcriber.model, onDismiss = { asking = false })
+    LaunchedEffect(key) { transcriber.transcribe(part.uri) }
     val words = texts[key]
     val state = states[key]
     val faint = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.6f)
@@ -274,163 +270,7 @@ private fun Transcript(part: MmsPart) {
                 }
             }
         }
-        model is com.yaz.sms.core.voice.SpeechModel.State.Fetching -> {
-            val done = (model as com.yaz.sms.core.voice.SpeechModel.State.Fetching).done
-            Column(modifier) {
-                Text("Getting the speech model · ${(done * 100).toInt()}%", style = MaterialTheme.typography.bodySmall, color = faint)
-                androidx.compose.material3.LinearProgressIndicator(progress = { done }, modifier = Modifier.padding(top = 6.dp).fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)))
-            }
-        }
-        model == com.yaz.sms.core.voice.SpeechModel.State.Missing || model == com.yaz.sms.core.voice.SpeechModel.State.Failed -> {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = modifier.clip(RoundedCornerShape(12.dp)).clickable {
-                    haptics.tick()
-                    asking = true
-                }
-            ) {
-                Icon(AppIcons.TextFormat, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (model == com.yaz.sms.core.voice.SpeechModel.State.Failed) "Could not get the speech model · Try again" else "Write it out",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
         else -> Unit
-    }
-}
-
-/**
- * The speech model where it is set (Settings): the choices, then one
- * action for where it stands: get it (its size said), its progress with
- * Stop, or on the phone with Remove.
- */
-@Composable
-internal fun SpeechModelPanel(model: com.yaz.sms.core.voice.SpeechModel, modifier: Modifier = Modifier) {
-    val haptics = rememberHaptics()
-    val state by model.state.collectAsState()
-    val metered = remember { model.metered() }
-    Column(modifier, verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
-        ModelChoices(model)
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            when (val s = state) {
-                is com.yaz.sms.core.voice.SpeechModel.State.Fetching -> {
-                    Column(Modifier.weight(1f)) {
-                        Text("Getting it · ${(s.done * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
-                        androidx.compose.material3.LinearProgressIndicator(progress = { s.done }, modifier = Modifier.padding(top = 6.dp).fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)))
-                    }
-                    com.yaz.sms.ui.component.QuietButton(onClick = { haptics.tick(); model.cancel() }) { Text("Stop") }
-                }
-                com.yaz.sms.core.voice.SpeechModel.State.Ready -> {
-                    Text(if (model.usesSystem) "Ready, nothing to fetch" else "${model.pin.label} on the phone", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    if (!model.usesSystem) com.yaz.sms.ui.component.QuietButton(onClick = { haptics.reject(); model.remove() }) { Text("Remove") }
-                }
-                else -> {
-                    Text(
-                        if (state == com.yaz.sms.core.voice.SpeechModel.State.Failed) "Could not get it" else if (metered) "On mobile data" else "Not on the phone",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (state == com.yaz.sms.core.voice.SpeechModel.State.Failed || metered) MaterialTheme.colorScheme.error else androidx.compose.material3.LocalContentColor.current,
-                        modifier = Modifier.weight(1f)
-                    )
-                    com.yaz.sms.ui.component.BoldButton(onClick = { haptics.done(); model.fetch() }) { Text("Get it · ${model.pin.bytes / 1_000_000} MB") }
-                }
-            }
-        }
-    }
-}
-
-/** The speech model offered: the two sizes to choose from, fetched once. */
-@Composable
-internal fun SpeechModelDialog(model: com.yaz.sms.core.voice.SpeechModel, onDismiss: () -> Unit) {
-    val haptics = rememberHaptics()
-    val metered = remember { model.metered() }
-    val state by model.state.collectAsState()
-    com.yaz.sms.ui.component.ZoneAlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Speech model") },
-        text = {
-            Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
-                Text("On this phone only, any language.", style = MaterialTheme.typography.bodyMedium)
-                ModelChoices(model)
-                if (metered && state != com.yaz.sms.core.voice.SpeechModel.State.Ready) {
-                    Text("On mobile data.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                }
-            }
-        },
-        confirmButton = {
-            com.yaz.sms.ui.component.BoldButton(filled = true, onClick = {
-                haptics.done()
-                if (state != com.yaz.sms.core.voice.SpeechModel.State.Ready) model.fetch()
-                onDismiss()
-            }) { Text(if (state == com.yaz.sms.core.voice.SpeechModel.State.Ready) "Done" else "Get it") }
-        },
-        dismissButton = {
-            if (state == com.yaz.sms.core.voice.SpeechModel.State.Ready) com.yaz.sms.ui.component.QuietButton(onClick = {
-                haptics.reject()
-                model.remove()
-                onDismiss()
-            }) { Text("Remove") } else com.yaz.sms.ui.component.QuietButton(onClick = onDismiss) { Text("Not now") }
-        }
-    )
-}
-
-/**
- * The ways to write voice messages out: the phone's own recognizer when it
- * already has the phone's language (nothing to fetch), and the two speech
- * models side by side, name, size and what each is good at.
- */
-@Composable
-internal fun ModelChoices(model: com.yaz.sms.core.voice.SpeechModel) {
-    val haptics = rememberHaptics()
-    val state by model.state.collectAsState()
-    val system by model.system.collectAsState()
-    // Read again when the choice changes.
-    var chosen by remember(system) { mutableStateOf(if (model.usesSystem) com.yaz.sms.core.voice.SpeechModel.SYSTEM else model.pin.name) }
-    @Composable
-    fun Choice(key: String, title: String, size: String, line: String, modifier: Modifier, onPick: () -> Unit) {
-        val on = key == chosen
-        val lift by androidx.compose.animation.core.animateFloatAsState(if (on) 1f else 0.96f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 500f), label = "pick")
-        com.yaz.sms.ui.component.FloatingPane(
-            shape = RoundedCornerShape(20.dp),
-            accent = on,
-            onClick = {
-                if (state is com.yaz.sms.core.voice.SpeechModel.State.Fetching) return@FloatingPane
-                haptics.tick()
-                onPick()
-                chosen = key
-            },
-            modifier = modifier.graphicsLayer { scaleX = lift; scaleY = lift }
-        ) {
-            // The same three lines in each, so the tiles are the same size.
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp)
-            ) {
-                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                Text(size, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
-                Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            }
-        }
-    }
-    Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
-        if (system) {
-            val language = remember { java.util.Locale.getDefault().let { it.getDisplayLanguage(it).replaceFirstChar { c -> c.titlecase(it) } } }
-            Choice(com.yaz.sms.core.voice.SpeechModel.SYSTEM, "This phone's", "Nothing to fetch", "$language only", Modifier.fillMaxWidth()) { model.chooseSystem() }
-        }
-        // Side by side, of equal height; the one this phone runs best is chosen at first.
-        Row(
-            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth().height(androidx.compose.foundation.layout.IntrinsicSize.Max)
-        ) {
-            com.yaz.sms.core.voice.SpeechModel.PINS.forEach { pin ->
-                Choice(
-                    pin.name, pin.label, "${pin.bytes / 1_000_000} MB", pin.quality,
-                    Modifier.weight(1f).fillMaxHeight()
-                ) { model.choose(pin) }
-            }
-        }
     }
 }
 

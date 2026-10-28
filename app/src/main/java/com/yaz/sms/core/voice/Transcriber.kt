@@ -1,16 +1,25 @@
 package com.yaz.sms.core.voice
 
+import android.content.ComponentName
 import android.content.Context
-import android.media.MediaCodec
-import android.media.MediaExtractor
-import android.media.MediaFormat
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.AudioFormat
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.os.ParcelFileDescriptor
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import androidx.annotation.RequiresApi
 import com.yaz.sms.core.common.writeTextAtomically
+import com.yaz.sms.core.dial.Sisters
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,30 +27,28 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.nio.ByteOrder
 import java.util.Locale
 
 /**
- * Voice messages written out on the phone itself, with whisper.cpp and the
- * speech model the user fetched once: no Google, no server, any language.
+ * Voice messages written out by the Voice app, the phone's speech recognition: SMS keeps no engine and no model.
+ * The message is decoded to 16 kHz mono 16-bit PCM (AudioDecode), written into a pipe and handed to Voice's
+ * recognition service through SpeechRecognizer with RecognizerIntent.EXTRA_AUDIO_SOURCE (Android 13), the session
+ * lasting as long as the sound (EXTRA_SEGMENTED_SESSION = EXTRA_AUDIO_SOURCE), as AOSP's CTS drives a recognition
+ * service from a file (AbstractRecognitionServiceTest)
+ * https://android.googlesource.com/platform/cts/+/refs/heads/main/tests/tests/voiceRecognition/src/android/voicerecognition/cts/AbstractRecognitionServiceTest.java
+ * and as Voice's own debug client does (RecognizerTestActivity: the pipe, the intent, the listener).
  * The words are kept in the app's own files, so each message is heard once.
  */
-class Transcriber(private val context: Context, private val scope: CoroutineScope, settings: com.yaz.sms.data.settings.SettingsStore) {
+class Transcriber(private val context: Context, scope: CoroutineScope) {
 
     sealed interface State {
         data object Working : State
         data class Done(val text: String) : State
         data object Failed : State
     }
-
-    // The speech model keeps its choice in SMS's settings (the voice kit's SpeechChoice)
-    val model = SpeechModel(context, scope, object : SpeechChoice {
-        override var name: String
-            get() = settings.current.speechModel
-            set(value) = settings.update { it.copy(speechModel = value) }
-    })
 
     private val file = File(context.filesDir, "transcripts.json")
     private val json = Json { ignoreUnknownKeys = true }
@@ -51,30 +58,55 @@ class Transcriber(private val context: Context, private val scope: CoroutineScop
     private val _states = MutableStateFlow<Map<String, State>>(emptyMap())
     val states: StateFlow<Map<String, State>> = _states.asStateFlow()
 
-    // One message at a time; the model stays open while messages come, then lets its memory go.
+    // One message at a time: Voice listens to one caller at once.
     private val one = Mutex()
-    private var handle = 0L
-    private var closer: Job? = null
 
-    private val system = SystemSpeech(context)
+    init {
+        // The speech model SMS once fetched into its files (files/speech): Voice keeps the models now.
+        scope.launch(Dispatchers.IO) {
+            val old = File(context.filesDir, "speech")
+            if (old.exists()) runCatching { old.deleteRecursively() }
+        }
+    }
 
-    /** Whether this phone can write voice messages out: the engine in the app (64-bit ARM), or its own recognizer. */
-    val available: Boolean get() = (Whisper.loaded && Build.SUPPORTED_64_BIT_ABIS.contains("arm64-v8a")) || model.system.value
+    @Volatile private var seen = 0L
+    @Volatile private var seenAvailable = false
 
-    /** Hears [uri] once, when the model is there and it was not heard yet. */
+    /**
+     * Whether Voice, ours and signed with our key, is on the phone, on Android 13 or later (a sound handed in
+     * through EXTRA_AUDIO_SOURCE is read only from there; before, Voice would listen to the microphone). Read
+     * again every few seconds, not at each drawing.
+     */
+    val available: Boolean
+        get() {
+            val now = System.currentTimeMillis()
+            if (now - seen > 5_000) {
+                seenAvailable = Build.VERSION.SDK_INT >= 33 && voicePackage() != null
+                seen = now
+            }
+            return seenAvailable
+        }
+
+    /**
+     * The package of the Voice app, or null: it must be one of ours (the debug package in a debug build only,
+     * Sisters.packages) and signed as this app, compared as the phone kit's Sisters.isOurs does
+     * (PackageManager.checkSignatures,
+     * https://developer.android.com/reference/android/content/pm/PackageManager#checkSignatures(java.lang.String,%20java.lang.String)).
+     * Sisters.isOurs lists Dialer, SMS and Contacts only, so the comparison is made here.
+     */
+    private fun voicePackage(): String? = Sisters.packages("voice").firstOrNull { pkg ->
+        runCatching { context.packageManager.checkSignatures(context.packageName, pkg) == PackageManager.SIGNATURE_MATCH }
+            .getOrDefault(false)
+    }
+
+    /** Hears [uri] once, when Voice is there and it was not heard yet. */
     suspend fun transcribe(uri: Uri) {
-        if (!available || model.state.value != SpeechModel.State.Ready) return
+        if (!available) return
         val key = uri.toString()
         if (key in _texts.value || _states.value[key] == State.Working) return
         set(key, State.Working)
         val result = try {
-            one.withLock {
-                if (model.usesSystem) {
-                    val pcm = withContext(Dispatchers.Default) { runCatching { decode(uri) }.getOrNull() }
-                    val words = pcm?.let { if (it.isEmpty()) "" else system.hear(it) }
-                    words?.let { State.Done(sentence(it)) } ?: State.Failed
-                } else withContext(Dispatchers.Default) { hear(uri) }
-            }
+            one.withLock { if (Build.VERSION.SDK_INT >= 33) listen(uri) else State.Failed }
         } catch (gone: kotlinx.coroutines.CancellationException) {
             // Left before it was heard: heard the next time it is shown.
             _states.value = _states.value - key
@@ -101,123 +133,105 @@ class Transcriber(private val context: Context, private val scope: CoroutineScop
     private fun load(): Map<String, String> =
         runCatching { json.decodeFromString<Map<String, String>>(file.readText()) }.getOrDefault(emptyMap())
 
-    private fun hear(uri: Uri): State {
-        val pcm = runCatching { decode(uri) }.getOrNull() ?: return State.Failed
-        if (pcm.isEmpty()) return State.Done("")
-        closer?.cancel()
-        if (handle == 0L) handle = Whisper.open(context.applicationInfo.nativeLibraryDir, model.file.path)
-        if (handle == 0L) return State.Failed
-        // Half the cores, at least two: quick enough, and the phone stays smooth.
-        val threads = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 4)
-        val bytes = Whisper.transcribe(handle, pcm, threads)
-        closer = scope.launch {
-            delay(30_000)
-            one.withLock { if (handle != 0L) { Whisper.close(handle); handle = 0L } }
-        }
-        return bytes?.let { State.Done(sentence(String(it, Charsets.UTF_8))) } ?: State.Failed
-    }
-
-    /** The message's sound as 16 kHz mono samples between -1 and 1. */
-    private fun decode(uri: Uri): FloatArray {
-        val extractor = MediaExtractor()
-        val out = FloatCollector()
-        try {
-            extractor.setDataSource(context, uri, null)
-            val track = (0 until extractor.trackCount).firstOrNull { extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true }
-                ?: return FloatArray(0)
-            extractor.selectTrack(track)
-            val format = extractor.getTrackFormat(track)
-            val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
-            codec.configure(format, null, null, 0)
-            codec.start()
-            var rate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-            var channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-            val info = MediaCodec.BufferInfo()
-            var inputDone = false
-            val resampler = Resampler()
-            try {
-                while (true) {
-                    if (!inputDone) {
-                        val i = codec.dequeueInputBuffer(10_000)
-                        if (i >= 0) {
-                            val n = extractor.readSampleData(codec.getInputBuffer(i)!!, 0)
-                            if (n < 0) {
-                                codec.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                                inputDone = true
-                            } else {
-                                codec.queueInputBuffer(i, 0, n, extractor.sampleTime, 0)
-                                extractor.advance()
-                            }
-                        }
-                    }
-                    val o = codec.dequeueOutputBuffer(info, 10_000)
-                    when {
-                        o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                            rate = codec.outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                            channels = codec.outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                        }
-                        o >= 0 -> {
-                            val buffer = codec.getOutputBuffer(o)!!.order(ByteOrder.LITTLE_ENDIAN)
-                            buffer.position(info.offset)
-                            buffer.limit(info.offset + info.size)
-                            val shorts = ShortArray(info.size / 2).also { buffer.asShortBuffer().get(it) }
-                            codec.releaseOutputBuffer(o, false)
-                            resampler.push(shorts, channels, rate, out)
-                            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
-                            // Ten minutes at most: a voice message, not a recording of a day.
-                            if (out.size > RATE * 600) break
-                        }
-                    }
+    /**
+     * The words of [uri]: the sound decoded and written into a pipe off the main thread, Voice listening on the
+     * main thread (SpeechRecognizer must be created and called there,
+     * https://developer.android.com/reference/android/speech/SpeechRecognizer).
+     */
+    @RequiresApi(33)
+    private suspend fun listen(uri: Uri): State {
+        val pkg = voicePackage() ?: return State.Failed
+        val pipe = runCatching { ParcelFileDescriptor.createPipe() }.getOrNull() ?: return State.Failed
+        val (read, write) = pipe
+        return try {
+            coroutineScope {
+                // RecognizerTestActivity.pipe: the samples written into a pipe whose read end goes to the service.
+                val fed = async(Dispatchers.IO) {
+                    runCatching { ParcelFileDescriptor.AutoCloseOutputStream(write).use { AudioDecode.stream(context, uri, it) } }
                 }
-            } finally {
-                runCatching { codec.stop() }
-                codec.release()
+                val heard = withContext(Dispatchers.Main) { withTimeoutOrNull(TIMEOUT_MS) { recognize(pkg, read) } }
+                // The read end closed, a writer still blocked on the pipe ends on the broken pipe.
+                runCatching { read.close() }
+                val decoded = fed.await()
+                when {
+                    heard == null -> State.Failed
+                    decoded.isFailure && heard !is State.Failed -> State.Failed
+                    else -> heard
+                }
             }
         } finally {
-            extractor.release()
+            runCatching { read.close() }
+            runCatching { write.close() }
         }
-        return out.toArray()
     }
 
-    private class FloatCollector {
-        private var data = FloatArray(RATE * 30)
-        var size = 0
-            private set
-        fun add(v: Float) {
-            if (size == data.size) data = data.copyOf(data.size * 2)
-            data[size++] = v
-        }
-        fun toArray() = data.copyOf(size)
-    }
-
-    /** Mixes down to mono and brings any rate to 16 kHz, across buffers. */
-    private class Resampler {
-        private var position = 0.0
-        private var last = 0f
-        fun push(samples: ShortArray, channels: Int, rate: Int, out: FloatCollector) {
-            val ch = channels.coerceAtLeast(1)
-            val frames = samples.size / ch
-            if (frames == 0) return
-            val mono = FloatArray(frames) { f -> var sum = 0f; for (c in 0 until ch) sum += samples[f * ch + c]; sum / ch / 32768f }
-            val step = rate.toDouble() / RATE
-            // Position runs in input frames; -1 is the last frame of the buffer before.
-            while (position < frames - 1) {
-                val i = kotlin.math.floor(position).toInt()
-                val t = (position - i).toFloat()
-                val a = if (i < 0) last else mono[i]
-                val b = mono[i + 1]
-                out.add(a + (b - a) * t)
-                position += step
+    /** SpeechRecognizer on Voice's service, called on the main thread; the answer when the session ends. */
+    @RequiresApi(33)
+    private suspend fun recognize(pkg: String, audio: ParcelFileDescriptor): State {
+        val recognizer = runCatching {
+            SpeechRecognizer.createSpeechRecognizer(context, ComponentName(pkg, SERVICE))
+        }.getOrNull() ?: return State.Failed
+        val answer = CompletableDeferred<State>()
+        val words = StringBuilder()
+        // RecognizerTestActivity's listener, and AOSP's CTS callbacks for a segmented session
+        // (onSegmentResults, onEndOfSegmentedSession).
+        recognizer.setRecognitionListener(object : RecognitionListener {
+            private fun text(bundle: Bundle?) = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
+            override fun onReadyForSpeech(params: Bundle?) = Unit
+            override fun onBeginningOfSpeech() = Unit
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+            override fun onEndOfSpeech() = Unit
+            override fun onPartialResults(partialResults: Bundle?) = Unit
+            override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            override fun onSegmentResults(segmentResults: Bundle) {
+                val next = text(segmentResults)
+                if (next.isNotEmpty()) {
+                    if (words.isNotEmpty()) words.append(' ')
+                    words.append(next)
+                }
             }
-            position -= frames
-            last = mono[frames - 1]
+            override fun onEndOfSegmentedSession() {
+                answer.complete(State.Done(sentence(words.toString())))
+            }
+            override fun onResults(results: Bundle?) {
+                answer.complete(State.Done(sentence(text(results).ifEmpty { words.toString() })))
+            }
+            override fun onError(error: Int) {
+                // Nothing said in the message is no failure; any other error is tried again next time.
+                val silent = error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                answer.complete(if (silent) State.Done("") else State.Failed)
+            }
+        })
+        val asked = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, audio)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, AudioDecode.RATE)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+            // A session that lasts as long as the sound handed in
+            // https://developer.android.com/reference/android/speech/RecognizerIntent#EXTRA_SEGMENTED_SESSION
+            putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE)
+            // The language is found from the sound, not taken from the phone's
+            if (Build.VERSION.SDK_INT >= 34) putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true)
+        }
+        return try {
+            recognizer.startListening(asked)
+            answer.await()
+        } finally {
+            runCatching { recognizer.cancel() }
+            recognizer.destroy()
         }
     }
 
     private companion object {
-        const val RATE = 16_000
+        /** Voice's recognition service (its manifest), the same in its debug build. */
+        const val SERVICE = "com.yaz.voice.recognition.VoiceRecognitionService"
 
-        /** Whisper's words, without the space it starts with. */
+        /** A voice message of ten minutes at most (AudioDecode) is written out in well under this. */
+        const val TIMEOUT_MS = 20 * 60_000L
+
+        /** The words, the first letter capital. */
         fun sentence(text: String) = text.trim().replaceFirstChar { it.titlecase(Locale.getDefault()) }
     }
 }

@@ -191,14 +191,21 @@ fun Composer(
             }
         }
     }
-    val askPlace = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted.values.any { it }) placeHere() else haptics.reject()
-    }
+    // Refused for good, the dialog says so and opens Android's settings page (ui/component/PermissionHelp.kt).
+    val askPlace = com.yaz.sms.ui.component.rememberPermissionAsk(
+        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+        title = "Location is off",
+        message = "To share a place, allow location for SMS in the app's settings.",
+        onRefused = { haptics.reject() }
+    ) { placeHere() }
     // The live location's durations; the location permission is asked first, as for a place (HereNow).
     var choosingLive by remember { mutableStateOf(false) }
-    val askLive = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted.values.any { it }) choosingLive = true else haptics.reject()
-    }
+    val askLive = com.yaz.sms.ui.component.rememberPermissionAsk(
+        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+        title = "Location is off",
+        message = "To share your live location, allow location for SMS in the app's settings.",
+        onRefused = { haptics.reject() }
+    ) { choosingLive = true }
     var arcOpen by remember { mutableStateOf(false) }
     // A voice message being recorded, and how far the finger has slid to cancel or to lock.
     var take by remember { mutableStateOf<VoiceTake?>(null) }
@@ -209,7 +216,27 @@ fun Composer(
     val pickDrop = remember { mutableStateOf<((Drop) -> Unit)?>(null) }
     var slide by remember { mutableStateOf(0f) }
     var rise by remember { mutableStateOf(0f) }
-    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val askMic = com.yaz.sms.ui.component.rememberPermissionAsk(
+        arrayOf(Manifest.permission.RECORD_AUDIO),
+        title = "Microphone is off",
+        message = "To record a voice message, allow the microphone for SMS in the app's settings.",
+        onRefused = { haptics.reject() }
+    ) { }
+    // A photo needs the camera allowed when the app declares it, or the phone's camera app is refused
+    // https://developer.android.com/media/camera/camera-intents
+    fun takePhoto() {
+        val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
+        val out = java.io.File(dir, "${System.currentTimeMillis()}.jpg")
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".mms", out)
+        shot = uri
+        camera.launch(uri)
+    }
+    val askCamera = com.yaz.sms.ui.component.rememberPermissionAsk(
+        arrayOf(Manifest.permission.CAMERA),
+        title = "Camera is off",
+        message = "To take a photo, allow the camera for SMS in the app's settings.",
+        onRefused = { haptics.reject() }
+    ) { takePhoto() }
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { take?.finish(keep = false) } }
     val veil by animateFloatAsState(if (arcOpen) 0.35f else 1f, label = "veil")
     val length = remember(text, attachments) { if (text.isBlank() || attachments.isNotEmpty()) null else SmsMessage.calculateLength(text, false) }
@@ -349,20 +376,16 @@ fun Composer(
                         // An effect is chosen, then sits in the bar: the message goes only on Send.
                         Drop.EFFECTS -> choosingEffect = true
                         Drop.PHOTOS -> pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
-                        Drop.CAMERA -> {
-                            val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
-                            val out = java.io.File(dir, "${System.currentTimeMillis()}.jpg")
-                            val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".mms", out)
-                            shot = uri
-                            camera.launch(uri)
-                        }
+                        Drop.CAMERA ->
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) takePhoto()
+                            else askCamera()
                         Drop.FILE -> file.launch(arrayOf("*/*"))
                         Drop.CONTACT -> person.launch(null)
                         Drop.POLL -> onPoll?.invoke()
                         Drop.PLACE -> if (com.yaz.sms.core.sms.HereNow.allowed(context)) placeHere()
-                            else askPlace.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+                            else askPlace()
                         Drop.LIVE -> if (com.yaz.sms.core.sms.HereNow.allowed(context)) choosingLive = true
-                            else askLive.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+                            else askLive()
                     }
                 }
             }
@@ -540,7 +563,7 @@ fun Composer(
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                        askMic.launch(Manifest.permission.RECORD_AUDIO)
+                        askMic()
                         return@awaitEachGesture
                     }
                     val t = VoiceTake.start(context) ?: return@awaitEachGesture

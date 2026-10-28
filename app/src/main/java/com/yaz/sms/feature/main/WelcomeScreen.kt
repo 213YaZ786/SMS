@@ -67,9 +67,9 @@ fun WelcomeScreen(onStart: () -> Unit) {
     // the zone keeps its button for whoever dismissed it.
     var asked by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (!asked && setup.step == SetupStep.ROLE) {
+        if (!asked && setup.step == SetupStep.ROLE && !setup.roleBlocked) {
             asked = true
-            setup.run(SetupStep.ROLE)
+            setup.askRole()
         }
     }
 
@@ -104,8 +104,9 @@ fun WelcomeScreen(onStart: () -> Unit) {
             title = step?.title ?: "SMS is your messaging app",
             message = step?.message ?: "Your messages and the links to write to someone open in SMS.",
             done = step == null,
-            action = step?.action,
-            onAction = { step?.let(setup.run) }
+            action = step?.let(setup::action),
+            onAction = { step?.let(setup.run) },
+            warning = step?.let(setup::warning)
         )
         // Nothing to bring over: Android keeps the messages for every messaging app.
         Spacer(Modifier.height(16.dp))
@@ -153,32 +154,6 @@ fun WelcomeScreen(onStart: () -> Unit) {
                 onToggle = { on -> store.update { it.copy(shareCard = on) } }
             )
         }
-        // Voice messages written out: the model for this phone already chosen, fetched on a tap.
-        val transcriber: com.yaz.sms.core.voice.Transcriber = org.koin.compose.koinInject()
-        if (transcriber.available) {
-            val model by transcriber.model.state.collectAsState()
-            Spacer(Modifier.height(16.dp))
-            WelcomeZone(
-                icon = AppIcons.TextFormat,
-                title = "Voice messages written out",
-                message = when (val m = model) {
-                    is com.yaz.sms.core.voice.SpeechModel.State.Fetching -> "Getting the speech model · ${(m.done * 100).toInt()}%"
-                    com.yaz.sms.core.voice.SpeechModel.State.Ready -> "On this phone only, any language."
-                    else -> "On this phone only, any language. The speech model is fetched once."
-                },
-                done = !settings.transcribeVoice || model == com.yaz.sms.core.voice.SpeechModel.State.Ready || model is com.yaz.sms.core.voice.SpeechModel.State.Fetching,
-                action = "Get it",
-                onAction = { transcriber.model.fetch() },
-                toggle = settings.transcribeVoice,
-                onToggle = { on ->
-                    store.update { it.copy(transcribeVoice = on) }
-                    if (!on && model is com.yaz.sms.core.voice.SpeechModel.State.Fetching) transcriber.model.cancel()
-                },
-                extra = if (settings.transcribeVoice && model !is com.yaz.sms.core.voice.SpeechModel.State.Fetching) ({
-                    com.yaz.sms.feature.thread.ModelChoices(transcriber.model)
-                }) else null
-            )
-        }
         Spacer(Modifier.height(16.dp))
         WelcomeZone(
             icon = AppIcons.Update,
@@ -190,7 +165,20 @@ fun WelcomeScreen(onStart: () -> Unit) {
         )
 
         Spacer(Modifier.height(32.dp))
-        BoldButton(filled = true, onClick = onStart) { Text("Start") }
+        // Without the SMS role the app cannot work: Start waits for it, as AOSP Messaging's PermissionCheckActivity
+        // keeps its Next until the permissions are granted
+        // https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/ui/PermissionCheckActivity.java
+        val needsRole = step == SetupStep.ROLE
+        if (needsRole) {
+            Text(
+                "Make SMS your messaging app to start.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+        BoldButton(filled = true, enabled = !needsRole, onClick = onStart) { Text("Start") }
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
     }
@@ -208,9 +196,30 @@ private fun WelcomeZone(
     extra: (@Composable () -> Unit)? = null,
     /** On by default, turned off here: a switch by the title. */
     toggle: Boolean? = null,
-    onToggle: (Boolean) -> Unit = {}
+    onToggle: (Boolean) -> Unit = {},
+    /** A line that stays while a step is refused, in the error colour. */
+    warning: String? = null
 ) {
     val haptics = com.yaz.sms.ui.component.rememberHaptics()
+    // A zone means a tap (the user, 2026-10-28): with nothing to tap, no action and no switch, it is plain text on
+    // the page, icon, title and message.
+    if ((done || action == null) && toggle == null && extra == null && warning == null) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(horizontal = 22.dp, vertical = 8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (done) AppIcons.CheckCircle else icon,
+                    contentDescription = if (done) "Done" else null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 12.dp).weight(1f))
+            }
+            Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        return
+    }
     ZoneSurface(shape = RoundedCornerShape(24.dp), modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth()) {
         Column(
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -232,6 +241,7 @@ private fun WelcomeZone(
             }
             Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             extra?.invoke()
+            warning?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
             if (!done && action != null) {
                 Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End) {
                     BoldButton(onClick = onAction) { Text(action) }

@@ -18,7 +18,6 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.unit.Dp
@@ -30,12 +29,12 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 /**
- * SMS's loading mark, the launcher icon in motion: the bubble breathes,
- * rings of its colour leave it, and its three dots hop one after the
- * other, as someone typing. The bubble is the icon's: a grey body
- * multiplied by the theme's accent, its light over it, the dots on top.
+ * SMS's loading mark, the launcher icon in motion: the bubble breathes
+ * and its three dots hop one after the other, as someone typing. The
+ * bubble is the icon's: a grey body multiplied by the theme's accent,
+ * its light over it, the dots on top.
  *
- * [progress] from 0 to 1 sends the rings out as far as a gesture has gone.
+ * [progress] from 0 to 1 moves the dots as far as a gesture has gone.
  * While [running] it moves on its own.
  */
 @Composable
@@ -67,12 +66,6 @@ fun LoadingMark(
 
     Canvas(modifier.size(size)) {
         val side = this.size.minDimension * BUBBLE
-        // Two rings leaving the bubble, half a loop apart.
-        for (k in 0 until 2) {
-            val p = (t + k / 2f) % 1f
-            val fade = (1f - p) * (1f - p)
-            drawCircle(accent.copy(alpha = 0.35f * fade), side * 0.42f * (1f + 0.55f * p), style = Stroke(width = side * (0.025f - 0.015f * p)))
-        }
         val breath = if (running) 1f + 0.03f * sin(2f * PI.toFloat() * t) else 1f
         scale(breath) {
             layer(body, side, 0f, tint)
@@ -98,6 +91,6 @@ private fun DrawScope.layer(image: ImageBitmap, side: Float, dy: Float, filter: 
     )
 }
 
-/** The bubble's share of the mark, leaving room for the rings around it. */
+/** The bubble's share of the mark. */
 private const val BUBBLE = 0.667f
 private const val LOOP_MILLIS = 1800

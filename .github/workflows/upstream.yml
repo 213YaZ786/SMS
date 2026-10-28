@@ -1,7 +1,7 @@
 # Once a week: is there a newer version of what the app pins by hand
-# (chatmail core, whisper.cpp, the speech model)? If so, an issue says
-# which, with what is needed to pin it. Nothing changes by itself: a new
-# engine or model is tested before it reaches anyone. Libraries from
+# (chatmail core)? If so, an issue says which, with what is needed to pin
+# it. Nothing changes by itself: a new engine is tested before it reaches
+# anyone. Libraries from
 # Gradle are Dependabot's; lists the app fetches (dangerous sites, relays)
 # refresh in the app itself.
 name: Pinned engines
@@ -47,26 +47,4 @@ jobs:
             done
             issue "chatmail core $latest is out (the app uses $pinned)" \
               "Release notes: https://github.com/chatmail/core/releases/tag/v$latest"$'\n\n'"SHA-256 of the Android builds:"$'\n'"$sums"$'\n'"To try it: set chatmailVersion and these sums in app/build.gradle.kts, then test the encrypted chat before releasing."
-          fi
-
-          # whisper.cpp: the engine that writes voice messages out, built from source.
-          pinned=$(grep -oP 'val whisperVersion = "\K[0-9.]+' app/build.gradle.kts)
-          latest=$(gh release view -R ggml-org/whisper.cpp --json tagName -q .tagName | sed 's/^v//')
-          echo "whisper.cpp pinned $pinned, latest $latest"
-          if newer "$pinned" "$latest"; then
-            curl -fsSL -o whisper.tar.gz "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v$latest.tar.gz"
-            issue "whisper.cpp $latest is out (the app uses $pinned)" \
-              "Release notes: https://github.com/ggml-org/whisper.cpp/releases/tag/v$latest"$'\n\n'"SHA-256 of the source: \`$(sha256sum whisper.tar.gz | cut -d' ' -f1)\`"$'\n\n'"To try it: set whisperVersion and whisperSha in app/build.gradle.kts, then test voice message transcription before releasing."
-          fi
-
-          # The speech model: a new revision of the models whisper.cpp publishes.
-          pinned=$(grep -oP 'const val REVISION = "\K[0-9a-f]+' app/src/main/java/com/sms/app/core/voice/SpeechModel.kt)
-          latest=$(curl -fsSL https://huggingface.co/api/models/ggerganov/whisper.cpp | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
-          echo "speech model pinned $pinned, latest $latest"
-          if [ "$pinned" != "$latest" ]; then
-            sums=$(curl -fsSL "https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/$latest" | python3 -c 'import json,sys
-          for f in json.load(sys.stdin):
-              if f["path"] in ("ggml-small-q5_1.bin", "ggml-base-q5_1.bin"): print("- " + f["path"] + ": " + str(f["size"]) + " bytes, `" + f["lfs"]["oid"] + "`")')
-            issue "The speech models changed (revision ${latest:0:7})" \
-              "New revision: https://huggingface.co/ggerganov/whisper.cpp/tree/$latest"$'\n\n'"$sums"$'\n\n'"To try it: set REVISION and the pins in core/voice/SpeechModel.kt; phones fetch the new model after the update, when asked, and the old one goes."
           fi

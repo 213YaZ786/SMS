@@ -25,6 +25,10 @@ val appModule = module {
     single { OpenRequests() }
     single { RichChat(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.IO), get()) }
     single { com.yaz.sms.core.chat.LiveLocator(androidContext(), get(), CoroutineScope(SupervisorJob() + Dispatchers.IO)) }
-    single { com.yaz.sms.core.voice.Transcriber(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.IO), get()) }
+    // At the start of the app: it also clears the speech model SMS fetched before Voice took over
+    single(createdAtStart = true) { com.yaz.sms.core.voice.Transcriber(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.IO)) }
+    // Messages in their undo delay: an application scope, so leaving a conversation never cancels one
+    // (Now in Android's @ApplicationScope, core/common/.../network/di/CoroutineScopesModule.kt).
+    single { com.yaz.sms.core.sms.PendingSends(androidContext(), CoroutineScope(SupervisorJob() + Dispatchers.Default), get()) }
     viewModelOf(::SettingsViewModel)
 }

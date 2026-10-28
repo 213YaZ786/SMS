@@ -74,6 +74,9 @@
         <!-- Our Keyboard app, to know it is the current keyboard (its signature compared). -->
         <package android:name="com.yaz.keyboard" />
         <package android:name="com.yaz.keyboard.debug" />
+        <!-- Our Voice app, which writes voice messages out (its signature compared). -->
+        <package android:name="com.yaz.voice" />
+        <package android:name="com.yaz.voice.debug" />
         <intent>
             <action android:name="com.dialer.app.action.SHOW_NUMBER" />
             <data android:scheme="tel" />

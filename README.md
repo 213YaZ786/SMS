@@ -37,8 +37,8 @@ A messaging app for Android. No account, no tracking, no ads.
 - Short answers offered for the last message.
 - Senders you don't know kept apart, sorted as Transactions and
   Promotions; codes still notify.
-- Voice messages written out under them, on the phone itself, in any
-  language, once the speech model is fetched (asked first, 60 to 190 MB).
+- Voice messages written out under them by the Voice app, on the phone
+  (Android 13 or newer, Voice installed).
 - Light and dark themes in your wallpaper's colours.
 
 ## Install
@@ -52,9 +52,7 @@ Android 12 or newer.
 Your messages stay on your phone. The connections: a check for a new
 version on GitHub; the encrypted chat through chatmail relays (the
 fastest one, with one backup), which carry only end-to-end encrypted
-messages; the public list of dangerous sites (URLhaus), once a day; the
-speech model (Hugging Face), once, only when you ask. Each can be turned
-off in Settings.
+messages; the public list of dangerous sites (URLhaus), once a day. Each can be turned off in Settings.
 
 ## Licence
 
@@ -71,9 +69,7 @@ reactions sent as an iPhone writes them follow QUIK's (GPL-3.0) and Kotozute's (
 chat runs chatmail core (github.com/chatmail/core), Mozilla Public
 License 2.0, downloaded unchanged at build time. Calls use WebRTC's
 Android library by webrtc-sdk, MIT License. Doodles background: Material Symbols by Google, Apache 2.0. Big emoji and screen effects move with Google's Noto Animated Emoji, CC BY 4.0,
-played by Lottie (Airbnb), Apache License 2.0. Voice messages are
-written out by whisper.cpp (ggml-org), MIT License, built from its
-source, with OpenAI's Whisper model, MIT License, fetched on request. Links are checked before they open, after
+played by Lottie (Airbnb), Apache License 2.0. Links are checked before they open, after
 [URLCheck](https://github.com/TrianguloY/URLCheck) (CC BY 4.0); the tracking rules are
 [ClearURLs](https://github.com/ClearURLs/Rules) (LGPL-3.0), the site names come from the
 [Public Suffix List](https://publicsuffix.org) (MPL-2.0).

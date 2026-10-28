@@ -188,18 +188,14 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     checked = settings.checkLinks,
                     onChange = viewModel::setCheckLinks
                 )
-                // Where the phone can run the speech model (64-bit ARM).
+                // Shown only where the Voice app is on the phone (a button whose target app is missing hides).
                 val transcriber: com.yaz.sms.core.voice.Transcriber = org.koin.compose.koinInject()
                 if (transcriber.available) {
                     SwitchRow(
                         title = "Transcribe voice messages",
-                        summary = "Their words written under them, on the phone itself, never sent anywhere.",
+                        summary = "By the Voice app, on the phone.",
                         checked = settings.transcribeVoice,
                         onChange = viewModel::setTranscribeVoice
-                    )
-                    if (settings.transcribeVoice) com.yaz.sms.feature.thread.SpeechModelPanel(
-                        transcriber.model,
-                        Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                     )
                 }
                 SwitchRow(
@@ -283,11 +279,6 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     title = "Animated emoji",
                     summary = "Noto Animated Emoji by Google, CC BY 4.0",
                     onClick = { uriHandler.openUri("https://googlefonts.github.io/noto-emoji-animation/") }
-                )
-                SettingRow(
-                    title = "Speech engine",
-                    summary = "whisper.cpp and OpenAI's Whisper model, MIT License",
-                    onClick = { uriHandler.openUri("https://github.com/ggml-org/whisper.cpp") }
                 )
                 SettingRow(
                     title = "Source code",
