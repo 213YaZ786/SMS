@@ -888,7 +888,9 @@ private fun ConversationLine(
                 Text(label, style = MaterialTheme.typography.labelLarge, color = tint)
             }
         }
-        val shape = RoundedCornerShape(28.dp)
+        // The list card of every app: Material 3's extraLarge corner (ShapeTokens.CornerExtraLarge, 28 dp,
+        // https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/tokens/ShapeTokens.kt).
+        val shape = MaterialTheme.shapes.extraLarge
         ZoneSurface(
             shape = shape,
             modifier = Modifier.fillMaxSize().graphicsLayer {
@@ -918,7 +920,7 @@ private fun ConversationLine(
             // pin sit on the face's bottom corners.
             // The face stands at the name's height (Signal: the avatar's top on the name's top), the whole row
             // centred in a grid cell made taller by a neighbour's thumbnail.
-            Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
             Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = 6.dp, end = 14.dp, top = 10.dp, bottom = 10.dp)) {
                 Box(Modifier.padding(start = 6.dp)) {
                     // Taken in the multi select: the check stands where the face was.
@@ -961,8 +963,11 @@ private fun ConversationLine(
                             modifier = Modifier.alignByBaseline()
                         )
                     }
-                    // The last message straight in the card, the unread count at the end of its line (Signal's
-                    // unread indicator: wrap_content, minWidth 18 dp), at the bottom when a thumbnail makes it tall.
+                    // The last message straight in the card; its end stops before the unread count, which sits in
+                    // the card's bottom end corner (below), as Signal's conversation_list_item_view.xml: the unread
+                    // indicator constrained to the parent's end, the summary ending at its start and anchored to the
+                    // bottom (https://github.com/signalapp/Signal-Android/blob/main/app/src/main/res/layout/conversation_list_item_view.xml).
+                    // An invisible copy of the badge keeps its room.
                     Row(verticalAlignment = Alignment.Bottom) {
                         LastMessageBubble(
                             c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia,
@@ -971,30 +976,13 @@ private fun ConversationLine(
                         )
                         if (unread) {
                             Spacer(Modifier.width(8.dp))
-                            // Signal's unread indicator (conversation_list_item_view.xml): wrap_content,
-                            // minWidth 18 dp, a round of the accent behind white text, so it grows with the
-                            // font and "9+" is never clipped. TalkBack reads it as "3 unread".
-                            val count = c.unread
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
-                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
-                                    .padding(horizontal = 5.dp, vertical = 1.dp)
-                                    .clearAndSetSemantics { contentDescription = "$count unread" }
-                            ) {
-                                Text(
-                                    unreadLabel(count),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
+                            UnreadBadge(c.unread, reserve = true)
                         }
                     }
                 }
             }
+            // Always in the card's bottom end corner, whatever the height of the last message.
+            if (unread) UnreadBadge(c.unread, modifier = Modifier.align(Alignment.BottomEnd).padding(end = 14.dp, bottom = 10.dp))
             }
         }
     }
@@ -1030,6 +1018,31 @@ internal fun conversationTitle(name: String?, formatted: String): String =
  * text from the count (setUnreadIndicator, https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/conversationlist/ConversationListItem.java);
  * the cap at nine is this app's badge as before (HomeParts' pinned faces).
  */
+/**
+ * Signal's unread indicator (conversation_list_item_view.xml): wrap_content, minWidth 18 dp, a round of the
+ * accent behind white text, so it grows with the font and "9+" is never clipped. TalkBack reads it as "3 unread".
+ * [reserve] draws nothing and only keeps its room.
+ */
+@Composable
+private fun UnreadBadge(count: Int, modifier: Modifier = Modifier, reserve: Boolean = false) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
+            .then(if (reserve) Modifier else Modifier.background(MaterialTheme.colorScheme.primary, CircleShape))
+            .padding(horizontal = 5.dp, vertical = 1.dp)
+            .clearAndSetSemantics { if (!reserve) contentDescription = "$count unread" }
+    ) {
+        Text(
+            unreadLabel(count),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (reserve) androidx.compose.ui.graphics.Color.Transparent else MaterialTheme.colorScheme.onPrimary,
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+}
+
 internal fun unreadLabel(count: Int): String = if (count > 9) "9+" else count.toString()
 
 /**

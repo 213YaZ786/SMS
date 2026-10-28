@@ -561,6 +561,7 @@ private fun ThreadContent(
     var at by remember { mutableStateOf(0) }
     var sharedOpen by remember { mutableStateOf(false) }
     var silenceOpen by remember { mutableStateOf(false) }
+    var choosingVanish by remember { mutableStateOf(false) }
     var encryptionOpen by remember { mutableStateOf(false) }
     // Asked from the Contacts app's "verified" mark: the keys at once.
     val requests: com.yaz.sms.core.sms.OpenRequests = koinInject()
@@ -662,6 +663,7 @@ private fun ThreadContent(
         store.update { s -> s.copy(silenced = if (until == null) s.silenced - t else s.silenced.filterValues { it > System.currentTimeMillis() } + (t to until)) }
         if (until != null) com.yaz.sms.core.sms.MessageNotifier(context).cancel(t)
     }) { silenceOpen = false }
+    if (choosingVanish && encrypted) VanishDialog(vanish, onPick = { seconds -> scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds } }) { choosingVanish = false }
     if (encryptionOpen) EncryptionDialog(to) { encryptionOpen = false }
     // The group's picture as the chat has it, read when its page is open and after any change of the chat.
     val groupPicture by androidx.compose.runtime.produceState<String?>(null, personOpen, group, encrypted, chatChanges, groupsNow) {
@@ -675,14 +677,10 @@ private fun ThreadContent(
         contactId = entry?.contactId,
         group = group,
         encrypted = encrypted,
-        vanish = if (encrypted) vanish else null,
         messages = list,
         stranger = { m -> index.find(T9.clean(m.address)) == null },
         holdMedia = { m -> !prefs.showStrangerMedia && m.box == MessageBox.RECEIVED && index.find(T9.clean(m.address)) == null },
         calls = calls,
-        silencedUntil = silencedUntil,
-        onSearch = { searching = true },
-        onSilence = { silenceOpen = true },
         onBackground = if (thread != null && appLook != null) ({ backgroundOpen = true }) else null,
         onEncryption = { encryptionOpen = true },
         onName = { name ->
@@ -691,7 +689,6 @@ private fun ThreadContent(
                 if (encrypted && name.isNotBlank()) scope.launch { chat.nameGroup(people, name.trim()) }
             }
         },
-        onVanish = { seconds -> scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds } },
         groupTools = if (group) GroupTools(
             members = members.map { p ->
                 val e = index.find(T9.clean(p))
@@ -768,7 +765,15 @@ private fun ThreadContent(
                     )
                 }
                 Spacer(Modifier.width(8.dp))
-                CallButtons(calls, onAddContact = if (!group && entry == null && to.count(Char::isDigit) >= 3) ({ NumberActions.addContact(context, to) }) else null)
+                CallButtons(
+                    calls,
+                    onAddContact = if (!group && entry == null && to.count(Char::isDigit) >= 3) ({ NumberActions.addContact(context, to) }) else null,
+                    onSearch = { searching = true },
+                    silenced = silencedUntil != null,
+                    onSilence = if (thread != null) ({ silenceOpen = true }) else null,
+                    vanish = if (encrypted) vanish else null,
+                    onVanish = { choosingVanish = true }
+                )
             }
 
             androidx.compose.animation.AnimatedVisibility(visible = searching) {

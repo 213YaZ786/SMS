@@ -81,10 +81,10 @@ class PersonPageScreenshotTest {
     fun contact() = capture("person_contact") {
         PersonPage(
             name = "Marie-Christine Delacroix-Beaumont", number = "0612345678", address = "+33612345678",
-            photo = null, contactId = 12, group = false, encrypted = false, vanish = null,
+            photo = null, contactId = 12, group = false, encrypted = false,
             messages = talk, stranger = { false },
-            calls = CallChoices(phone = {}, encrypted = null, video = null), silencedUntil = null,
-            onSearch = {}, onSilence = {}, onBackground = {}, onEncryption = {}, onName = {}, onVanish = {}, onClose = {}
+            calls = CallChoices(phone = {}, encrypted = null, video = null),
+            onBackground = {}, onEncryption = {}, onName = {}, onClose = {}
         )
     }
 
@@ -104,10 +104,10 @@ class PersonPageScreenshotTest {
     fun groupChat() = capture("person_group_chat") {
         PersonPage(
             name = "Marie-Christine, Ahmed, Joëlle", number = null, address = "+33612345678",
-            photo = null, contactId = null, group = true, encrypted = true, vanish = 0,
+            photo = null, contactId = null, group = true, encrypted = true,
             messages = talk, stranger = { false },
-            calls = CallChoices(phone = null, encrypted = null, video = null), silencedUntil = null,
-            onSearch = {}, onSilence = {}, onBackground = {}, onEncryption = {}, onName = {}, onVanish = {},
+            calls = CallChoices(phone = null, encrypted = null, video = null),
+            onBackground = {}, onEncryption = {}, onName = {},
             groupTools = group(chat = true), onClose = {}
         )
     }
@@ -116,10 +116,10 @@ class PersonPageScreenshotTest {
     fun groupSms() = capture("person_group_sms") {
         PersonPage(
             name = "Marie-Christine, Ahmed, Joëlle", number = null, address = "+33612345678",
-            photo = null, contactId = null, group = true, encrypted = false, vanish = null,
+            photo = null, contactId = null, group = true, encrypted = false,
             messages = talk, stranger = { false },
-            calls = CallChoices(phone = null, encrypted = null, video = null), silencedUntil = null,
-            onSearch = {}, onSilence = {}, onBackground = {}, onEncryption = {}, onName = {}, onVanish = {},
+            calls = CallChoices(phone = null, encrypted = null, video = null),
+            onBackground = {}, onEncryption = {}, onName = {},
             groupTools = group(chat = false), onClose = {}
         )
     }
@@ -128,10 +128,10 @@ class PersonPageScreenshotTest {
     fun stranger() = capture("person_stranger") {
         PersonPage(
             name = "+33 7 99 88 77 66", number = null, address = "+33799887766",
-            photo = null, contactId = null, group = false, encrypted = false, vanish = null,
+            photo = null, contactId = null, group = false, encrypted = false,
             messages = talk, stranger = { true },
-            calls = CallChoices(phone = {}, encrypted = null, video = null), silencedUntil = null,
-            onSearch = {}, onSilence = {}, onBackground = null, onEncryption = {}, onName = {}, onVanish = {}, onClose = {}
+            calls = CallChoices(phone = {}, encrypted = null, video = null),
+            onBackground = null, onEncryption = {}, onName = {}, onClose = {}
         )
     }
 }

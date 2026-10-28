@@ -84,19 +84,14 @@ fun PersonPage(
     contactId: Long?,
     group: Boolean,
     encrypted: Boolean,
-    vanish: Int?,
     messages: List<Message>,
     stranger: (Message) -> Boolean,
     /** Its media wait for a tap (a stranger's, when Settings asks so); asked when shown. */
     holdMedia: (Message) -> Boolean = { false },
     calls: CallChoices,
-    silencedUntil: Long?,
-    onSearch: () -> Unit,
-    onSilence: () -> Unit,
     onBackground: (() -> Unit)?,
     onEncryption: () -> Unit,
     onName: (String) -> Unit,
-    onVanish: (Int) -> Unit,
     /** A group's picture, members, leaving and mentions (Delta Chat Android's group profile); null for one person. */
     groupTools: GroupTools? = null,
     onClose: () -> Unit
@@ -145,14 +140,12 @@ fun PersonPage(
     if (showAll) SharedPage(name, messages, stranger, holdMedia, start = seeAll) { showAll = false }
     var confirmBlock by remember { mutableStateOf(false) }
     var choosingSignature by remember { mutableStateOf(false) }
-    var choosingVanish by remember { mutableStateOf(false) }
     var naming by remember { mutableStateOf(false) }
     if (choosingSignature) SignatureDialog(address) { choosingSignature = false }
     if (naming) GroupNameDialog(if (group && name.contains(',')) "" else name, onDone = { n ->
         naming = false
         onName(n)
     }) { naming = false }
-    if (choosingVanish && vanish != null) VanishDialog(vanish, onPick = onVanish) { choosingVanish = false }
     if (confirmBlock) ZoneAlertDialog(
         onDismissRequest = { confirmBlock = false },
         title = { Text("Block $name?") },
@@ -207,7 +200,7 @@ fun PersonPage(
                         // Lines as even as can be: 6 = 3 + 3, 5 = 3 + 2.
                         // Someone not saved yet: adding them comes first, at hand.
                         val unsaved = !group && address.count(Char::isDigit) >= 3 && contactId == null
-                        val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onBackground).size + 2 + (if (unsaved) 1 else 0)
+                        val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onBackground).size + (if (unsaved) 1 else 0)
                         // Cards in two columns, as the rest of the page and as wide as it (560 dp, the members and
                         // the media below); the calls in their colour.
                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
@@ -221,11 +214,6 @@ fun PersonPage(
                             calls.phone?.let { Tile(AppIcons.Call, "Call", CallGreen, it) }
                             calls.encrypted?.let { Tile(AppIcons.Lock, "Encrypted call", MaterialTheme.colorScheme.primary, it) }
                             calls.video?.let { Tile(AppIcons.Videocam, "Video call", MaterialTheme.colorScheme.primary, it) }
-                            Tile(AppIcons.Search, "Search", null) {
-                                onClose()
-                                onSearch()
-                            }
-                            Tile(if (silencedUntil != null) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silencedUntil != null) "Silenced" else "Silence", null, onSilence)
                             onBackground?.let { Tile(AppIcons.Palette, "Background", null, it) }
                         }
                         }
@@ -263,7 +251,6 @@ fun PersonPage(
                                 }
                                 Row(AppIcons.ExitToApp, "Leave group", danger = true, hint = hint) { groupUi.needsChat(groupTools) { groupUi.leaving = true } }
                             }
-                            if (vanish != null) Row(AppIcons.Timer, if (vanish > 0) "Messages vanish after ${vanishLabel(vanish)}" else "Vanishing messages") { choosingVanish = true }
                             // Report spam beside Block, as Google Messages' conversation details
                             // (https://support.google.com/messages/answer/9061432), SpamBlocker's labelling.
                             if (canSpam) {

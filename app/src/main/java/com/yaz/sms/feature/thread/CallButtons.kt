@@ -87,24 +87,34 @@ fun GlassCallButton(icon: ImageVector, label: String, color: Color, onTap: () ->
 }
 
 /**
- * The conversation's ways to reach the person, folded at the top right
- * under one button of four squares: unfolded downwards, the phone call
- * (Dialer's dialpad, its Call a second tap against a slip), with the
- * encrypted chat the encrypted call and the video call, and Add contact
- * for a number not yet saved. The rest stays on the person's page.
+ * The conversation's menu at the top right, in the order of Signal's
+ * ConversationOptionsMenu.kt (https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/conversation/ConversationOptionsMenu.kt):
+ * the calls and Add contact, then Search, Silence and Vanishing messages.
  */
 @Composable
-fun CallButtons(choices: CallChoices, onAddContact: (() -> Unit)? = null) {
+fun CallButtons(
+    choices: CallChoices,
+    onAddContact: (() -> Unit)? = null,
+    onSearch: () -> Unit,
+    silenced: Boolean = false,
+    onSilence: (() -> Unit)? = null,
+    vanish: Int? = null,
+    onVanish: () -> Unit = {}
+) {
+    val quiet = MaterialTheme.colorScheme.secondaryContainer
+    val onQuiet = MaterialTheme.colorScheme.onSecondaryContainer
     val actions = buildList {
         choices.phone?.let { add(Reach(AppIcons.Call, "Call", CallGreen, Color.White, it)) }
         choices.encrypted?.let { add(Reach(AppIcons.CallLocked, "Encrypted call", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, it)) }
         choices.video?.let { add(Reach(AppIcons.Videocam, "Video call", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, it)) }
-        onAddContact?.let { add(Reach(AppIcons.PersonAdd, "Add contact", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer, it)) }
+        onAddContact?.let { add(Reach(AppIcons.PersonAdd, "Add contact", quiet, onQuiet, it)) }
+        add(Reach(AppIcons.Search, "Search", quiet, onQuiet, onSearch))
+        onSilence?.let { add(Reach(if (silenced) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silenced) "Silenced" else "Silence", quiet, onQuiet, it)) }
+        if (vanish != null) add(Reach(AppIcons.Timer, if (vanish > 0) "Vanish after ${vanishLabel(vanish)}" else "Vanishing messages", quiet, onQuiet, onVanish))
     }
-    if (actions.isEmpty()) return
     var open by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     Box {
-        com.yaz.sms.ui.component.FloatingAction(if (open) AppIcons.Close else AppIcons.GridView, if (open) "Close" else "Calls and contact", { open = !open })
+        com.yaz.sms.ui.component.FloatingAction(if (open) AppIcons.Close else AppIcons.GridView, if (open) "Close" else "More", { open = !open })
         if (open) {
             val margin = with(androidx.compose.ui.platform.LocalDensity.current) { 10.dp.roundToPx() }
             androidx.compose.ui.window.Popup(
