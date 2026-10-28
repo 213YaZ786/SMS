@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -43,6 +44,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.BoldIconButton
+import com.yaz.sms.ui.component.QuietButton
+import com.yaz.sms.ui.component.ZoneAlertDialog
 import com.yaz.sms.ui.component.ZoneSurface
 import com.yaz.sms.ui.component.rememberHaptics
 import kotlinx.coroutines.delay
@@ -273,6 +278,84 @@ fun PaletteMenu(bounds: Rect, actions: List<MessageAction>, onDismiss: () -> Uni
             )
         }
     }
+}
+
+/** The most copies "Send again" makes at once, so that the carrier does not take them for spam. */
+const val SEND_AGAIN_MAX = 10
+
+/**
+ * The seconds between two copies of "Send again": the idea of a pause between two messages of a run, so the carrier
+ * does not take them for spam, from https://github.com/CodingInfinite/BulkSMSSender and
+ * https://github.com/AhsenSaeed/AndroidBulkSmsSender (no licence file: idea only, no code taken).
+ */
+const val SEND_AGAIN_GAP = 2
+
+/**
+ * Material Icons "remove" (Apache-2.0, https://github.com/google/material-design-icons, src/content/remove/materialicons/24px.svg),
+ * the minus of the count; the plus is AppIcons.Add. Built as AppIcons.build does.
+ */
+private val Minus: ImageVector by lazy {
+    ImageVector.Builder("Remove", 24.dp, 24.dp, 24f, 24f).apply {
+        addPath(
+            pathData = androidx.compose.ui.graphics.vector.PathParser().parsePathString("M19 13H5v-2h14v2z").toNodes(),
+            fill = androidx.compose.ui.graphics.SolidColor(Color.Black)
+        )
+    }.build()
+}
+
+/**
+ * "Send again": the words of the user's message (first lines), a count from 1 to [SEND_AGAIN_MAX] chosen with a
+ * round glass button each side of the number, Send and Cancel. The user's own idea ("le dupliquer X fois, X
+ * ajustable"): no messaging app has it, so it is built on this app's own parts: ZoneAlertDialog (the app's dialog),
+ * BoldIconButton, BoldButton and QuietButton (the app's glass buttons, Material 3 shapes), and the queueing
+ * itself is ThreadScreen's sendAgain over core/sms/PendingSends. The count steps on Material 3's stepper idea
+ * (a number between a minus and a plus); haptics are the app's own (tick on a step, done on Send, reject at a bound).
+ */
+@Composable
+fun SendAgainDialog(words: String, attachments: Int, onSend: (Int) -> Unit, onDismiss: () -> Unit) {
+    val haptics = rememberHaptics()
+    var count by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(1) }
+    ZoneAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Send again") },
+        text = {
+            Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                val shown = words.ifBlank { if (attachments == 1) "1 attachment" else "$attachments attachments" }
+                Text(
+                    shown,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 3,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 20.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    BoldIconButton(onClick = {
+                        if (count > 1) {
+                            count--
+                            haptics.tick()
+                        } else haptics.reject()
+                    }, enabled = count > 1) { Icon(Minus, contentDescription = "Fewer copies") }
+                    Text("$count", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurface)
+                    BoldIconButton(onClick = {
+                        if (count < SEND_AGAIN_MAX) {
+                            count++
+                            haptics.tick()
+                        } else haptics.reject()
+                    }, enabled = count < SEND_AGAIN_MAX) { Icon(com.yaz.sms.ui.icon.AppIcons.Add, contentDescription = "More copies") }
+                }
+            }
+        },
+        confirmButton = {
+            BoldButton(filled = true, onClick = {
+                haptics.done()
+                onSend(count)
+            }) { Text("Send") }
+        },
+        dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 /** Grows from small with a spring, the second part a beat after the first. */

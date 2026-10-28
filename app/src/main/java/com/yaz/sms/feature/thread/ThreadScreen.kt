@@ -16,6 +16,7 @@ import android.content.ClipData
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -247,9 +248,31 @@ private fun ThreadContent(
         list = messages.thread(t, window)
         read = true
     }
+    // The messages unread when the conversation opened, kept before they are marked read below: the divider
+    // "N unread messages" stays until the conversation is left. The read flag is AOSP Messaging's
+    // ConversationMessageData.getIsRead (MessageColumns.READ,
+    // https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/datamodel/data/ConversationMessageData.java);
+    // Signal Android takes the unread state once, when the conversation loads, before it marks anything read
+    // (ConversationFragment: conversationItemDecorations.setUnreadState(unreadCount, firstUnreadId),
+    // https://github.com/signalapp/Signal-Android app/src/main/java/org/thoughtcrime/securesms/conversation/v2/ConversationFragment.kt).
+    var unreadUids by remember(thread) { mutableStateOf<Set<String>>(emptySet()) }
+    var unreadChecked by remember(thread) { mutableStateOf(false) }
+    // True once the list may show: nothing unread, or opened at the divider (else a jump would show).
+    var unreadSettled by remember(thread) { mutableStateOf(false) }
+    LaunchedEffect(thread) {
+        delay(1500)
+        unreadSettled = true
+    }
     LaunchedEffect(thread, list, shown) {
         val t = thread ?: return@LaunchedEffect
         if (!shown || list.isEmpty()) return@LaunchedEffect
+        if (!unreadChecked) {
+            // Read again, not from what the list holds: a conversation reopened from memory may be out of date.
+            val fresh = messages.thread(t, Messages.PAGE)
+            unreadUids = fresh.filter { it.box == MessageBox.RECEIVED && !it.read }.map { it.uid }.toSet()
+            unreadChecked = true
+            if (unreadUids.isEmpty()) unreadSettled = true
+        }
         if (list.any { it.box == MessageBox.RECEIVED && !it.read }) messages.markRead(t)
         // In its bubble the notification holds the bubble: it is only quieted.
         if (bubble) MessageNotifier(context).settle(t) else MessageNotifier(context).cancel(t)
@@ -407,6 +430,30 @@ private fun ThreadContent(
         )
         if (seconds <= 0) sends.sendNow(p) else sends.queue(p)
     }
+    /**
+     * "Send again x N": the user's own message goes [count] more times, each its own message through the same
+     * path as the composer, PendingSends (undo delay, the encrypted chat when the person has it, SMS or MMS
+     * otherwise), with the original's attachments (the parts of its picture message). Own idea of the user, no app
+     * has it. The copies are spaced by [SEND_AGAIN_GAP] seconds (the pause between two messages of a run, idea only
+     * from https://github.com/CodingInfinite/BulkSMSSender and https://github.com/AhsenSaeed/AndroidBulkSmsSender,
+     * no licence file: no code taken), and each waits as its own item in PendingSends, so the Cancel of a waiting
+     * bubble drops the copies not yet sent (idea of cancelling a run while it goes, same two repositories).
+     */
+    fun sendAgain(m: Message, words: String, count: Int) {
+        val files = m.parts.map { com.yaz.sms.core.mms.Attachment(it.uri, it.contentType) }
+        val undo = store.current.undoSeconds
+        val now = android.os.SystemClock.elapsedRealtime()
+        val base = System.nanoTime()
+        repeat(count.coerceIn(1, SEND_AGAIN_MAX)) { i ->
+            val seconds = undo + SEND_AGAIN_GAP * i
+            val p = com.yaz.sms.core.sms.PendingSends.Waiting(
+                key = base + i, text = words, sub = m.subId, attachments = files, quoted = null, effect = null,
+                people = people, thread = thread, wire = mentionsWire(words), seconds = seconds,
+                dueAt = now + seconds * 1000L
+            )
+            if (seconds <= 0) sends.sendNow(p) else sends.queue(p)
+        }
+    }
     scheduling?.let { (text, sub) ->
         com.yaz.sms.feature.conversations.TimeChoice("Send later", onPick = { at ->
             com.yaz.sms.core.sms.Timed.schedule(context, com.yaz.sms.core.sms.Scheduled(System.currentTimeMillis(), people, text, at, sub))
@@ -429,6 +476,74 @@ private fun ThreadContent(
         thread?.let { opened.put(it, from to rows) }
     }
     val clusters = remember(rows, group) { clustersOf(rows, group) }
+    // The divider: the oldest of the messages unread at opening that the rows show (a reaction folded under its
+    // message has no row), and how many of them there are.
+    val unreadMark = remember(rows, unreadUids) {
+        if (unreadUids.isEmpty()) null
+        else rows.filterIsInstance<Row.Bubble>().filter { it.message.uid in unreadUids }.let { found ->
+            found.firstOrNull()?.let { it.message.uid to found.size }
+        }
+    }
+    // Opened with the divider near the top (Signal Android's UnreadDividerInstrumentationTest: "opens scrolled to
+    // oldest unread" rather than at the bottom, https://github.com/signalapp/Signal-Android
+    // app/src/androidTest/java/org/thoughtcrime/securesms/conversation/v2/UnreadDividerInstrumentationTest.kt).
+    // The list is in reverse: the message's row is brought to the bottom edge, then the list is moved back
+    // toward the newest by the room left, which stops at the newest message when all the unread ones fit.
+    LaunchedEffect(unreadMark, read, rowsOfList === list, composerTop, listBottom, unreadChecked) {
+        if (unreadSettled || !unreadChecked || unreadUids.isEmpty()) return@LaunchedEffect
+        if (!read || rowsOfList !== list || composerTop.isNaN() || listBottom.isNaN()) return@LaunchedEffect
+        val first = unreadMark?.first
+        val row = if (first == null) -1 else rows.indexOfFirst { it.key == "m/$first" }
+        if (row < 0) {
+            unreadSettled = true
+            return@LaunchedEffect
+        }
+        val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
+        val key = "m/$first"
+        runCatching {
+            listState.scrollToItem(before + rows.size - 1 - row)
+            var item = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }
+            var tries = 0
+            while (item == null && tries++ < 3) {
+                androidx.compose.runtime.withFrameNanos { }
+                item = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }
+            }
+            val info = listState.layoutInfo
+            if (item != null) {
+                val room = info.viewportSize.height - info.beforeContentPadding - info.afterContentPadding - item.size
+                if (room > 0) listState.scrollBy(-room.toFloat())
+            }
+        }
+        unreadSettled = true
+    }
+    // The day of the topmost message on screen floats under the header while the list moves, and goes
+    // 1.5 s after it stops; never at rest at the newest message.
+    val listMoving = listState.isScrollInProgress
+    val awayFromNewest by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 } }
+    val dayOnTop by remember(rows, scheduled, waiting, people) {
+        derivedStateOf {
+            val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
+            val zone = ZoneId.systemDefault()
+            var label = ""
+            for (item in listState.layoutInfo.visibleItemsInfo.asReversed()) {
+                val row = rows.getOrNull(rows.size - 1 - (item.index - before)) ?: continue
+                label = when (row) {
+                    is Row.Day -> row.label
+                    is Row.Bubble -> dayLabel(Instant.ofEpochMilli(row.message.date).atZone(zone).toLocalDate())
+                }
+                break
+            }
+            label
+        }
+    }
+    var dayShown by remember { mutableStateOf(false) }
+    LaunchedEffect(listMoving) {
+        if (listMoving && unreadSettled) dayShown = true
+        else {
+            delay(1500)
+            dayShown = false
+        }
+    }
     // A message added at the bottom while reading there comes into sight, not under the field.
     LaunchedEffect(rows.lastOrNull()?.key, waiting.size) {
         if (listState.firstVisibleItemIndex <= 2) listState.animateScrollToItem(0)
@@ -751,6 +866,8 @@ private fun ThreadContent(
         LaunchedEffect(nearTop, rowsOfList, list.size) {
             if (nearTop && rowsOfList === list && rows.isNotEmpty() && list.size >= window && listState.layoutInfo.totalItemsCount > 15) window += Messages.PAGE
         }
+        // Hidden while the list moves to the divider, so no jump is seen: only a conversation that shows unread messages.
+        val unreadPending = thread != null && !unreadSettled && list.any { it.box == MessageBox.RECEIVED && !it.read }
         LazyColumn(
             state = listState,
             reverseLayout = true,
@@ -760,7 +877,7 @@ private fun ThreadContent(
                 .onGloballyPositioned { listBottom = it.boundsInWindow().bottom }
                 // Shown once the composer is measured: its first frame never lays the messages
                 // out against a guessed gap, then moves them.
-                .graphicsLayer { alpha = if (composerTop.isNaN() || listBottom.isNaN()) 0f else 1f },
+                .graphicsLayer { alpha = if (composerTop.isNaN() || listBottom.isNaN() || unreadPending) 0f else 1f },
             contentPadding = PaddingValues(
                 start = 12.dp, end = 12.dp, top = padding.calculateTopPadding() + 8.dp,
                 bottom = if (composerTop.isNaN() || listBottom.isNaN()) padding.calculateBottomPadding() + 16.dp
@@ -829,6 +946,8 @@ private fun ThreadContent(
                           Modifier.fillMaxWidth(),
                           horizontalAlignment = if (mineRow) Alignment.End else Alignment.Start
                       ) {
+                      // Where reading stopped, above the oldest message that was unread when the conversation opened.
+                      if (unreadMark != null && unreadMark.first == row.message.uid) UnreadDivider(unreadMark.second)
                       // What a reaction by text is about: the message's words, or "image" / "video" for a message of only
                       // that (the iPhone names it, quoting nothing). Said in Google's way or the iPhone's (Settings, and
                       // Automatic: the way of the last reaction received here); a group takes it as it takes any text.
@@ -898,7 +1017,8 @@ private fun ThreadContent(
                             starStore.toggle(row.message.uid, row.message.threadId)
                         },
                         sentEffect = sentEffects[com.yaz.sms.core.sms.Effects.plain(row.message.body)]?.takeIf { (_, at) -> row.message.box != MessageBox.RECEIVED && row.message.date >= at - 10_000 }?.first,
-                        onReplay = { e, words -> playing = Triple(e, words, null) }
+                        onReplay = { e, words -> playing = Triple(e, words, null) },
+                        onSendAgain = if (!left && people.isNotEmpty()) ({ count -> sendAgain(row.message, reactWords, count) }) else null
                     )
                       }
                     }
@@ -906,6 +1026,62 @@ private fun ThreadContent(
                 }
             }
         }
+        // The day floating under the header (and under the search bar) while the list moves.
+        Box(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding() + 8.dp), contentAlignment = Alignment.TopCenter) {
+            FloatingDay(dayOnTop, dayShown && awayFromNewest)
+        }
+    }
+}
+
+/**
+ * "N unread messages" above the oldest message that was unread when the conversation opened: a line, the
+ * words, a line. Signal Android draws it as an item decoration over the first unread message
+ * (https://github.com/signalapp/Signal-Android app/src/main/java/org/thoughtcrime/securesms/conversation/v2/ConversationItemDecorations.kt,
+ * UnreadViewHolder / isFirstUnread / setUnreadState); here it sits at the top of that message's own row.
+ */
+@Composable
+private fun UnreadDivider(count: Int) {
+    val accent = MaterialTheme.colorScheme.primary
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp)
+    ) {
+        Box(Modifier.weight(1f).height(1.dp).background(accent.copy(alpha = 0.4f)))
+        Text(
+            if (count == 1) "1 unread message" else "$count unread messages",
+            style = MaterialTheme.typography.labelMedium,
+            color = accent,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
+        Box(Modifier.weight(1f).height(1.dp).background(accent.copy(alpha = 0.4f)))
+    }
+}
+
+/**
+ * The day of the messages on screen, floating under the header while the list moves. Signal Android's
+ * ScrollDateHeaderHelper and ScrollListener in
+ * https://github.com/signalapp/Signal-Android app/src/main/java/org/thoughtcrime/securesms/conversation/v2/ConversationFragment.kt
+ * (the text bound to the topmost visible message at each scroll, shown while the scroll state is not idle, hidden
+ * a moment after it is idle again: SCROLL_HEADER_CLOSE_DELAY, here 1.5 s; the same text as the in-flow date headers
+ * of ConversationItemDecorations). The in-flow days of this app are plain text, so this is plain text on a soft
+ * background; it takes no touch.
+ */
+@Composable
+private fun FloatingDay(label: String, visible: Boolean, modifier: Modifier = Modifier) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible && label.isNotEmpty(),
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 },
+        modifier = modifier
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f), CircleShape)
+                .padding(horizontal = 14.dp, vertical = 6.dp)
+        )
     }
 }
 
@@ -1166,7 +1342,9 @@ private fun Bubble(
     onStar: () -> Unit = {},
     sentEffect: com.yaz.sms.core.sms.Effects.Effect? = null,
     onReplay: (com.yaz.sms.core.sms.Effects.Effect, String) -> Unit = { _, _ -> },
-    onPollShown: () -> Unit = {}
+    onPollShown: () -> Unit = {},
+    /** "Send again" with a count: null where the conversation cannot send (a group the user left). */
+    onSendAgain: ((Int) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -1204,6 +1382,7 @@ private fun Bubble(
     val ringTrack = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
     var confirmDeleteAll by remember { mutableStateOf(false) }
     var selecting by remember { mutableStateOf(false) }
+    var sendingAgain by remember { mutableStateOf(false) }
     // A reaction chosen in the bar or picked: sent the way this conversation sends one (the chat, or SMS in Google's or
     // Apple's words), a reaction the user already gave taken back. That toggle is Element X's reaction click,
     // TimelineItemReactionsView's onReactionClick and MessagesReactionButton (highlighted = the user's own), in
@@ -1220,6 +1399,15 @@ private fun Bubble(
         }
     }
     if (selecting) SelectTextDialog(said) { selecting = false }
+    if (sendingAgain && onSendAgain != null) SendAgainDialog(
+        words = said,
+        attachments = m.parts.size,
+        onSend = { count ->
+            sendingAgain = false
+            onSendAgain(count)
+        },
+        onDismiss = { sendingAgain = false }
+    )
     if (confirmDeleteAll && chatId != null) {
         ZoneAlertDialog(
             onDismissRequest = { confirmDeleteAll = false },
@@ -1520,6 +1708,9 @@ private fun Bubble(
                     if (said.isNotBlank()) MessageAction(AppIcons.Copy, "Copy") { copy(context, "Message", said) } else null,
                     if (said.length > 12) MessageAction(AppIcons.SelectAll, "Select") { selecting = true } else null,
                     if (said.isNotBlank()) MessageAction(AppIcons.Forward, "Forward") { forward(context, said) } else null,
+                    // Send again x N: the user's own sent messages only (not a poll, which would make a second poll).
+                    if (onSendAgain != null && mine && m.box == MessageBox.SENT && poll == null && (said.isNotBlank() || m.parts.isNotEmpty()))
+                        MessageAction(AppIcons.Send, "Send again") { sendingAgain = true } else null,
                     // A message's media saved or handed on, as AOSP Messaging offers (save_attachment, share_message_menu).
                     if (m.parts.isNotEmpty()) MessageAction(AppIcons.Download, "Save") {
                         Thread {
