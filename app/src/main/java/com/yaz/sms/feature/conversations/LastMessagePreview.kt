@@ -6,11 +6,13 @@ import android.provider.Telephony
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -76,7 +78,7 @@ import kotlinx.coroutines.withContext
  */
 
 /** The height of a thumbnail in the bubble. */
-private val THUMB_HEIGHT = 56.dp
+private val THUMB_HEIGHT = 96.dp
 
 /** What the newest message is, when it is more than words. Pure: read from what the list already holds. */
 internal sealed interface Lead {
@@ -149,37 +151,60 @@ internal fun LeadView(lead: Lead, who: String, hold: Boolean, ink: Color, weight
         is Lead.Reaction -> Unit
         is Lead.Visual -> if (hold) {
             val film = ContentType.isVideoType(lead.part.contentType)
-            LeadLine(if (film) AppIcons.Play else AppIcons.Image, mediaWord(lead.part.contentType), "${if (film) "Video" else "Photo"} from $who", ink, weight, modifier)
+            LeadLine(if (film) AppIcons.Play else AppIcons.Image, mediaWord(lead.part.contentType), null, "${if (film) "Video" else "Photo"} from $who", ink, weight, modifier)
         } else VisualLead(lead.part, who, ink, weight, modifier)
-        is Lead.Sound -> if (hold) LeadLine(AppIcons.Mic, "Voice message", "Voice message from $who", ink, weight, modifier)
+        is Lead.Sound -> if (hold) LeadLine(AppIcons.Mic, "Voice message", null, "Voice message from $who", ink, weight, modifier)
         else SoundLead(lead.part, who, ink, weight, modifier)
-        is Lead.Card -> if (hold) LeadLine(AppIcons.Person, "Contact card", "Contact card from $who", ink, weight, modifier)
+        is Lead.Card -> if (hold) LeadLine(AppIcons.Person, "Contact card", null, "Contact card from $who", ink, weight, modifier)
         else CardLead(lead.part, who, ink, weight, modifier)
-        is Lead.Spot -> if (hold) LeadLine(AppIcons.Place, "Location", "Location from $who", ink, weight, modifier)
+        is Lead.Spot -> if (hold) LeadLine(AppIcons.Place, "Location", null, "Location from $who", ink, weight, modifier)
         else SpotLead(lead.part, who, ink, weight, modifier)
         is Lead.FileOf -> {
             val name = lead.part.name?.filter { !it.isISOControl() }?.trim()?.take(80)?.takeIf { it.isNotEmpty() } ?: mediaWord(lead.part.contentType)
-            LeadLine(AppIcons.AttachFile, name, "File $name from $who", ink, weight, modifier)
+            LeadLine(AppIcons.AttachFile, name, fileKind(lead.part), "File $name from $who", ink, weight, modifier)
         }
         is Lead.SpotLink -> {
-            val name = lead.place.label?.filter { !it.isISOControl() }?.trim()?.take(60)?.takeIf { it.isNotEmpty() } ?: "Location"
-            LeadLine(AppIcons.Place, name, "Location $name from $who", ink, weight, modifier)
+            val name = lead.place.label?.filter { !it.isISOControl() }?.trim()?.take(60)?.takeIf { it.isNotEmpty() }
+            LeadLine(AppIcons.Place, name ?: "Location", if (name != null) "Location" else null, "Location ${name ?: ""} from $who".replace("  ", " "), ink, weight, modifier)
         }
-        is Lead.Site -> LeadLine(AppIcons.Link, lead.host, "Link to ${lead.host} from $who", ink, weight, modifier)
+        is Lead.Site -> LeadLine(AppIcons.Link, lead.host, "Link", "Link to ${lead.host} from $who", ink, weight, modifier)
     }
 }
 
 /**
- * A glyph and one line of words, Signal's emphasisAdded with a Glyph (ConversationListItem.java, the glyph
- * before the words in the snippet), as WhatsApp's chat list shows what is not words. The icon's size and gap follow feature/thread/Media.kt's AttachmentRow (Element X's
- * TimelineItemAttachmentHeaderView, 8 dp between), smaller for a list line.
+ * "File · PDF": the kind of a file from its extension, else from the subtype of its declared type, known without
+ * reading it. Just "File" when neither says anything (octet-stream).
+ */
+private fun fileKind(part: MmsPart): String {
+    val ext = part.name?.substringAfterLast('.', "")?.takeIf { it.length in 1..5 && it.all { c -> c.isLetterOrDigit() } }
+    val sub = part.contentType.substringAfter('/', "").substringBefore(';').removePrefix("x-").takeIf { it.length in 1..8 && it.all { c -> c.isLetterOrDigit() } && it != "octet" }
+    val kind = (ext ?: sub)?.uppercase()
+    return if (kind == null) "File" else "File · $kind"
+}
+
+/** The tinted round box behind a row's icon. */
+private val LEAD_BOX = 40.dp
+
+/**
+ * An object row of the card's bubble: the icon in a round tinted box at the start, the name / place / duration
+ * on up to two lines (bodyLarge), then a line for its kind in the secondary colour when known. The box, the
+ * title and the secondary line follow Element X's attachment row (TimelineItemFileView / AttachmentRow: icon in
+ * a round box, name, detail) and Signal's list item (ConversationListItem.java: a glyph before the words), widened
+ * to the room the bubble now has (Signal's conversation_list_item_view.xml: the summary takes the width left
+ * beside the avatar).
  */
 @Composable
-private fun LeadLine(icon: ImageVector, label: String, spoken: String, ink: Color, weight: FontWeight, modifier: Modifier = Modifier) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.clearAndSetSemantics { contentDescription = spoken }) {
-        Icon(icon, contentDescription = null, tint = ink.takeOrElse { LocalContentColor.current }, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = ink, fontWeight = weight, maxLines = 1, overflow = TextOverflow.Ellipsis)
+private fun LeadLine(icon: ImageVector, label: String, kind: String?, spoken: String, ink: Color, weight: FontWeight, modifier: Modifier = Modifier) {
+    val base = ink.takeOrElse { LocalContentColor.current }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = spoken }) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(LEAD_BOX).background(base.copy(alpha = 0.14f), CircleShape)) {
+            Icon(icon, contentDescription = null, tint = base, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f, fill = false)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = ink, fontWeight = weight, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (kind != null) Text(kind, style = MaterialTheme.typography.bodyMedium, color = base.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -195,12 +220,12 @@ private fun LeadLine(icon: ImageVector, label: String, spoken: String, ink: Colo
 @Composable
 private fun VisualLead(part: MmsPart, who: String, ink: Color, weight: FontWeight, modifier: Modifier) {
     val kind by rememberKind(part.uri)
-    val side = with(LocalDensity.current) { 120.dp.roundToPx() }
+    val side = with(LocalDensity.current) { 240.dp.roundToPx() }
     val declaredFilm = ContentType.isVideoType(part.contentType)
     // The words that stay when no thumbnail is there: Signal's createFinalBodyWithMediaIcon returns the body with
     // its media word when the bitmap is null (ConversationListItem.java); the word is this app's mediaWord.
     @Composable
-    fun word() = LeadLine(if (declaredFilm) AppIcons.Play else AppIcons.Image, mediaWord(part.contentType), "${if (declaredFilm) "Video" else "Photo"} from $who", ink, weight, modifier)
+    fun word() = LeadLine(if (declaredFilm) AppIcons.Play else AppIcons.Image, mediaWord(part.contentType), null, "${if (declaredFilm) "Video" else "Photo"} from $who", ink, weight, modifier)
     when {
         kind == null -> word()
         isPicture(part, kind) -> {
@@ -218,14 +243,15 @@ private fun VisualLead(part: MmsPart, who: String, ink: Color, weight: FontWeigh
         }
         else -> {
             val name = part.name?.filter { !it.isISOControl() }?.trim()?.take(80)?.takeIf { it.isNotEmpty() } ?: "File"
-            LeadLine(AppIcons.AttachFile, name, "File $name from $who", ink, weight, modifier)
+            LeadLine(AppIcons.AttachFile, name, fileKind(part), "File $name from $who", ink, weight, modifier)
         }
     }
 }
 
 /**
- * The thumbnail: [THUMB_HEIGHT] high, its ratio kept (within 3:4 and 3:1, the way Element X's
- * TimelineItemAspectRatioBox keeps a ratio within reach, feature/thread/Gallery.kt MediaAspectBox), rounded,
+ * The thumbnail: [THUMB_HEIGHT] high at most (the height of the face column), its ratio kept (within 3:4 and
+ * 3:1, the way Element X's TimelineItemAspectRatioBox keeps a ratio within reach, feature/thread/Gallery.kt
+ * MediaAspectBox) and never wider than the bubble (aspectRatio falls back to the width it is given), rounded,
  * with the faint dark wash Signal puts over the snippet's thumbnail (ConversationListItem.java,
  * OverlayTransformation of transparent_black_08, rounded drawable); a film carries a small play mark and its
  * length on a pill (feature/thread/Gallery.kt FilmFace, Element X's VideoOverlay), smaller for a list.
@@ -237,29 +263,29 @@ private fun Thumb(frame: androidx.compose.ui.graphics.ImageBitmap, film: Boolean
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .height(THUMB_HEIGHT)
+            .heightIn(max = THUMB_HEIGHT)
             .aspectRatio(ratio, matchHeightConstraintsFirst = true)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
             .clearAndSetSemantics { contentDescription = spoken }
     ) {
         Image(frame, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.08f)))
         if (film) {
-            Box(Modifier.size(22.dp).background(scrim, CircleShape), contentAlignment = Alignment.Center) {
-                Icon(AppIcons.Play, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+            Box(Modifier.size(36.dp).background(scrim, CircleShape), contentAlignment = Alignment.Center) {
+                Icon(AppIcons.Play, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
             }
             length?.let {
                 Text(
                     formatShort(it),
                     color = Color.White,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(3.dp)
-                        .background(scrim, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                        .padding(5.dp)
+                        .background(scrim, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 )
             }
         }
@@ -283,10 +309,11 @@ private fun SoundLead(part: MmsPart, who: String, ink: Color, weight: FontWeight
     }
     if (kind != null && !sound) {
         val name = part.name?.filter { !it.isISOControl() }?.trim()?.take(80)?.takeIf { it.isNotEmpty() } ?: "File"
-        LeadLine(AppIcons.AttachFile, name, "File $name from $who", ink, weight, modifier)
+        LeadLine(AppIcons.AttachFile, name, fileKind(part), "File $name from $who", ink, weight, modifier)
     } else {
-        val label = if (length > 0) formatShort(length.toLong()) else "Voice message"
-        LeadLine(AppIcons.Mic, label, "Voice message from $who" + if (length > 0) ", ${formatShort(length.toLong())}" else "", ink, weight, modifier)
+        // The length is the title and the kind stands under it: "0:12" over "Voice message"; "Voice message" alone until known.
+        if (length > 0) LeadLine(AppIcons.Mic, formatShort(length.toLong()), "Voice message", "Voice message from $who, ${formatShort(length.toLong())}", ink, weight, modifier)
+        else LeadLine(AppIcons.Mic, "Voice message", null, "Voice message from $who", ink, weight, modifier)
     }
 }
 
@@ -308,7 +335,7 @@ private fun CardLead(part: MmsPart, who: String, ink: Color, weight: FontWeight,
         }
     }
     val label = name ?: "Contact card"
-    LeadLine(AppIcons.Person, label, (if (name != null) "Contact card, $name" else "Contact card") + " from $who", ink, weight, modifier)
+    LeadLine(AppIcons.Person, label, if (name != null) "Contact card" else null, (if (name != null) "Contact card, $name" else "Contact card") + " from $who", ink, weight, modifier)
 }
 
 /**
@@ -322,7 +349,7 @@ private fun SpotLead(part: MmsPart, who: String, ink: Color, weight: FontWeight,
         value = withContext(Dispatchers.IO) { readLocation(context, part.uri) }
     }
     val named = place?.label?.filter { !it.isISOControl() }?.trim()?.take(60)?.takeIf { it.isNotEmpty() }
-    LeadLine(AppIcons.Place, named ?: "Location", (if (named != null) "Location, $named" else "Location") + " from $who", ink, weight, modifier)
+    LeadLine(AppIcons.Place, named ?: "Location", if (named != null) "Location" else null, (if (named != null) "Location, $named" else "Location") + " from $who", ink, weight, modifier)
 }
 
 /**
@@ -384,8 +411,8 @@ internal fun ReactionBubble(
     }
     val spoken = "$who reacted ${p.emoji} to: $target"
     Box(modifier.padding(bottom = 16.dp).clearAndSetSemantics { contentDescription = spoken }) {
-        ZoneSurface(shape = shape, accent = targetMine) {
-            Box(Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 14.dp)) {
+        ZoneSurface(shape = shape, accent = targetMine, modifier = Modifier.fillMaxWidth()) {
+            Box(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 14.dp)) {
                 if (media != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(if (media == "video") AppIcons.Play else AppIcons.Image, contentDescription = null, tint = ink.takeOrElse { LocalContentColor.current }, modifier = Modifier.size(18.dp))

@@ -957,7 +957,7 @@ private fun ConversationLine(
                             color = if (unread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    LastMessageBubble(c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia, modifier = Modifier.padding(top = 4.dp).align(Alignment.Start))
+                    LastMessageBubble(c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia, modifier = Modifier.padding(top = 4.dp).fillMaxWidth())
                 }
             }
         }
@@ -1016,7 +1016,9 @@ private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hol
     }
     val weight = if (unread) FontWeight.Medium else FontWeight.Normal
     ZoneSurface(shape = CARD_BUBBLE, accent = mine, modifier = modifier) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        // Start-aligned words inside a bubble that takes all the width beside the face (Signal's conversation list
+        // item, conversation_list_item_view.xml: the summary is layout_width 0dp between its constraints).
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
             if (subject != null) Text(
                 "Subject: $subject",
                 style = MaterialTheme.typography.bodyMedium,
