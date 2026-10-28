@@ -77,6 +77,8 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -727,15 +729,45 @@ private fun ThreadContent(
                 modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 20.dp, top = 8.dp, bottom = 4.dp)
             ) {
                 FloatingAction(AppIcons.ArrowBack, "Back", onBack)
-                Box(Modifier.weight(1f).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-                    NameBlock(
-                        name = title,
-                        photo = if (group) null else entry?.photo,
-                        encrypted = encrypted,
-                        onOpen = { personOpen = true },
-                        look = if (group) null else entry?.look
+                Spacer(Modifier.weight(1f))
+                // The face alone, no name: a round tap target the size of the other round actions, the person's page
+                // behind it. The face is the list's (FaceAvatar: photo, look, a group's members in one circle, the
+                // default person icon without a picture) with its lock mark (FaceMark). After AOSP Messaging's
+                // ContactIconView, the contact's round icon that a tap opens onto the contact:
+                // https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/ui/ContactIconView.java
+                // and the list's FaceAvatar / FaceMark (feature/conversations/GroupFace.kt, ConversationsScreen.kt).
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(com.yaz.sms.ui.component.TopActionSize)
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                            role = androidx.compose.ui.semantics.Role.Button,
+                            onClickLabel = "About them"
+                        ) {
+                            haptics.tick()
+                            personOpen = true
+                        }
+                        .semantics { contentDescription = "$title, details" }
+                ) {
+                    val faceMembers = if (group) members.take(4).map { p ->
+                        val e = index.find(T9.clean(p))
+                        com.yaz.sms.feature.conversations.PinnedFace(e?.name ?: "", e?.photo, e?.look)
+                    } else emptyList()
+                    com.yaz.sms.feature.conversations.FaceAvatar(
+                        if (group) title else entry?.name?.takeIf { it.isNotBlank() },
+                        if (group) null else entry?.photo,
+                        if (group) null else entry?.look,
+                        faceMembers,
+                        com.yaz.sms.ui.component.TopActionSize
+                    )
+                    if (encrypted) com.yaz.sms.feature.conversations.FaceMark(
+                        AppIcons.Lock, "End-to-end encrypted",
+                        Modifier.align(Alignment.BottomStart).offset(x = (-2).dp, y = 2.dp)
                     )
                 }
+                Spacer(Modifier.width(8.dp))
                 CallButtons(calls, onAddContact = if (!group && entry == null && to.count(Char::isDigit) >= 3) ({ NumberActions.addContact(context, to) }) else null)
             }
 

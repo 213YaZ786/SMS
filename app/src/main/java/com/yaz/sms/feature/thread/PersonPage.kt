@@ -414,38 +414,3 @@ private fun androidx.compose.foundation.layout.FlowRowScope.Row(icon: ImageVecto
         }
     }
 }
-
-/**
- * The top of a conversation: the person's face, and their name under it on
- * a small pill of glass, a lock beside it when the chat is encrypted; a tap
- * on either opens their page.
- */
-@Composable
-fun NameBlock(name: String, photo: String?, encrypted: Boolean, onOpen: () -> Unit, look: com.yaz.sms.core.dial.ContactLook.Look? = null) {
-    val haptics = rememberHaptics()
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable(
-            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-            indication = null,
-            onClickLabel = "About them"
-        ) {
-            haptics.tick()
-            onOpen()
-        }
-    ) {
-        // The name alone, in its pill: the face would be too small to help.
-        FloatingPane(shape = CircleShape, onClick = {
-            haptics.tick()
-            onOpen()
-        }) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
-                if (encrypted) {
-                    Icon(AppIcons.Lock, contentDescription = "Encrypted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                }
-                Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-    }
-}

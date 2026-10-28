@@ -1008,7 +1008,7 @@ private fun ConversationLine(
  * list, 2026-10-28). TalkBack reads the description with the card.
  */
 @Composable
-private fun FaceMark(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, modifier: Modifier = Modifier) {
+internal fun FaceMark(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, modifier: Modifier = Modifier) {
     Box(contentAlignment = Alignment.Center, modifier = modifier.size(18.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)) {
         Icon(icon, contentDescription = description, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
     }
