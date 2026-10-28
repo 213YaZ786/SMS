@@ -324,8 +324,6 @@ private fun ThreadContent(
     var listBottom by remember { mutableStateOf(Float.NaN) }
     // A message swiped to answer it: shown over the field, sent quoted.
     var quote by remember { mutableStateOf<String?>(null) }
-    // How far the conversation is pulled left to show every time (iOS Messages), springing back on release.
-    val timesPeek = remember { Animatable(0f) }
     // One of the user's own chat messages being changed: its chat id and text.
     var editing by remember { mutableStateOf<Pair<Int, String>?>(null) }
     // How long messages last in the encrypted chat, in seconds; 0 for always.
@@ -333,8 +331,18 @@ private fun ThreadContent(
     LaunchedEffect(encrypted, chatChanges) { vanish = if (encrypted) chat.timer(people) else 0 }
     // Messages waiting their few seconds before they go, and text taken back.
     val store: SettingsStore = koinInject()
-    var waiting by remember { mutableStateOf<List<Pending>>(emptyList()) }
+    val sends: com.yaz.sms.core.sms.PendingSends = koinInject()
+    val allWaiting by sends.waiting.collectAsState()
+    val waiting = remember(allWaiting, people, thread) {
+        val set = people.toSet()
+        allWaiting.filter { (thread != null && it.thread == thread) || it.people.toSet() == set }
+    }
     var restore by remember { mutableStateOf<String?>(null) }
+    // A send refused after the delay gives its text back, even if the screen was away meanwhile.
+    val returnedAll by sends.returned.collectAsState()
+    LaunchedEffect(returnedAll, people) {
+        sends.takeReturned(people).takeIf { it.isNotEmpty() }?.let { restore = it.joinToString("\n") }
+    }
     // The draft left last time back into the field, read as AOSP Messaging
     // reads it when its conversation opens (ReadDraftDataAction).
     LaunchedEffect(thread) {
@@ -355,6 +363,11 @@ private fun ThreadContent(
     var playing by remember { mutableStateOf<Triple<com.yaz.sms.core.sms.Effects.Effect, String, androidx.compose.ui.geometry.Offset?>?>(null) }
     var fresh by remember { mutableStateOf<Set<String>>(emptySet()) }
     val haptics = rememberHaptics()
+    // The tick of a message leaving: only when this conversation's screen is there to feel it.
+    val peopleNow by androidx.compose.runtime.rememberUpdatedState(people)
+    LaunchedEffect(sends) {
+        sends.sent.collect { w -> if (w.people.toSet() == peopleNow.toSet()) haptics.done() }
+    }
     LaunchedEffect(list, read) {
         if (!read) return@LaunchedEffect
         val received = list.filter { it.box == MessageBox.RECEIVED }.map { it.uid }.toSet()
@@ -378,53 +391,21 @@ private fun ThreadContent(
         known = received
         newestKnown = maxOf(newestKnown, list.maxOfOrNull { it.date } ?: 0L)
     }
-    fun sendNow(p: Pending) {
-        scope.launch(Dispatchers.IO) {
-            // Photos leave without their place, camera and dates.
-            val attachments = p.attachments.map { com.yaz.sms.core.mms.MediaPrivacy.clean(context, it) }
-            // Over the rich chat when the number has it, quote included;
-            // else a group or a picture as a picture message, the rest as SMS.
-            // The effect travels over the encrypted chat; an SMS stays plain (and cheap).
-            // A group the user left sends nothing, not even by SMS to the same people.
-            if (left) return@launch
-            val wire = mentionsWire(p.text)?.let { w -> p.effect?.let { com.yaz.sms.core.sms.Effects.mark(w, it) } ?: w }
-            if (encrypted && chat.send(people, p.effect?.let { com.yaz.sms.core.sms.Effects.mark(p.text, it) } ?: p.text, attachments, p.quoted, wire)) return@launch
-            // Someone with no number has the chat only: never an SMS to an address.
-            if (people.any { '@' in it }) {
-                withContext(Dispatchers.Main) {
-                    restore = p.text
-                    android.widget.Toast.makeText(context, "Not sent yet: the keys are still being exchanged. Try again in a moment.", android.widget.Toast.LENGTH_LONG).show()
-                }
-                return@launch
-            }
-            val text = p.quoted?.let { "«${excerpt(it)}»\n${p.text}" } ?: p.text
-            if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, p.sub, thread)
-            else SmsSender.send(context, to, text, p.sub, thread)
-            // The first message to a number asks, unseen, whether it has SMS too.
-            if (!group) chat.hello(to)
-        }
-    }
-
-    fun queue(p: Pending) {
+    // The sending and its countdown belong to the app (PendingSends): leaving the conversation
+    // never cancels a message in its delay. Here: what the screen alone does (effects, field, haptic).
+    fun queue(text: String, sub: Int, attachments: List<com.yaz.sms.core.mms.Attachment>, quoted: String?, effect: com.yaz.sms.core.sms.Effects.Effect? = null) {
         quote = null
-        p.effect?.let { e ->
-            sentEffects[p.text] = e to System.currentTimeMillis()
-            if (e.screen) playing = Triple(e, p.text, null)
+        effect?.let { e ->
+            sentEffects[text] = e to System.currentTimeMillis()
+            if (e.screen) playing = Triple(e, text, null)
         }
-        val delay = store.current.undoSeconds
-        if (delay <= 0) {
-            sendNow(p)
-        } else {
-            waiting = waiting + p
-            scope.launch {
-                kotlinx.coroutines.delay(delay * 1000L)
-                if (waiting.any { it.key == p.key }) {
-                    waiting = waiting.filterNot { it.key == p.key }
-                    haptics.done()
-                    sendNow(p)
-                }
-            }
-        }
+        val seconds = store.current.undoSeconds
+        val p = com.yaz.sms.core.sms.PendingSends.Waiting(
+            key = System.nanoTime(), text = text, sub = sub, attachments = attachments, quoted = quoted, effect = effect,
+            people = people, thread = thread, wire = mentionsWire(text), seconds = seconds,
+            dueAt = android.os.SystemClock.elapsedRealtime() + seconds * 1000L
+        )
+        if (seconds <= 0) sends.sendNow(p) else sends.queue(p)
     }
     scheduling?.let { (text, sub) ->
         com.yaz.sms.feature.conversations.TimeChoice("Send later", onPick = { at ->
@@ -476,7 +457,7 @@ private fun ThreadContent(
     var pollOpen by remember { mutableStateOf(false) }
     if (pollOpen) PollDialog(onSend = { question, options ->
         pollOpen = false
-        queue(Pending(System.nanoTime(), com.yaz.sms.core.sms.Polls.write(question, options), android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID, emptyList(), null))
+        queue(com.yaz.sms.core.sms.Polls.write(question, options), android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID, emptyList(), null)
     }) { pollOpen = false }
     var backgroundOpen by remember { mutableStateOf(false) }
     val theirColor by androidx.compose.runtime.produceState<Int?>(null, to) {
@@ -731,7 +712,7 @@ private fun ThreadContent(
                     editing = null
                     if (e != null && typed.isNotBlank() && typed != e.second) scope.launch { if (!chat.edit(e.first, typed)) haptics.reject() }
                 },
-                onSendEffect = { text, sub, effect, attachments -> if (people.isNotEmpty()) queue(Pending(System.nanoTime(), text, sub, attachments, quote, effect)) },
+                onSendEffect = { text, sub, effect, attachments -> if (people.isNotEmpty()) queue(text, sub, attachments, quote, effect) },
                 onDraft = { typed ->
                     // Kept even as the screen goes: its own scope ends with it.
                     val with = people.filter { '@' !in it }.toSet()
@@ -747,7 +728,7 @@ private fun ThreadContent(
                 onLive = if (encrypted) ({ seconds -> scope.launch { if (locator.share(people, seconds)) haptics.done() else haptics.reject() } }) else null,
                 onSend = { typed, sub, attachments ->
                     if (people.isEmpty()) return@Composer false
-                    queue(Pending(System.nanoTime(), typed, sub, attachments, quote))
+                    queue(typed, sub, attachments, quote)
                     true
                 }
             )
@@ -810,10 +791,10 @@ private fun ThreadContent(
             }
             // Waiting messages sit at the bottom, their ring emptying; a tap takes one back.
             items(waiting.asReversed(), key = { "wait/${it.key}" }) { p ->
-                PendingBubble(p, store.current.undoSeconds, Modifier.animateItem().padding(vertical = Cluster.SINGLE.top)) {
+                PendingBubble(p, Modifier.animateItem().padding(vertical = Cluster.SINGLE.top)) {
                     haptics.tick()
-                    waiting = waiting.filterNot { it.key == p.key }
-                    restore = p.text
+                    // Already gone when its delay ended a moment ago: nothing to take back.
+                    sends.cancel(p.key)?.let { restore = it.text }
                 }
             }
             items(rows.asReversed(), key = { it.key }) { row ->
@@ -844,18 +825,8 @@ private fun ThreadContent(
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f * wash), RoundedCornerShape(16.dp))
                     ) {
                       val mineRow = row.message.box != MessageBox.RECEIVED
-                      // Every message's time, drawn in from the right edge while the
-                      // conversation is pulled left, as iOS Messages shows them.
-                      if (timesPeek.value > 0f) Text(
-                          clockOf(context, row.message.date),
-                          style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant,
-                          modifier = Modifier.align(Alignment.CenterEnd).padding(end = 8.dp)
-                              .graphicsLayer { alpha = (timesPeek.value / TIMES_REACH).coerceIn(0f, 1f) }
-                      )
                       Column(
-                          // One's own messages make way for the times; those received stay where they are, as on iOS.
-                          Modifier.fillMaxWidth().offset { IntOffset(if (mineRow) -timesPeek.value.roundToInt() else 0, 0) },
+                          Modifier.fillMaxWidth(),
                           horizontalAlignment = if (mineRow) Alignment.End else Alignment.Start
                       ) {
                       // What a reaction by text is about: the message's words, or "image" / "video" for a message of only
@@ -927,13 +898,7 @@ private fun ThreadContent(
                             starStore.toggle(row.message.uid, row.message.threadId)
                         },
                         sentEffect = sentEffects[com.yaz.sms.core.sms.Effects.plain(row.message.body)]?.takeIf { (_, at) -> row.message.box != MessageBox.RECEIVED && row.message.date >= at - 10_000 }?.first,
-                        onReplay = { e, words -> playing = Triple(e, words, null) },
-                        onPeek = { dx ->
-                            scope.launch {
-                                if (dx == null) timesPeek.animateTo(0f, spring(dampingRatio = 0.7f, stiffness = 380f))
-                                else timesPeek.snapTo((timesPeek.value - dx).coerceIn(0f, TIMES_REACH))
-                            }
-                        }
+                        onReplay = { e, words -> playing = Triple(e, words, null) }
                     )
                       }
                     }
@@ -976,9 +941,6 @@ internal object ThreadsAhead {
 
 /** How many messages a conversation opened for the first time shows before its first page. */
 private const val FIRST = 40
-
-/** How far the messages slide left for their times to show, in pixels. */
-private const val TIMES_REACH = 180f
 
 private fun rowsOf(all: List<Message>): List<Row> {
     // Reactions that came as SMS sit under their message, not as messages of their own.
@@ -1204,9 +1166,7 @@ private fun Bubble(
     onStar: () -> Unit = {},
     sentEffect: com.yaz.sms.core.sms.Effects.Effect? = null,
     onReplay: (com.yaz.sms.core.sms.Effects.Effect, String) -> Unit = { _, _ -> },
-    onPollShown: () -> Unit = {},
-    /** A pull to the left, its step in pixels, or null when the finger lifts (the times of iOS Messages). */
-    onPeek: (Float?) -> Unit = {}
+    onPollShown: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -1425,29 +1385,28 @@ private fun Bubble(
                 }
                 // Swiped right, it follows the finger, ticks once past the
                 // point where it will be answered, and springs back.
-                // Swiped left, the whole conversation slides to show every time (onPeek).
+                // Swiped left, nothing: the move is not consumed, so the pager and the back gesture
+                // keep it (Compose foundation's detectHorizontalDragGestures,
+                // https://github.com/androidx/androidx/blob/androidx-main/compose/foundation/foundation/src/commonMain/kotlin/androidx/compose/foundation/gestures/DragGestureDetector.kt:
+                // a touch slop reached without consuming keeps waiting, and the drag starts only when a callback consumes).
                 .pointerInput(m.id) {
-                    var peeking = false
+                    var started = false
                     detectHorizontalDragGestures(
                         onDragEnd = {
                             if (armed) onQuote()
                             armed = false
-                            if (peeking) onPeek(null)
-                            peeking = false
+                            started = false
                             scope.launch { pull.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 420f)) }
                         },
                         onDragCancel = {
                             armed = false
-                            if (peeking) onPeek(null)
-                            peeking = false
+                            started = false
                             scope.launch { pull.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 420f)) }
                         },
                         onHorizontalDrag = { change, dx ->
-                            if (peeking || (pull.value == 0f && dx < 0f)) {
-                                peeking = true
-                                onPeek(dx)
-                                change.consume()
-                                return@detectHorizontalDragGestures
+                            if (!started) {
+                                if (dx <= 0f) return@detectHorizontalDragGestures
+                                started = true
                             }
                             val give = if (pull.value > reach) 0.35f else 1f
                             val next = (pull.value + dx * give).coerceIn(0f, reach * 1.7f)
@@ -1944,23 +1903,18 @@ internal fun LinkAsk(url: String, verdict: com.yaz.sms.core.link.LinkCheck.Verdi
     )
 }
 
-/** The start of a quoted message, short enough for the first line. */
-private fun excerpt(text: String): String = text.replace('\n', ' ').let { if (it.length > 60) it.take(58).trimEnd() + "…" else it }
-
-/** A message waiting its few seconds before it goes. */
-private data class Pending(val key: Long, val text: String, val sub: Int, val attachments: List<com.yaz.sms.core.mms.Attachment>, val quoted: String?, val effect: com.yaz.sms.core.sms.Effects.Effect? = null)
-
 /**
  * The message just written: it flies up from the field into its place as
  * a drop of glass, and a ring on it empties over the seconds it waits; a
  * tap takes it back into the field.
  */
 @Composable
-private fun PendingBubble(p: Pending, seconds: Int, modifier: Modifier, onCancel: () -> Unit) {
+private fun PendingBubble(p: com.yaz.sms.core.sms.PendingSends.Waiting, modifier: Modifier, onCancel: () -> Unit) {
     val flight = remember { Animatable(0f) }
     LaunchedEffect(Unit) { flight.animateTo(1f, spring(dampingRatio = 0.62f, stiffness = 260f)) }
-    val ring = remember { Animatable(1f) }
-    LaunchedEffect(Unit) { ring.animateTo(0f, androidx.compose.animation.core.tween(seconds * 1000, easing = androidx.compose.animation.core.LinearEasing)) }
+    // The ring starts where the countdown is: full for a message just written, shorter for one come back to.
+    val ring = remember { Animatable(p.remaining() / (p.seconds * 1000f).coerceAtLeast(1f)) }
+    LaunchedEffect(Unit) { ring.animateTo(0f, androidx.compose.animation.core.tween(p.remaining().toInt(), easing = androidx.compose.animation.core.LinearEasing)) }
     val accent = MaterialTheme.colorScheme.primary
     Column(horizontalAlignment = Alignment.End, modifier = modifier.fillMaxWidth()) {
         Box(

@@ -22,7 +22,11 @@ import org.koin.core.component.inject
 
 /** A message written now to go later. */
 @Serializable
-data class Scheduled(val id: Long, val to: List<String>, val text: String, val at: Long, val sub: Int)
+data class Scheduled(
+    val id: Long, val to: List<String>, val text: String, val at: Long, val sub: Int,
+    /** A copy kept by PendingSends while a message waits in its undo delay, sent only if the app died meanwhile; never listed. */
+    val backup: Boolean = false
+)
 
 /**
  * What waits for a time: messages to send later. Android's inexact alarms, within ten minutes of the
@@ -83,7 +87,8 @@ object Timed {
         }
     }
 
-    fun scheduled(context: Context): List<Scheduled> = load(context)
+    /** The messages the user set to go later: the backups of messages in their undo delay are not among them. */
+    fun scheduled(context: Context): List<Scheduled> = load(context).filterNot { it.backup }
 
     private fun alarm(context: Context, action: String, code: Int, at: Long, extras: Intent.() -> Unit) {
         context.getSystemService(AlarmManager::class.java).setWindow(AlarmManager.RTC_WAKEUP, at, WINDOW_MS, intent(context, action, code, extras))
