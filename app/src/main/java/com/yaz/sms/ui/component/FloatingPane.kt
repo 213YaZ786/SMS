@@ -18,8 +18,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -83,9 +90,12 @@ fun FloatingPane(
 
 /**
  * The top of a screen whose content fills the whole window: no bar, only
- * standalone panes of glass floating over it, a round action on each side
- * and the screen's name in a small pill between them. What scrolls passes
- * under them and between them.
+ * standalone panes of glass floating over it, a round action at each end.
+ * The screen's name does nothing, so it has no pane: plain text on the page,
+ * at the start after the leading action (Google's Settings, Signal, Element X;
+ * iOS 26's large title without a background). What scrolls under it fades out
+ * first, see [FloatingFrame]. A [center] slot (clickable pills) stays centred
+ * between the two actions.
  */
 @Composable
 fun FloatingTop(
@@ -96,23 +106,37 @@ fun FloatingTop(
     center: @Composable (() -> Unit)? = null
 ) {
     Row(
-        modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier.fillMaxWidth().heightIn(min = TopActionSize + 16.dp).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Both slots keep their room, so the name stays centred.
-        Box(Modifier.size(TopActionSize), contentAlignment = Alignment.Center) { leading?.invoke() }
+        // With a centre slot both action slots keep their room, so it stays centred;
+        // a plain title starts right after the leading action, or at the start.
+        if (center != null || leading != null) {
+            Box(Modifier.size(TopActionSize), contentAlignment = Alignment.Center) { leading?.invoke() }
+        }
         // A gap on each side: a long name ends in "…" before reaching the round actions.
-        Box(Modifier.weight(1f).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.weight(1f).padding(start = if (center != null || leading != null) 12.dp else 0.dp, end = 12.dp),
+            contentAlignment = if (center != null) Alignment.Center else Alignment.CenterStart
+        ) {
             when {
                 center != null -> center()
-                title != null -> TitlePill(title)
+                title != null -> Text(
+                    title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.semantics { heading() }
+                )
             }
         }
-        Box(Modifier.size(TopActionSize), contentAlignment = Alignment.Center) { trailing?.invoke() }
+        if (center != null || trailing != null) {
+            Box(Modifier.size(TopActionSize), contentAlignment = Alignment.Center) { trailing?.invoke() }
+        }
     }
 }
 
-/** A screen's name on a small pill of glass. */
+/** A name on a small pill of glass, for a name that is also a tap target. FloatingTop no longer uses it. */
 @Composable
 fun TitlePill(title: String) {
     FloatingPane(shape = CircleShape) {
@@ -149,7 +173,10 @@ fun FloatingAction(icon: ImageVector, label: String, onClick: () -> Unit, tint: 
  * over it in glass: the content is recorded so the panes bend it. [content]
  * gets the padding that keeps its first and last lines clear of the panes
  * and of the bottom by [bottom] when scrolled to either end. [overlay]
- * floats over the content too, bending it.
+ * floats over the content too, bending it. The content fades to transparent
+ * over the header's height (the status bar and [top]), as iOS 26's soft scroll
+ * edge, so text never runs under the title; the glass panes still bend it whole.
+ * Every list inside bounces at its ends, see [ProvideBounce].
  */
 @Composable
 fun FloatingFrame(
@@ -164,8 +191,13 @@ fun FloatingFrame(
     var header by remember { mutableStateOf(0.dp) }
     Box(Modifier.fillMaxSize()) {
         val frame = this
-        Box(Modifier.fillMaxSize().then(if (look != null) Modifier.glassSource(backdrop, look) else Modifier)) {
-            content(PaddingValues(top = header, bottom = bottom))
+        // The fade is outside glassSource: the backdrop records the content whole.
+        Box(
+            Modifier.fillMaxSize()
+                .then(if (header > 0.dp) Modifier.softTopEdge(header) else Modifier)
+                .then(if (look != null) Modifier.glassSource(backdrop, look) else Modifier)
+        ) {
+            ProvideBounce { content(PaddingValues(top = header, bottom = bottom)) }
         }
         CompositionLocalProvider(LocalGlassBackdrop provides backdrop.takeIf { look != null }) {
             Column(
@@ -184,6 +216,33 @@ fun FloatingFrame(
         }
     }
 }
+
+/**
+ * What lies under the first [height] of this element fades to nothing at the
+ * very top and is whole again at [height]: a gradient drawn with BlendMode.DstIn
+ * over an offscreen layer. Android's own recipe, FadedEdgeBox:
+ * https://github.com/android/snippets/blob/main/compose/snippets/src/main/java/com/example/compose/snippets/graphics/GraphicsModifiersSnippets.kt
+ * (region android_compose_graphics_faded_edge_example), with the gradient
+ * bounded to [height] instead of the whole element.
+ */
+private fun Modifier.softTopEdge(height: Dp): Modifier =
+    this
+        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+        .drawWithContent {
+            drawContent()
+            // Gone under the whole title row, whole again over the last 16 dp of the header,
+            // where the first row of the content starts at rest.
+            val end = height.toPx()
+            drawRect(
+                brush = Brush.verticalGradient(
+                    0f to Color.Transparent,
+                    1f to Color.Black,
+                    startY = (end - 16.dp.toPx()).coerceAtLeast(0f),
+                    endY = end
+                ),
+                blendMode = BlendMode.DstIn
+            )
+        }
 
 /** The round actions at the top of a screen. */
 val TopActionSize = 48.dp

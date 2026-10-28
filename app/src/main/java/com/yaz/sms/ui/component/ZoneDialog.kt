@@ -6,6 +6,8 @@ import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawOutline
@@ -38,7 +40,13 @@ fun ZoneAlertDialog(
         onDismissRequest = onDismissRequest,
         // In its own window the pane cannot see the app: Android blurs what lies
         // behind it instead, and the pane is a clear sheet of glass over that.
-        confirmButton = { if (glass != null) BlurBehind(); confirmButton() },
+        confirmButton = {
+            if (glass != null) BlurBehind()
+            // Material's AlertDialog puts ButtonsMainAxisSpacing (8 dp) between the two buttons
+            // (https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/AlertDialog.kt);
+            // the rest up to ButtonGap is added before the confirm button.
+            if (dismissButton != null) Box(Modifier.padding(start = ButtonGap - 8.dp)) { confirmButton() } else confirmButton()
+        },
         modifier = if (glass == null) modifier else modifier.dialogGlass(shape, glass),
         dismissButton = dismissButton,
         icon = icon,
