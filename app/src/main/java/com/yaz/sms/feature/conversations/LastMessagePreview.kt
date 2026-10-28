@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,11 +52,17 @@ import com.yaz.sms.core.sms.Places
 import com.yaz.sms.core.sms.ReactionGroups
 import com.yaz.sms.core.sms.SmsReactions
 import com.yaz.sms.data.sms.Conversation
+import com.yaz.sms.feature.thread.ContentAvoidingLayoutData
+import com.yaz.sms.feature.thread.FooterAt
+import com.yaz.sms.feature.thread.MessageFooter
 import com.yaz.sms.feature.thread.ReactionChips
+import com.yaz.sms.feature.thread.WithFooter
 import com.yaz.sms.feature.thread.formatShort
+import com.yaz.sms.feature.thread.hasMixedTextDirection
 import com.yaz.sms.feature.thread.isFilm
 import com.yaz.sms.feature.thread.isLocationCard
 import com.yaz.sms.feature.thread.isPicture
+import com.yaz.sms.feature.thread.measureLastLine
 import com.yaz.sms.feature.thread.readLocation
 import com.yaz.sms.feature.thread.rememberKind
 import com.yaz.sms.feature.thread.rememberPicture
@@ -146,29 +153,62 @@ internal sealed interface Lead {
  * "you" or the person, for TalkBack ("Photo from Pieter de Vries").
  */
 @Composable
-internal fun LeadView(lead: Lead, who: String, hold: Boolean, ink: Color, weight: FontWeight, modifier: Modifier = Modifier) {
+internal fun LeadView(lead: Lead, who: String, hold: Boolean, ink: Color, weight: FontWeight, time: CardTime? = null, outer: Modifier = Modifier) {
+    // The row keeps 12 dp at its sides, so the time (12 dp from the bubble's end) lines up with the words'.
+    val modifier = outer.padding(start = CARD_SIDE, end = CARD_SIDE, bottom = if (time != null) 8.dp else 0.dp)
     when (lead) {
         is Lead.Reaction -> Unit
         is Lead.Visual -> if (hold) {
             val film = ContentType.isVideoType(lead.part.contentType)
-            LeadLine(if (film) AppIcons.Play else AppIcons.Image, mediaWord(lead.part.contentType), null, "${if (film) "Video" else "Photo"} from $who", ink, weight, modifier)
-        } else VisualLead(lead.part, who, ink, weight, modifier)
-        is Lead.Sound -> if (hold) LeadLine(AppIcons.Mic, "Voice message", null, "Voice message from $who", ink, weight, modifier)
-        else SoundLead(lead.part, who, ink, weight, modifier)
-        is Lead.Card -> if (hold) LeadLine(AppIcons.Person, "Contact card", null, "Contact card from $who", ink, weight, modifier)
-        else CardLead(lead.part, who, ink, weight, modifier)
-        is Lead.Spot -> if (hold) LeadLine(AppIcons.Place, "Location", null, "Location from $who", ink, weight, modifier)
-        else SpotLead(lead.part, who, ink, weight, modifier)
+            LeadLine(if (film) AppIcons.Play else AppIcons.Image, mediaWord(lead.part.contentType), null, "${if (film) "Video" else "Photo"} from $who", ink, weight, time, modifier)
+        } else VisualLead(lead.part, who, ink, weight, time, modifier)
+        is Lead.Sound -> if (hold) LeadLine(AppIcons.Mic, "Voice message", null, "Voice message from $who", ink, weight, time, modifier)
+        else SoundLead(lead.part, who, ink, weight, time, modifier)
+        is Lead.Card -> if (hold) LeadLine(AppIcons.Person, "Contact card", null, "Contact card from $who", ink, weight, time, modifier)
+        else CardLead(lead.part, who, ink, weight, time, modifier)
+        is Lead.Spot -> if (hold) LeadLine(AppIcons.Place, "Location", null, "Location from $who", ink, weight, time, modifier)
+        else SpotLead(lead.part, who, ink, weight, time, modifier)
         is Lead.FileOf -> {
             val name = lead.part.name?.filter { !it.isISOControl() }?.trim()?.take(80)?.takeIf { it.isNotEmpty() } ?: mediaWord(lead.part.contentType)
-            LeadLine(AppIcons.AttachFile, name, fileKind(lead.part), "File $name from $who", ink, weight, modifier)
+            LeadLine(AppIcons.AttachFile, name, fileKind(lead.part), "File $name from $who", ink, weight, time, modifier)
         }
         is Lead.SpotLink -> {
             val name = lead.place.label?.filter { !it.isISOControl() }?.trim()?.take(60)?.takeIf { it.isNotEmpty() }
-            LeadLine(AppIcons.Place, name ?: "Location", if (name != null) "Location" else null, "Location ${name ?: ""} from $who".replace("  ", " "), ink, weight, modifier)
+            LeadLine(AppIcons.Place, name ?: "Location", if (name != null) "Location" else null, "Location ${name ?: ""} from $who".replace("  ", " "), ink, weight, time, modifier)
         }
-        is Lead.Site -> LeadLine(AppIcons.Link, lead.host, "Link", "Link to ${lead.host} from $who", ink, weight, modifier)
+        is Lead.Site -> LeadLine(AppIcons.Link, lead.host, "Link", "Link to ${lead.host} from $who", ink, weight, time, modifier)
     }
+}
+
+/** The side margin of the card's bubble, the same as the thread's footer end margin (Footer.kt, 12 dp). */
+private val CARD_SIDE = 12.dp
+
+/**
+ * The time a card's bubble carries (or the Trash's "N days left"), and its colour: [ink] unspecified takes the
+ * bubble's own text colour dimmed as the thread's footer (Footer.kt MessageFooter), the accent glass of one's own.
+ */
+internal class CardTime(val text: String, val ink: Color)
+
+/**
+ * The time as the footer of [com.yaz.sms.feature.thread.WithFooter]: labelSmall, the gap on the side facing the
+ * content and the margin on the other, swapped when the content runs the other way. Element X's
+ * TimelineEventTimestampView (https://github.com/element-hq/element-x-android, AGPL-3.0,
+ * features/messages/impl/.../timeline/components/TimelineEventTimestampView.kt), the paddings of the thread's
+ * MessageFooter (feature/thread/Footer.kt), only the colour is the list's (the accent when unread).
+ */
+@Composable
+internal fun CardTimeText(time: CardTime, mismatched: Boolean) {
+    Text(
+        time.text,
+        style = MaterialTheme.typography.labelSmall,
+        color = time.ink.takeOrElse { LocalContentColor.current.copy(alpha = 0.66f) },
+        maxLines = 1,
+        modifier = Modifier.padding(
+            start = if (!mismatched) 10.dp else CARD_SIDE,
+            end = if (!mismatched) CARD_SIDE else 10.dp,
+            bottom = 8.dp
+        )
+    )
 }
 
 /**
@@ -194,19 +234,37 @@ private val LEAD_BOX = 40.dp
  * beside the avatar).
  */
 @Composable
-private fun LeadLine(icon: ImageVector, label: String, kind: String?, spoken: String, ink: Color, weight: FontWeight, modifier: Modifier = Modifier) {
+private fun LeadLine(icon: ImageVector, label: String, kind: String?, spoken: String, ink: Color, weight: FontWeight, time: CardTime?, modifier: Modifier = Modifier) {
     val base = ink.takeOrElse { LocalContentColor.current }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = spoken }) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(LEAD_BOX).background(base.copy(alpha = 0.14f), CircleShape)) {
-            Icon(icon, contentDescription = null, tint = base, modifier = Modifier.size(22.dp))
-        }
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f, fill = false)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, color = ink, fontWeight = weight, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (kind != null) Text(kind, style = MaterialTheme.typography.bodyMedium, color = base.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    // The row, its last line measured for the time: the second line (the kind) when there is one, else the label's.
+    val row = @Composable { onLayout: (ContentAvoidingLayoutData) -> Unit ->
+        val measure = measureLastLine(onLayout, extraStart = CARD_SIDE + LEAD_BOX + 10.dp, extraEnd = CARD_SIDE)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = spoken }) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(LEAD_BOX).background(base.copy(alpha = 0.14f), CircleShape)) {
+                Icon(icon, contentDescription = null, tint = base, modifier = Modifier.size(22.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f, fill = false)) {
+                Text(
+                    label, style = MaterialTheme.typography.bodyLarge, color = ink, fontWeight = weight, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    onTextLayout = if (kind == null) measure else NO_LAYOUT
+                )
+                if (kind != null) Text(
+                    kind, style = MaterialTheme.typography.bodyMedium, color = base.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    onTextLayout = measure
+                )
+            }
         }
     }
+    if (time == null) row {}
+    else {
+        val mixed = remember(label, kind) { hasMixedTextDirection(kind ?: label) }
+        WithFooter(if (mixed) FooterAt.Below else FooterAt.Aligned, { CardTimeText(time, it) }, Modifier.fillMaxWidth(), words = kind ?: label) { onLayout -> row(onLayout) }
+    }
 }
+
+/** A text whose last line nobody measures. */
+private val NO_LAYOUT: (androidx.compose.ui.text.TextLayoutResult) -> Unit = {}
 
 /**
  * A picture or a film: its real kind from the first bytes first (feature/thread/Gallery.kt MediaCell: isPicture,
@@ -218,32 +276,32 @@ private fun LeadLine(icon: ImageVector, label: String, kind: String?, spoken: St
  * (rememberVideoStill). A declared picture whose bytes say otherwise is a plain file line.
  */
 @Composable
-private fun VisualLead(part: MmsPart, who: String, ink: Color, weight: FontWeight, modifier: Modifier) {
+private fun VisualLead(part: MmsPart, who: String, ink: Color, weight: FontWeight, time: CardTime?, modifier: Modifier) {
     val kind by rememberKind(part.uri)
     val side = with(LocalDensity.current) { 240.dp.roundToPx() }
     val declaredFilm = ContentType.isVideoType(part.contentType)
     // The words that stay when no thumbnail is there: Signal's createFinalBodyWithMediaIcon returns the body with
     // its media word when the bitmap is null (ConversationListItem.java); the word is this app's mediaWord.
     @Composable
-    fun word() = LeadLine(if (declaredFilm) AppIcons.Play else AppIcons.Image, mediaWord(part.contentType), null, "${if (declaredFilm) "Video" else "Photo"} from $who", ink, weight, modifier)
+    fun word() = LeadLine(if (declaredFilm) AppIcons.Play else AppIcons.Image, mediaWord(part.contentType), null, "${if (declaredFilm) "Video" else "Photo"} from $who", ink, weight, time, modifier)
     when {
         kind == null -> word()
         isPicture(part, kind) -> {
             val picture by rememberPicture(part.uri, side)
             val shown = picture
-            if (shown == null) word() else Thumb(shown, film = false, length = null, spoken = "Photo from $who", modifier = modifier)
+            if (shown == null) word() else Thumb(shown, film = false, length = null, spoken = "Photo from $who", time = time, modifier = modifier)
         }
         isFilm(part, kind) -> {
             val still by rememberVideoStill(part.uri, side)
             val frame = still?.frame
             if (frame == null) word() else Thumb(
                 frame, film = true, length = still?.durationMs,
-                spoken = "Video from $who" + (still?.durationMs?.let { ", ${formatShort(it)}" } ?: ""), modifier = modifier
+                spoken = "Video from $who" + (still?.durationMs?.let { ", ${formatShort(it)}" } ?: ""), time = time, modifier = modifier
             )
         }
         else -> {
             val name = part.name?.filter { !it.isISOControl() }?.trim()?.take(80)?.takeIf { it.isNotEmpty() } ?: "File"
-            LeadLine(AppIcons.AttachFile, name, fileKind(part), "File $name from $who", ink, weight, modifier)
+            LeadLine(AppIcons.AttachFile, name, fileKind(part), "File $name from $who", ink, weight, time, modifier)
         }
     }
 }
@@ -257,12 +315,15 @@ private fun VisualLead(part: MmsPart, who: String, ink: Color, weight: FontWeigh
  * length on a pill (feature/thread/Gallery.kt FilmFace, Element X's VideoOverlay), smaller for a list.
  */
 @Composable
-private fun Thumb(frame: androidx.compose.ui.graphics.ImageBitmap, film: Boolean, length: Long?, spoken: String, modifier: Modifier = Modifier) {
+private fun Thumb(frame: androidx.compose.ui.graphics.ImageBitmap, film: Boolean, length: Long?, spoken: String, time: CardTime?, modifier: Modifier = Modifier) {
     val ratio = frame.takeIf { it.height > 0 }?.let { it.width.toFloat() / it.height }?.coerceIn(0.75f, 3f) ?: 1f
     val scrim = MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)
+    // The time on the small dark pill in the bottom end corner, as the thread does over a lone picture (WithFooter's
+    // Overlay, MessageFooter onMedia: Gallery.kt, MessageBody.kt); a film's length then moves to the top.
+    val frameOf = @Composable { inner: Modifier ->
     Box(
         contentAlignment = Alignment.Center,
-        modifier = modifier
+        modifier = inner
             .heightIn(max = THUMB_HEIGHT)
             .aspectRatio(ratio, matchHeightConstraintsFirst = true)
             .clip(RoundedCornerShape(14.dp))
@@ -282,7 +343,7 @@ private fun Thumb(frame: androidx.compose.ui.graphics.ImageBitmap, film: Boolean
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                     modifier = Modifier
-                        .align(Alignment.BottomStart)
+                        .align(if (time != null) Alignment.TopStart else Alignment.BottomStart)
                         .padding(5.dp)
                         .background(scrim, RoundedCornerShape(8.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -290,6 +351,9 @@ private fun Thumb(frame: androidx.compose.ui.graphics.ImageBitmap, film: Boolean
             }
         }
     }
+    }
+    if (time == null) frameOf(modifier)
+    else WithFooter(FooterAt.Overlay, { MessageFooter(time.text, null, false, onMedia = true) }, modifier) { frameOf(Modifier) }
 }
 
 /**
@@ -298,7 +362,7 @@ private fun Thumb(frame: androidx.compose.ui.graphics.ImageBitmap, film: Boolean
  * "Voice message" while the length is not known.
  */
 @Composable
-private fun SoundLead(part: MmsPart, who: String, ink: Color, weight: FontWeight, modifier: Modifier) {
+private fun SoundLead(part: MmsPart, who: String, ink: Color, weight: FontWeight, time: CardTime?, modifier: Modifier) {
     val context = LocalContext.current
     val kind by rememberKind(part.uri)
     val sound = kind == MediaCheck.Kind.AUDIO || kind == MediaCheck.Kind.VIDEO
@@ -309,11 +373,11 @@ private fun SoundLead(part: MmsPart, who: String, ink: Color, weight: FontWeight
     }
     if (kind != null && !sound) {
         val name = part.name?.filter { !it.isISOControl() }?.trim()?.take(80)?.takeIf { it.isNotEmpty() } ?: "File"
-        LeadLine(AppIcons.AttachFile, name, fileKind(part), "File $name from $who", ink, weight, modifier)
+        LeadLine(AppIcons.AttachFile, name, fileKind(part), "File $name from $who", ink, weight, time, modifier)
     } else {
         // The length is the title and the kind stands under it: "0:12" over "Voice message"; "Voice message" alone until known.
-        if (length > 0) LeadLine(AppIcons.Mic, formatShort(length.toLong()), "Voice message", "Voice message from $who, ${formatShort(length.toLong())}", ink, weight, modifier)
-        else LeadLine(AppIcons.Mic, "Voice message", null, "Voice message from $who", ink, weight, modifier)
+        if (length > 0) LeadLine(AppIcons.Mic, formatShort(length.toLong()), "Voice message", "Voice message from $who, ${formatShort(length.toLong())}", ink, weight, time, modifier)
+        else LeadLine(AppIcons.Mic, "Voice message", null, "Voice message from $who", ink, weight, time, modifier)
     }
 }
 
@@ -322,7 +386,7 @@ private fun SoundLead(part: MmsPart, who: String, ink: Color, weight: FontWeight
  * first FN line among the first 200). Read only once shown, so never from a number held.
  */
 @Composable
-private fun CardLead(part: MmsPart, who: String, ink: Color, weight: FontWeight, modifier: Modifier) {
+private fun CardLead(part: MmsPart, who: String, ink: Color, weight: FontWeight, time: CardTime?, modifier: Modifier) {
     val context = LocalContext.current
     val name by produceState<String?>(null, part.uri) {
         value = withContext(Dispatchers.IO) {
@@ -335,7 +399,7 @@ private fun CardLead(part: MmsPart, who: String, ink: Color, weight: FontWeight,
         }
     }
     val label = name ?: "Contact card"
-    LeadLine(AppIcons.Person, label, if (name != null) "Contact card" else null, (if (name != null) "Contact card, $name" else "Contact card") + " from $who", ink, weight, modifier)
+    LeadLine(AppIcons.Person, label, if (name != null) "Contact card" else null, (if (name != null) "Contact card, $name" else "Contact card") + " from $who", ink, weight, time, modifier)
 }
 
 /**
@@ -343,13 +407,13 @@ private fun CardLead(part: MmsPart, who: String, ink: Color, weight: FontWeight,
  * readLocation (the first Places.CARD_MAX bytes) and Places.fromVLocation; "Location" when it has none.
  */
 @Composable
-private fun SpotLead(part: MmsPart, who: String, ink: Color, weight: FontWeight, modifier: Modifier) {
+private fun SpotLead(part: MmsPart, who: String, ink: Color, weight: FontWeight, time: CardTime?, modifier: Modifier) {
     val context = LocalContext.current
     val place by produceState<Places.Place?>(null, part.uri) {
         value = withContext(Dispatchers.IO) { readLocation(context, part.uri) }
     }
     val named = place?.label?.filter { !it.isISOControl() }?.trim()?.take(60)?.takeIf { it.isNotEmpty() }
-    LeadLine(AppIcons.Place, named ?: "Location", if (named != null) "Location" else null, (if (named != null) "Location, $named" else "Location") + " from $who", ink, weight, modifier)
+    LeadLine(AppIcons.Place, named ?: "Location", if (named != null) "Location" else null, (if (named != null) "Location, $named" else "Location") + " from $who", ink, weight, time, modifier)
 }
 
 /**
@@ -387,6 +451,7 @@ internal fun ReactionBubble(
     reaction: Lead.Reaction,
     who: String,
     unread: Boolean,
+    time: String,
     shape: Shape,
     modifier: Modifier = Modifier
 ) {
@@ -409,12 +474,16 @@ internal fun ReactionBubble(
         "video" -> "a video"
         else -> said
     }
-    val spoken = "$who reacted ${p.emoji} to: $target"
-    Box(modifier.padding(bottom = 16.dp).clearAndSetSemantics { contentDescription = spoken }) {
+    val spoken = "$who reacted ${p.emoji} to: $target, $time"
+    val stamp = CardTime(time, if (targetMine) Color.Unspecified else if (unread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+    val mixed = remember(said) { hasMixedTextDirection(said) }
+    // The chip hangs 22 dp below the bubble's bottom end, where the time stands (its own 8 dp above the bottom).
+    Box(modifier.padding(bottom = 22.dp).clearAndSetSemantics { contentDescription = spoken }) {
         ZoneSurface(shape = shape, accent = targetMine, modifier = Modifier.fillMaxWidth()) {
-            Box(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 14.dp)) {
+            WithFooter(if (mixed) FooterAt.Below else FooterAt.Aligned, { CardTimeText(stamp, it) }, Modifier.fillMaxWidth(), words = said) { onLayout ->
+                val measure = measureLastLine(onLayout, extraStart = CARD_SIDE, extraEnd = CARD_SIDE)
                 if (media != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = CARD_SIDE, end = CARD_SIDE, top = 8.dp, bottom = 6.dp)) {
                         Icon(if (media == "video") AppIcons.Play else AppIcons.Image, contentDescription = null, tint = ink.takeOrElse { LocalContentColor.current }, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(mediaWord(if (media == "video") "video/mp4" else "image/jpeg"), style = MaterialTheme.typography.bodyMedium, color = ink, fontWeight = weight)
@@ -425,14 +494,16 @@ internal fun ReactionBubble(
                     color = ink,
                     fontWeight = weight,
                     maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    onTextLayout = measure,
+                    modifier = Modifier.padding(start = CARD_SIDE, end = CARD_SIDE, top = 8.dp, bottom = 6.dp)
                 )
             }
         }
         ReactionChips(
             groups = listOf(ReactionGroups.Group(p.emoji, 1, isHighlighted = c.fromMe)),
             mine = true,
-            modifier = Modifier.align(Alignment.BottomEnd).offset(x = 8.dp, y = 16.dp)
+            modifier = Modifier.align(Alignment.BottomEnd).offset(x = 8.dp, y = 22.dp)
         )
     }
 }
