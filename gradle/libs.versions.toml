@@ -2,11 +2,11 @@
 # 2.0.0 moved the build to AGP 9 (built-in Kotlin, new DSL) and compileSdk 37.
 # Library versions are kept up to date by Dependabot, see .github/dependabot.yml.
 [versions]
-# AGP 9.4 refuses any Gradle below 9.6.0. The wrapper names 9.8.0, and the
+# AGP 9.4 refuses any Gradle below 9.6.0. The wrapper names 9.8.1, and the
 # CI workflow reads its Gradle version from the wrapper, so the two cannot
 # drift apart.
 agp = "9.4.1"
-kotlin = "2.4.20"
+kotlin = "2.4.21"
 coreKtx = "1.19.1"
 lifecycle = "2.9.4"
 activityCompose = "1.11.0"
