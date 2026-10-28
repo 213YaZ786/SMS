@@ -36,7 +36,7 @@ object Signatures {
         if (pattern == null && tone == null) return null
         val id = "messages_" + (name?.lowercase()?.replace(' ', '_') ?: "phone") +
             (tone?.let { "_" + Integer.toHexString(it.hashCode()) } ?: "")
-        val label = listOfNotNull(name, if (tone != null) "own sound" else null).joinToString(" · ")
+        val label = listOfNotNull(name, if (tone != null) "own sound" else null).joinToString(", ")
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(id, "Messages: $label", NotificationManager.IMPORTANCE_HIGH).apply {
                 enableVibration(true)

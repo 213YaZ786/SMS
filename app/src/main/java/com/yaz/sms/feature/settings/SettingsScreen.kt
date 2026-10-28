@@ -256,7 +256,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 summary = when {
                     relays.isEmpty() -> if (settings.relay.isBlank()) "Automatic: the fastest, with backups" else settings.relay
                     relays.size == 1 -> relays[0]
-                    else -> relays[0] + " · backups: " + relays.drop(1).joinToString(", ")
+                    else -> relays[0] + ", backups " + relays.drop(1).joinToString(", ")
                 },
                 onClick = { dialog = OpenDialog.RELAY }
             ) else null
@@ -365,7 +365,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 top = { FloatingTop("Settings", leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) }) },
                 largeTitle = LargeTitle(
                     "Settings",
-                    status = if (settings.richChat) "Encrypted chat · $chatStatus" else "SMS and MMS only"
+                    status = if (settings.richChat) "Encrypted chat, ${chatStatus.lowercase()}" else "SMS and MMS only"
                 )
             ) { padding ->
                 if (wide) {
@@ -439,7 +439,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 options = run {
                     val used by androidx.compose.runtime.produceState(emptyList<String>()) { value = chat.relays() }
                     listOf("" to "Automatic: the fastest, with backups") + com.yaz.sms.core.chat.Relays.known(context).map { host ->
-                        host to if (used.any { it.endsWith(host) || it == host }) "$host · in use" else host
+                        host to if (used.any { it.endsWith(host) || it == host }) "$host (in use)" else host
                     }
                 },
                 selected = settings.relay,

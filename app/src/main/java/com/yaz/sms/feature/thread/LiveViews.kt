@@ -71,7 +71,7 @@ internal fun LivePill(until: Long, onStop: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
             Icon(AppIcons.MyLocation, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
             Text(
-                "Sharing live location · until " + LiveLocation.clock(until),
+                "Sharing live location until " +LiveLocation.clock(until),
                 style = MaterialTheme.typography.labelLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -97,6 +97,6 @@ internal fun LivePill(until: Long, onStop: () -> Unit) {
  */
 @Composable
 internal fun LiveCard(spot: RichChat.LiveSpot, group: Boolean, now: Long) {
-    val title = if (group && spot.name.isNotBlank()) "Live location · ${spot.name}" else "Live location"
+    val title = if (group && spot.name.isNotBlank()) "Live location of ${spot.name}" else "Live location"
     PlaceCard(Places.Place(spot.lat, spot.lon, title), subtitle = LiveLocation.updated(now, spot.at))
 }

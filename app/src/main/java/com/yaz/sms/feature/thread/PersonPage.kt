@@ -258,12 +258,12 @@ fun PersonPage(
                                 if (groupTools.picture != null && groupTools.chat && !groupTools.left) {
                                     Row(AppIcons.Delete, "Remove picture") { groupUi.clearing = true }
                                 }
-                                Row(AppIcons.AlternateEmail, if (groupTools.mentionsOn) "Mentions · Notify me" else "Mentions · Don't notify") {
+                                Row(AppIcons.AlternateEmail, if (groupTools.mentionsOn) "Notify me of mentions" else "Mentions without notification") {
                                     groupTools.onMentions(!groupTools.mentionsOn)
                                 }
                                 Row(AppIcons.ExitToApp, "Leave group", danger = true, hint = hint) { groupUi.needsChat(groupTools) { groupUi.leaving = true } }
                             }
-                            if (vanish != null) Row(AppIcons.Timer, if (vanish > 0) "Vanishing messages · ${vanishLabel(vanish)}" else "Vanishing messages") { choosingVanish = true }
+                            if (vanish != null) Row(AppIcons.Timer, if (vanish > 0) "Messages vanish after ${vanishLabel(vanish)}" else "Vanishing messages") { choosingVanish = true }
                             // Report spam beside Block, as Google Messages' conversation details
                             // (https://support.google.com/messages/answer/9061432), SpamBlocker's labelling.
                             if (canSpam) {
@@ -285,7 +285,7 @@ fun PersonPage(
                         item(key = "members") {
                             Column(verticalArrangement = MemberSpacing, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(top = 6.dp)) {
                                 Text(
-                                    "Members · ${groupTools.members.size}",
+                                    if (groupTools.members.size == 1) "1 member" else "${groupTools.members.size} members",
                                     style = MaterialTheme.typography.titleSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)
@@ -307,7 +307,7 @@ fun PersonPage(
                         if (these.isEmpty()) return@forEach
                         item(key = "head/$kind") {
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(top = 6.dp)) {
-                                Text("${kind.label} · ${these.size}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).padding(start = 6.dp))
+                                Text("${kind.label} (${these.size})", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).padding(start = 6.dp))
                                 if (these.size > (if (kind == Kind.PICTURES) 6 else 3)) QuietButton(onClick = {
                                     seeAll = kind
                                     showAll = true

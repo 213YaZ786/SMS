@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -52,17 +53,14 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
-import com.yaz.sms.feature.thread.FooterAt
-import com.yaz.sms.feature.thread.WithFooter
-import com.yaz.sms.feature.thread.hasMixedTextDirection
-import com.yaz.sms.feature.thread.measureLastLine
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.yaz.sms.core.dial.NumberActions
 import com.yaz.sms.core.dial.Numbers
@@ -805,7 +803,9 @@ private fun ConversationLine(
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
-    val title = name ?: Numbers.format(context, c.address)
+    // An empty name falls back to the formatted number, else "Unknown" (Dialer's CallLine after AOSP Dialer's
+    // CallLogEntryText.java).
+    val title = remember(name, c.address) { conversationTitle(name, Numbers.format(context, c.address)) }
     val unread = c.unread > 0
     val press = remember { MutableInteractionSource() }
     val pressed by press.collectIsPressedAsState()
@@ -910,61 +910,91 @@ private fun ConversationLine(
                 }
             )
         ) {
-            // The person card (iOS Messages' pinned conversations, the face with its name centred under it,
-            // for every conversation): a fixed column for the face and the name, the last message as a small
-            // bubble beside it, centred vertically, with its time inside. The unread count is the badge on the
-            // face's top end corner (HomeParts' pinned faces), the lock and the pin sit on its bottom corners.
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxHeight().padding(start = 6.dp, end = 14.dp, top = 10.dp, bottom = 10.dp)) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(CARD_FACE_COLUMN)) {
-                    Box {
-                        // Taken in the multi select: the check stands where the face was.
-                        if (selected == true) Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.size(CARD_FACE).background(MaterialTheme.colorScheme.primary, CircleShape)
-                        ) {
-                            Icon(AppIcons.Done, contentDescription = "Selected", tint = MaterialTheme.colorScheme.onPrimary)
-                        }
-                        else FaceAvatar(name, photo, look, members, CARD_FACE)
+            // The row of Dialer's recents (RecentsScreen.kt CallLine, after AOSP Dialer's call log entry) and of
+            // Signal's conversation list item (conversation_list_item_view.xml, avatar at the start, the name with
+            // the date pinned at the end of the same line, the snippet under it and the unread count at its end):
+            // the face, then a column that takes all the width left. First line the name (or the number) and the
+            // time (or the Trash's note), second line the last message and the unread count. The lock and the
+            // pin sit on the face's bottom corners.
+            // The face stands at the name's height (Signal: the avatar's top on the name's top), the whole row
+            // centred in a grid cell made taller by a neighbour's thumbnail.
+            Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
+            Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = 6.dp, end = 14.dp, top = 10.dp, bottom = 10.dp)) {
+                Box(Modifier.padding(start = 6.dp)) {
+                    // Taken in the multi select: the check stands where the face was.
+                    if (selected == true) Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(CARD_FACE).background(MaterialTheme.colorScheme.primary, CircleShape)
+                    ) {
+                        Icon(AppIcons.Done, contentDescription = "Selected", tint = MaterialTheme.colorScheme.onPrimary)
+                    }
+                    else FaceAvatar(name?.takeIf { it.isNotBlank() }, photo, look, members, CARD_FACE)
+                    if (encrypted) FaceMark(AppIcons.Lock, "End-to-end encrypted", Modifier.align(Alignment.BottomStart).offset(x = (-2).dp, y = 2.dp))
+                    if (pinned) FaceMark(AppIcons.PushPin, "Pinned", Modifier.align(Alignment.BottomEnd).offset(x = 2.dp, y = 2.dp))
+                }
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    // The name takes what the time leaves and is cut with an ellipsis; the time is never cut and
+                    // never wraps. Baselines aligned as the two sizes differ.
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            title,
+                            // The name starts at the face's side whatever its script (Dialer's CallLine, Compose's
+                            // TextDirection): an Arabic name in a left-to-right app would end up against the time.
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                textDirection = if (LocalLayoutDirection.current == LayoutDirection.Rtl) TextDirection.Rtl else TextDirection.Ltr
+                            ),
+                            fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            // A number is cut in its middle, so its last digits, the ones that tell it apart, stay
+                            // (Compose's TextOverflow.MiddleEllipsis, single line).
+                            overflow = if (name.isNullOrBlank()) TextOverflow.MiddleEllipsis else TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).alignByBaseline()
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            note ?: timeLabel(context, c.date),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.alignByBaseline()
+                        )
+                    }
+                    // The last message straight in the card, the unread count at the end of its line (Signal's
+                    // unread indicator: wrap_content, minWidth 18 dp), at the bottom when a thumbnail makes it tall.
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        LastMessageBubble(
+                            c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia,
+                            time = note ?: timeLabel(context, c.date),
+                            modifier = Modifier.weight(1f)
+                        )
                         if (unread) {
-                            // The count badge of HomeParts' pinned faces; TalkBack reads it as "3 unread".
+                            Spacer(Modifier.width(8.dp))
+                            // Signal's unread indicator (conversation_list_item_view.xml): wrap_content,
+                            // minWidth 18 dp, a round of the accent behind white text, so it grows with the
+                            // font and "9+" is never clipped. TalkBack reads it as "3 unread".
                             val count = c.unread
                             Box(
                                 contentAlignment = Alignment.Center,
                                 modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .offset(x = 4.dp, y = (-2).dp)
-                                    .size(20.dp)
+                                    .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
                                     .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                    .padding(horizontal = 5.dp, vertical = 1.dp)
                                     .clearAndSetSemantics { contentDescription = "$count unread" }
                             ) {
                                 Text(
-                                    if (count > 9) "9+" else count.toString(),
+                                    unreadLabel(count),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onPrimary
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
-                        if (encrypted) FaceMark(AppIcons.Lock, "End-to-end encrypted", Modifier.align(Alignment.BottomStart).offset(x = (-2).dp, y = 2.dp))
-                        if (pinned) FaceMark(AppIcons.PushPin, "Pinned", Modifier.align(Alignment.BottomEnd).offset(x = 2.dp, y = 2.dp))
                     }
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal,
-                        // One line: the card's height is the face's and the bubble's, not a long name's
-                        // (the user, 2026-10-28); the full name is in the conversation's header. A number without
-                        // a name is never cut: it wraps at its groups' spaces (+39 02 1234 5678) on two lines.
-                        maxLines = if (title.none(Char::isLetter)) 2 else 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp, start = 2.dp, end = 2.dp)
-                    )
                 }
-                LastMessageBubble(
-                    c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia,
-                    time = note ?: timeLabel(context, c.date),
-                    modifier = Modifier.weight(1f).padding(start = 6.dp)
-                )
+            }
             }
         }
     }
@@ -984,22 +1014,30 @@ private fun FaceMark(icon: androidx.compose.ui.graphics.vector.ImageVector, desc
     }
 }
 
-/** The face of a person card, and the column it stands in with the name under it. */
+/** The face of a person card. */
 private val CARD_FACE = 48.dp
-private val CARD_FACE_COLUMN = 88.dp
-
-/** The corners of the card's bubble: Signal's small radius on the avatar's side, a smaller big radius than the thread's. */
-private val CARD_BUBBLE = RoundedCornerShape(
-    topStart = com.yaz.sms.feature.thread.Clusters.SMALL_RADIUS, topEnd = 14.dp, bottomEnd = 14.dp, bottomStart = 14.dp
-)
 
 /**
- * The conversation's last message as a small bubble, its tail (the small corner) toward the face. The same
- * bubble glass as the thread's (ThreadScreen's `ZoneSurface(shape, accent = mine)`, feature/thread/ThreadScreen.kt)
- * and its corners from BubbleCluster.kt's Clusters: a message received in the neutral glass, the user's own in the
- * accent glass without "You:". A draft keeps "Draft:" (bold), a message that failed keeps "Not sent:" in the error
- * colour on the neutral glass, a picture message's subject is the first line (AOSP Messaging's
- * ConversationListItemView.setSubject). Three lines at most. Not clickable: the card is the tap target.
+ * The text of a conversation's title: its name, else the number as formatted, else "Unknown". A blank name counts
+ * as empty. Dialer's CallLine (RecentsScreen.kt: `name ?: shown`, name taken only when not blank, shown =
+ * formatted number `ifBlank { "Unknown" }`) after AOSP Dialer's CallLogEntryText.java.
+ */
+internal fun conversationTitle(name: String?, formatted: String): String =
+    name?.takeIf { it.isNotBlank() } ?: formatted.ifBlank { "Unknown" }
+
+/**
+ * The unread count's text: the number, "9+" past nine. Signal's ConversationListItem.java sets the indicator's
+ * text from the count (setUnreadIndicator, https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/conversationlist/ConversationListItem.java);
+ * the cap at nine is this app's badge as before (HomeParts' pinned faces).
+ */
+internal fun unreadLabel(count: Int): String = if (count > 9) "9+" else count.toString()
+
+/**
+ * The conversation's last message straight in the card, no bubble (Signal's conversation_list_item_view.xml: the
+ * snippet is plain text, two lines, under the name). A message the user sent starts with "You:" (Signal's list
+ * item prefixes the sender), a draft keeps "Draft:" (bold), a message that failed keeps "Not sent:" in the error
+ * colour, a picture message's subject is the first line (AOSP Messaging's ConversationListItemView.setSubject).
+ * Two lines at most, then an ellipsis. Not clickable: the card is the tap target.
  */
 @Composable
 private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hold: Boolean, time: String, modifier: Modifier = Modifier) {
@@ -1007,7 +1045,7 @@ private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hol
     // a card, a place, a file, a link alone. Null for words and for a draft.
     val lead = remember(c) { Lead.of(c) }
     if (lead is Lead.Reaction) {
-        ReactionBubble(c, lead, who, unread, time, CARD_BUBBLE, modifier)
+        ReactionBubble(c, lead, who, unread, time, modifier)
         return
     }
     val said = lead?.caption(c) ?: c.snippet
@@ -1015,6 +1053,8 @@ private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hol
     val draft = c.draft?.let { com.yaz.sms.core.sms.Markup.plain(it) }
     val subject = c.subject?.takeIf { c.draft == null }
     // A message of a subject alone has no snippet line.
+    // A message the user sent starts with "You:" (a draft with "Draft:", a failure with "Not sent:").
+    val sent = c.fromMe && !c.failed && draft == null
     val text = when {
         draft != null -> androidx.compose.ui.text.buildAnnotatedString {
             withStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold)) { append("Draft:") }
@@ -1024,73 +1064,38 @@ private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hol
         said.isEmpty() -> null
         // With a lead, "Not sent:" stands on a line of its own above it.
         c.failed && lead == null -> androidx.compose.ui.text.AnnotatedString("Not sent: $words")
+        sent -> androidx.compose.ui.text.AnnotatedString("You: $words")
         else -> androidx.compose.ui.text.AnnotatedString(words)
     }
-    val mine = (c.fromMe && !c.failed) || draft != null
     val ink = when {
-        mine -> androidx.compose.ui.graphics.Color.Unspecified
         c.failed -> MaterialTheme.colorScheme.error
         unread -> MaterialTheme.colorScheme.onSurface
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     val weight = if (unread) FontWeight.Medium else FontWeight.Normal
-    // The time (or the Trash's "N days left") is the bubble's footer: secondary, the accent when unread; in the
-    // user's own accent glass it takes the bubble's text colour, as the thread's footer does.
-    val stamp = CardTime(
-        time,
-        when {
-            mine -> androidx.compose.ui.graphics.Color.Unspecified
-            unread -> MaterialTheme.colorScheme.primary
-            else -> MaterialTheme.colorScheme.onSurfaceVariant
+    // At least one line high, for a message with nothing to say.
+    Column(modifier.heightIn(min = 20.dp)) {
+        if (subject != null) Text(
+            "Subject: $subject",
+            style = MaterialTheme.typography.bodyMedium,
+            color = ink,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (lead != null) {
+            if (c.failed) Text("Not sent:", style = MaterialTheme.typography.bodyMedium, color = ink, fontWeight = FontWeight.Bold)
+            LeadView(lead, who, hold, ink, weight)
         }
-    )
-    // The time rides the words' last line (Element X's ContentAvoidingLayout through the thread's WithFooter); a
-    // lead with no words carries it itself: on the pill of its thumbnail, or at the end of its second line.
-    val onWords = text != null || lead == null
-    val lastIsSubject = text == null && lead == null && subject != null
-    val last = text?.text ?: subject.orEmpty()
-    val mixed = remember(last) { hasMixedTextDirection(last) }
-    val unmeasured: (TextLayoutResult) -> Unit = remember { {} }
-    ZoneSurface(shape = CARD_BUBBLE, accent = mine, modifier = modifier) {
-        // Start-aligned words inside a bubble that takes all the width beside the face (Signal's conversation list
-        // item, conversation_list_item_view.xml: the summary is layout_width 0dp between its constraints).
-        val body = @Composable { onLayout: (com.yaz.sms.feature.thread.ContentAvoidingLayoutData) -> Unit ->
-            val measure = measureLastLine(onLayout, extraStart = 12.dp, extraEnd = 12.dp)
-            // At least the footer's height, for a message with nothing to say but its time.
-            Column(Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 20.dp)) {
-                if (subject != null) Text(
-                    "Subject: $subject",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ink,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    onTextLayout = if (lastIsSubject) measure else unmeasured,
-                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = if (lastIsSubject) 6.dp else 0.dp)
-                )
-                if (lead != null) {
-                    if (c.failed) Text("Not sent:", style = MaterialTheme.typography.bodyMedium, color = ink, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp))
-                    LeadView(lead, who, hold, ink, weight, time = if (onWords) null else stamp)
-                }
-                if (text != null) Text(
-                    text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ink,
-                    fontWeight = weight,
-                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = if (lead != null) 4.dp else 0.dp, bottom = 6.dp),
-                    maxLines = if (lead != null) 2 else if (subject != null) 2 else 3,
-                    overflow = TextOverflow.Ellipsis,
-                    onTextLayout = measure
-                )
-            }
-        }
-        if (onWords) WithFooter(
-            if (mixed) FooterAt.Below else FooterAt.Aligned,
-            { CardTimeText(stamp, it) },
-            Modifier.fillMaxWidth(),
-            words = last,
-            content = body
-        ) else body {}
+        if (text != null) Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = ink,
+            fontWeight = weight,
+            modifier = Modifier.padding(top = if (lead != null) 4.dp else 0.dp),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

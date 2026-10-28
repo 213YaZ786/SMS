@@ -103,7 +103,7 @@ internal fun CodeChip(c: Conversation, code: String, from: String?) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
             Column(Modifier.weight(1f)) {
-                Text("Code from ${from ?: c.address} · ${minutesAgo(c.date)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Code from ${from ?: c.address}, ${minutesAgo(c.date)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 RollingCode(code.chunked(3).joinToString(" "))
             }
             ZoneSurface(shape = CircleShape, accent = true) {

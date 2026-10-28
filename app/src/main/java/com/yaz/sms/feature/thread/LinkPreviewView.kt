@@ -175,9 +175,11 @@ internal fun PlaceCard(place: com.yaz.sms.core.sms.Places.Place, subtitle: Strin
                 Text(place.label ?: "Shared place", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     // A live location says how fresh it is instead of the coordinates (LiveCard).
-                    subtitle?.let { "$it · Open in maps" } ?: ("%.5f, %.5f".format(java.util.Locale.ROOT, place.lat, place.lon) + " · Open in maps"),
+                    subtitle ?: "%.5f, %.5f".format(java.util.Locale.ROOT, place.lat, place.lon),
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                // The action on its own line, not after a sign (the user's rule, 2026-10-28).
+                Text("Open in maps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

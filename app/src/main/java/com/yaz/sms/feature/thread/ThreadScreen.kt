@@ -906,7 +906,7 @@ private fun ThreadContent(
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp, end = 6.dp)) {
                         Icon(AppIcons.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Scheduled · " + com.yaz.sms.feature.conversations.aheadLabel(context, sc.at) + " · tap to cancel", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Scheduled " + com.yaz.sms.feature.conversations.aheadLabel(context, sc.at).replaceFirstChar { it.lowercase() } + ", tap to cancel", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -1784,7 +1784,7 @@ private fun Bubble(
                     Spacer(Modifier.width(4.dp))
                 }
                 Text(
-                    listOfNotNull(if (rich.pinned) "Pinned" else null, if (rich.edited) "edited" else null).joinToString(" · "),
+                    listOfNotNull(if (rich.pinned) "Pinned" else null, if (rich.edited) "edited" else null).joinToString(", "),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1836,7 +1836,7 @@ private fun Bubble(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp, end = 14.dp, bottom = 6.dp)) {
                 Icon(AppIcons.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(if (m.mms) "Not sent" else "Not sent · tap to try again", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                Text(if (m.mms) "Not sent" else "Not sent, tap to try again", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             }
         }
     }

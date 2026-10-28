@@ -236,8 +236,8 @@ internal fun Line(item: Item) {
     val (icon, title, under) = when (item) {
         is Item.File -> Triple(AppIcons.AttachFile, item.part.name ?: "File", day)
         is Item.Link -> Triple(if (item.doubtful != null) AppIcons.Warning else AppIcons.Forward, runCatching { java.net.URI(item.url).host }.getOrNull() ?: item.url, item.url)
-        is Item.Code -> Triple(AppIcons.Lock, item.code, "Code · $day")
-        is Item.Parcel -> Triple(AppIcons.Archive, item.number, "Parcel · $day")
+        is Item.Code -> Triple(AppIcons.Lock, item.code, "Code, $day")
+        is Item.Parcel -> Triple(AppIcons.Archive, item.number, "Parcel, $day")
         is Item.Meeting -> Triple(AppIcons.Schedule, DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).format(item.at), item.text)
         is Item.Picture -> Triple(AppIcons.Image, "Photo", day)
     }

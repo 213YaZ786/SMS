@@ -110,6 +110,9 @@ dependencies {
     // A message of only emoji shows them big and moving: Lottie by Airbnb (Apache-2.0)
     // playing Google's Noto animated emoji (CC BY 4.0) kept in assets/emoji.
     implementation("com.airbnb.android:lottie-compose:6.7.1")
+    // Numbers shown as the country writes them, offline: Google's libphonenumber (Apache-2.0),
+    // with its own data, no network.
+    implementation("com.googlecode.libphonenumber:libphonenumber:9.0.41")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.process)
