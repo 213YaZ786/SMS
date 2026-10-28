@@ -1,0 +1,108 @@
+# The encrypted chat's engine, built from chatmail core's own sources with the
+# dependencies whose known flaws have a compatible fix moved to that fix, then
+# published as this repository's release "engine-<core version>-p<n>"; the
+# app's fetchChatmail downloads it at its pinned SHA-256.
+#
+# The build is chatmail core's own Android job (nix build of
+# deltachat-rpc-server-<arch>-android, github.com/chatmail/core
+# .github/workflows/deltachat-rpc-server.yml, build_android); the lockfile is
+# moved with cargo update <spec> --precise <version>
+# (https://doc.rust-lang.org/cargo/commands/cargo-update.html), and checked
+# with Google's osv-scanner before and after.
+#
+# Runs only on a push to the branch "engine" or by hand: main's Build is not
+# triggered, so no app release comes from it.
+name: Engine
+
+on:
+  push:
+    branches: [engine]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CORE_VERSION: "2.62.0"
+  # v2.62.0's commit, so a moved tag changes nothing.
+  CORE_COMMIT: "c41cac76d284f44094341c5d9f4eb3a847e2c34b"
+  PATCH: "p1"
+
+jobs:
+  build:
+    name: Android ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64-v8a, armeabi-v7a]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: chatmail/core
+          ref: ${{ env.CORE_COMMIT }}
+          show-progress: false
+          persist-credentials: false
+
+      # The same Nix installer, at the same commit, as chatmail core's job.
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
+
+      - name: Known flaws before
+        run: nix shell nixpkgs#osv-scanner --command osv-scanner scan -L Cargo.lock || true
+
+      # Only semver-compatible fixes: the engine's code is unchanged. iroh's
+      # own copies (hickory 0.25, rustls-webpki 0.102, quinn) stay, the app
+      # keeps iroh off (webxdc_realtime_enabled 0).
+      - name: Move the dependencies to their fixes
+        run: |
+          nix shell nixpkgs#cargo --command sh -eu -c '
+            cargo update rustls@0.23.45 --precise 0.23.46
+            cargo update rustls-webpki@0.103.15 --precise 0.103.16
+            cargo update tokio --precise 1.53.3
+            cargo update webpki-roots@0.26.8 --precise 0.26.11
+            cargo update event-listener --precise 5.4.2
+            cargo update quinn-proto --precise 0.11.18
+          '
+          git diff --stat Cargo.lock
+
+      - name: Known flaws after
+        run: nix shell nixpkgs#osv-scanner --command osv-scanner scan -L Cargo.lock || true
+
+      - name: Build deltachat-rpc-server
+        run: nix build .#deltachat-rpc-server-${{ matrix.arch }}-android
+
+      - name: Name and checksum
+        run: |
+          mkdir out
+          cp result/bin/deltachat-rpc-server "out/deltachat-rpc-server-${{ matrix.arch }}-android"
+          cp Cargo.lock "out/Cargo-${{ matrix.arch }}.lock"
+          sha256sum out/* | tee out/SHA256-${{ matrix.arch }}.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: engine-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="engine-${CORE_VERSION}-${PATCH}"
+          cat out/SHA256-*.txt
+          gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Encrypted chat engine ${CORE_VERSION} (${PATCH})" \
+            --notes "chatmail core ${CORE_VERSION} built with rustls 0.23.46, rustls-webpki 0.103.16, tokio 1.53.3, webpki-roots 0.26.11, event-listener 5.4.2, quinn-proto 0.11.18." \
+            out/deltachat-rpc-server-* out/Cargo-*.lock out/SHA256-*.txt
