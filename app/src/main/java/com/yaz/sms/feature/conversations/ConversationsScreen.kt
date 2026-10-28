@@ -951,10 +951,13 @@ private fun ConversationLine(
                         title,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 2,
+                        // One line: the card's height is the face's and the bubble's, not a long name's
+                        // (the user, 2026-10-28); the full name is in the conversation's header. A number without
+                        // a name is never cut: it wraps at its groups' spaces (+39 02 1234 5678) on two lines.
+                        maxLines = if (title.none(Char::isLetter)) 2 else 1,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 6.dp, start = 4.dp, end = 4.dp)
+                        modifier = Modifier.padding(top = 4.dp, start = 2.dp, end = 2.dp)
                     )
                 }
                 LastMessageBubble(
@@ -982,7 +985,7 @@ private fun FaceMark(icon: androidx.compose.ui.graphics.vector.ImageVector, desc
 }
 
 /** The face of a person card, and the column it stands in with the name under it. */
-private val CARD_FACE = 56.dp
+private val CARD_FACE = 48.dp
 private val CARD_FACE_COLUMN = 88.dp
 
 /** The corners of the card's bubble: Signal's small radius on the avatar's side, a smaller big radius than the thread's. */
