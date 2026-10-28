@@ -258,10 +258,11 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         val e = index.find(T9.clean(a))
         PinnedFace(e?.name ?: "", e?.photo, e?.look)
     }
-    val line: @Composable (Conversation, Modifier) -> Unit = { c, cardModifier ->
+    val line: @Composable (Conversation, Modifier, Boolean) -> Unit = { c, cardModifier, vertical ->
         ConversationLine(
             c,
             modifier = cardModifier,
+            vertical = vertical,
             members = remember(c.addresses, index) { membersOf(c) },
             name = nameOf(c),
             // The thread's rule (ThreadScreen holdMedia): the media of a message received from a number not in the
@@ -533,7 +534,15 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
               // https://developer.android.com/guide/topics/large-screens/large-screen-canonical-layouts
               val gap = 8.dp
               val inner = maxWidth - 32.dp
-              val columns = ((inner + gap) / (280.dp + gap)).toInt().coerceIn(1, 4)
+              val wide = ((inner + gap) / (280.dp + gap)).toInt()
+              // Narrower than two horizontal cards need (a phone upright): two columns of a vertical card, the face
+              // on top, each cell at least 150 dp so the text stays readable; below two such cells (a very narrow
+              // window, a huge font) the single horizontal column stays. Layout after Android's adaptive grid,
+              // LazyVerticalGrid(GridCells.Adaptive(minSize)) with a card of its image on top and its text below:
+              // https://dev.to/myougatheaxo/lazyverticalgrid-staggeredgrid-compose-grid-layout-guide-419l
+              // https://developer.android.com/agents/skills/jetpack-compose/adaptive/skill
+              val vertical = wide < 2 && inner >= 150.dp * 2 + gap
+              val columns = if (vertical) 2 else wide.coerceIn(1, 4)
               val cell = (inner - gap * (columns - 1)) / columns
               val oneColumn = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth()
               LazyColumn(
@@ -547,9 +556,9 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 // TileGrid (tiles.chunked(columns), a row per chunk), after AOSP SystemUI's TileLayout
                 // https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/packages/SystemUI/src/com/android/systemui/qs/TileLayout.java
                 fun androidx.compose.foundation.lazy.LazyListScope.cards(list: List<Conversation>, key: (Conversation) -> Any) {
-                    if (columns == 1) items(list, key = key) { c -> Box(Modifier.animateItem()) { line(c, oneColumn) } }
+                    if (columns == 1) items(list, key = key) { c -> Box(Modifier.animateItem()) { line(c, oneColumn, false) } }
                     else items(list.chunked(columns), key = { row -> key(row.first()) }) { row ->
-                        CardRow(row, cell, gap, Modifier.animateItem()) { c, m -> line(c, m) }
+                        CardRow(row, cell, gap, Modifier.animateItem()) { c, m -> line(c, m, vertical) }
                     }
                 }
                 if (code != null && filter == Filter.ALL && query.isBlank()) {
@@ -792,6 +801,8 @@ private fun ConversationLine(
     selected: Boolean? = null,
     /** A group's people, for the cluster of their faces. */
     members: List<PinnedFace> = emptyList(),
+    /** A narrow window: the card laid out top to bottom (face, name, last message), centred, two to a line. */
+    vertical: Boolean = false,
     /** The card's outer size: a column's width by default, a grid cell's in the grid. */
     modifier: Modifier = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth()
 ) {
@@ -905,57 +916,85 @@ private fun ConversationLine(
             // The person card (iOS Messages' pinned conversations, the face with its name centred under it,
             // for every conversation): a fixed column for the face and the name, the last message as a small
             // bubble beside it, the time and the unread count at the end of its top line.
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp, end = 14.dp, top = 10.dp, bottom = 10.dp)) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(CARD_FACE_COLUMN)) {
-                    // Taken in the multi select: the check stands where the face was.
-                    if (selected == true) Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.size(CARD_FACE).background(MaterialTheme.colorScheme.primary, CircleShape)
-                    ) {
-                        Icon(AppIcons.Done, contentDescription = "Selected", tint = MaterialTheme.colorScheme.onPrimary)
-                    }
-                    else FaceAvatar(name, photo, look, members, CARD_FACE)
+            // [vertical] (a narrow window): the same pieces top to bottom and centred, the lock, pin and time on
+            // the top line, the unread count on the face, the name under it, the bubble over the whole width.
+            // Taken in the multi select: the check stands where the face was.
+            val faceOrCheck: @Composable (androidx.compose.ui.unit.Dp) -> Unit = { size ->
+                if (selected == true) Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(size).background(MaterialTheme.colorScheme.primary, CircleShape)
+                ) {
+                    Icon(AppIcons.Done, contentDescription = "Selected", tint = MaterialTheme.colorScheme.onPrimary)
+                }
+                else FaceAvatar(name, photo, look, members, size)
+            }
+            val nameText: @Composable () -> Unit = {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp, end = 4.dp)
+                )
+            }
+            val locks: @Composable () -> Unit = {
+                if (encrypted) {
+                    Icon(AppIcons.Lock, contentDescription = "End-to-end encrypted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                }
+                if (pinned) {
+                    Icon(AppIcons.PushPin, contentDescription = "Pinned", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                }
+            }
+            val badge: @Composable (Modifier) -> Unit = { m ->
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = m
+                        .size(20.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                ) {
                     Text(
-                        title,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp, start = 4.dp, end = 4.dp)
+                        if (c.unread > 9) "9+" else c.unread.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
+                }
+            }
+            val time: @Composable () -> Unit = {
+                Text(
+                    note ?: timeLabel(context, c.date),
+                    style = if (vertical) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                    color = if (unread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (vertical) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize().padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 10.dp)) {
+                // The lock and the pin at the start corner, the time at the end corner.
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    locks()
+                    Spacer(Modifier.weight(1f))
+                    time()
+                }
+                // The face with its unread count on it.
+                Box(Modifier.padding(top = 2.dp)) {
+                    faceOrCheck(CARD_FACE_VERTICAL)
+                    if (unread) badge(Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-4).dp))
+                }
+                nameText()
+                LastMessageBubble(c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia, centered = true, modifier = Modifier.padding(top = 6.dp).fillMaxWidth())
+            } else Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp, end = 14.dp, top = 10.dp, bottom = 10.dp)) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(CARD_FACE_COLUMN)) {
+                    faceOrCheck(CARD_FACE)
+                    nameText()
                 }
                 Column(Modifier.weight(1f).padding(start = 6.dp)) {
                     // The lock, the pin, the unread count and the time, at the end of the top line.
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.align(Alignment.End)) {
-                        if (encrypted) {
-                            Icon(AppIcons.Lock, contentDescription = "End-to-end encrypted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(6.dp))
-                        }
-                        if (pinned) {
-                            Icon(AppIcons.PushPin, contentDescription = "Pinned", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(6.dp))
-                        }
-                        if (unread) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .padding(end = 6.dp)
-                                    .size(20.dp)
-                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
-                            ) {
-                                Text(
-                                    if (c.unread > 9) "9+" else c.unread.toString(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                            }
-                        }
-                        Text(
-                            note ?: timeLabel(context, c.date),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (unread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        locks()
+                        if (unread) badge(Modifier.padding(end = 6.dp))
+                        time()
                     }
                     LastMessageBubble(c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia, modifier = Modifier.padding(top = 4.dp).align(Alignment.Start))
                 }
@@ -967,6 +1006,9 @@ private fun ConversationLine(
 /** The face of a person card, and the column it stands in with the name under it. */
 private val CARD_FACE = 56.dp
 private val CARD_FACE_COLUMN = 88.dp
+
+/** The face of the vertical card. */
+private val CARD_FACE_VERTICAL = 48.dp
 
 /** The corners of the card's bubble: Signal's small radius on the avatar's side, a smaller big radius than the thread's. */
 private val CARD_BUBBLE = RoundedCornerShape(
@@ -982,7 +1024,7 @@ private val CARD_BUBBLE = RoundedCornerShape(
  * ConversationListItemView.setSubject). Three lines at most. Not clickable: the card is the tap target.
  */
 @Composable
-private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hold: Boolean, modifier: Modifier = Modifier) {
+private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hold: Boolean, modifier: Modifier = Modifier, centered: Boolean = false) {
     // What the newest message is besides words (LastMessagePreview.kt): a reaction, a picture or a film, a sound,
     // a card, a place, a file, a link alone. Null for words and for a draft.
     val lead = remember(c) { Lead.of(c) }
@@ -1016,9 +1058,10 @@ private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hol
     }
     val weight = if (unread) FontWeight.Medium else FontWeight.Normal
     ZoneSurface(shape = CARD_BUBBLE, accent = mine, modifier = modifier) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start) {
             if (subject != null) Text(
                 "Subject: $subject",
+                textAlign = if (centered) TextAlign.Center else TextAlign.Unspecified,
                 style = MaterialTheme.typography.bodyMedium,
                 color = ink,
                 fontWeight = FontWeight.Medium,
@@ -1034,6 +1077,7 @@ private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hol
                 style = MaterialTheme.typography.bodyMedium,
                 color = ink,
                 fontWeight = weight,
+                textAlign = if (centered) TextAlign.Center else TextAlign.Unspecified,
                 modifier = if (lead != null) Modifier.padding(top = 4.dp) else Modifier,
                 maxLines = if (lead != null) 2 else if (subject != null) 2 else 3,
                 overflow = TextOverflow.Ellipsis
