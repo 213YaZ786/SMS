@@ -245,6 +245,13 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             }
             // Read receipts as the user chose, at each start (Delta Chat Android keeps it in the engine's config).
             engine.call("set_config", account, ReadReceipts.KEY, ReadReceipts.value(settings.current.readReceipts))
+            // SMS uses no webxdc app and no backup transfer: the engine's peer-to-peer channel (iroh) stays off,
+            // and with it the DNS resolver, QUIC and the older certificate checker that carry this engine's
+            // known flaws (hickory 0.25.2, quinn-proto 0.11.16, rustls-webpki 0.102.8; osv-scanner on core
+            // 2.62.0's Cargo.lock). The engine starts iroh only when this is on, for a webxdc's realtime data
+            // or a peer's gossip header: chatmail core src/peer_channels.rs (get_or_try_init_peer_channel,
+            // add_gossip_peer_from_header), https://github.com/chatmail/core/blob/v2.62.0/src/peer_channels.rs
+            engine.call("set_config", account, "webxdc_realtime_enabled", "0")
             engine.call("start_io", account)
             _ready.value = true
             scope.launch {
