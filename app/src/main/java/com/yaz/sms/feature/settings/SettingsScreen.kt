@@ -149,6 +149,8 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
     // The tile whose long press is open (its id), "" when none.
     var tileId by rememberSaveable { mutableStateOf("") }
     var section by rememberSaveable { mutableStateOf(SettingsSection.CHAT) }
+    // On a phone every section starts folded; the one open stays open across a turn of the screen.
+    var openSection by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
     // What Android gives as the SIM's number, read once (OwnNumbers.sim): shown under "My number" and prefilled in its field.
     val simNumber = remember { com.yaz.sms.core.mms.OwnNumbers.sim(context).firstOrNull() }
 
@@ -383,7 +385,11 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                             .padding(horizontal = LocalReadableInset.current)
                     ) {
                         HeaderSpacer(padding)
-                        SettingsSection.entries.forEach { page(it) }
+                        Spacer(Modifier.height(24.dp))
+                        FoldedSections(open = openSection, onOpen = { openSection = it }) { which ->
+                            val list: List<SettingsTile> = tiles[which].orEmpty() + actions[which].orEmpty()
+                            if (list.isNotEmpty()) TileGrid(list) { tileId = it.id }
+                        }
                         Spacer(Modifier.height(24.dp))
                         Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
                     }
@@ -539,9 +545,15 @@ private fun ListDetail(
     }
 }
 
-/** A section in the list of a wide window: its icon and name, the chosen one washed with the accent. */
+/**
+ * A section in the list of a wide window: its icon and name, the chosen one washed with the accent.
+ * On a phone the same row heads a folded section: [expanded] says whether its tiles are open under it,
+ * and TalkBack reads it as a button that is expanded or collapsed (a state description, as Compose's
+ * accessibility guide gives a toggling control:
+ * https://developer.android.com/develop/ui/compose/accessibility/semantics).
+ */
 @Composable
-private fun SectionListRow(section: SettingsSection, selected: Boolean, onClick: () -> Unit) {
+private fun SectionListRow(section: SettingsSection, selected: Boolean, expanded: Boolean? = null, onClick: () -> Unit) {
     val haptics = rememberHaptics()
     ZoneSurface(
         shape = RoundedCornerShape(20.dp),
@@ -553,11 +565,49 @@ private fun SectionListRow(section: SettingsSection, selected: Boolean, onClick:
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .semantics { this.selected = selected }
+            .semantics {
+                if (expanded == null) this.selected = selected
+                else {
+                    role = Role.Button
+                    stateDescription = if (expanded) "Expanded" else "Collapsed"
+                }
+            }
     ) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(section.icon, contentDescription = null, modifier = Modifier.size(24.dp))
             Text(section.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 16.dp))
+        }
+    }
+}
+
+/**
+ * A phone's Settings: the sections as the wide window's list shows them, all folded; a tap unfolds that
+ * section's tiles right under its row (the others fold, so one is open at a time; a second tap folds it).
+ * The tiles slide open with AnimatedVisibility's expandVertically + fadeIn, Compose's recipe for content that
+ * appears under a header
+ * (https://github.com/androidx/androidx/blob/androidx-main/compose/animation/animation/src/commonMain/kotlin/androidx/compose/animation/AnimatedVisibility.kt,
+ * https://developer.android.com/develop/ui/compose/animation/composables-modifiers#animatedvisibility).
+ */
+@Composable
+private fun FoldedSections(
+    open: SettingsSection?,
+    onOpen: (SettingsSection?) -> Unit,
+    tilesOf: @Composable (SettingsSection) -> Unit
+) {
+    Column {
+        SettingsSection.entries.forEach { which ->
+            val expanded = which == open
+            Box(Modifier.padding(horizontal = 16.dp)) {
+                SectionListRow(which, selected = expanded, expanded = expanded) { onOpen(if (expanded) null else which) }
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = expanded,
+                enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut()
+            ) {
+                // Room around the grid so the tiles' soft shadows are not cut while it slides.
+                Column(Modifier.padding(top = 8.dp, bottom = 12.dp)) { tilesOf(which) }
+            }
         }
     }
 }
