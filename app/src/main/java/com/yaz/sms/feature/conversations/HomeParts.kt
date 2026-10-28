@@ -181,10 +181,17 @@ internal fun ServicesStack(services: List<Conversation>, open: Boolean, onToggle
 private fun Modifier.matchParentSizeOf(): Modifier = this.fillMaxWidth().height(64.dp)
 
 /** What a pinned avatar shows of a conversation: its name, photo and look. */
-internal class PinnedFace(name: String, photo: String?, look: com.yaz.sms.core.dial.ContactLook.Look?) {
+internal class PinnedFace(
+    name: String,
+    photo: String?,
+    look: com.yaz.sms.core.dial.ContactLook.Look?,
+    /** A group's people, for the cluster of their faces (GroupFace); empty for a person. */
+    members: List<PinnedFace> = emptyList()
+) {
     val name: String = name
     val photo: String? = photo
     val look: com.yaz.sms.core.dial.ContactLook.Look? = look
+    val members: List<PinnedFace> = members
 }
 
 /** iOS Messages keeps at most nine pinned conversations as avatars. */
@@ -280,7 +287,7 @@ private fun PinnedFaceItem(c: Conversation, face: PinnedFace, selected: Boolean?
             ) {
                 Icon(AppIcons.Done, contentDescription = "Selected", tint = MaterialTheme.colorScheme.onPrimary)
             }
-            else com.yaz.sms.ui.component.ContactAvatar(face.name, face.photo, 64.dp, look = face.look)
+            else FaceAvatar(face.name, face.photo, face.look, face.members, 64.dp)
             if (unread) {
                 Box(
                     contentAlignment = Alignment.Center,

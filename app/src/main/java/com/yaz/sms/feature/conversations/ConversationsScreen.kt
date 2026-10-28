@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -52,6 +53,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yaz.sms.core.dial.NumberActions
@@ -251,9 +253,16 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         if (taking == null && filter != Filter.TRASH) peeking = c
         else picked = (if (taking != null && c.threadId in taking) taking - c.threadId else (taking ?: emptySet()) + c.threadId).ifEmpty { null }
     }
-    val line: @Composable (Conversation) -> Unit = { c ->
+    // A group's people, up to four, for the cluster of their faces (Element X's AvatarCluster).
+    fun membersOf(c: Conversation): List<PinnedFace> = if (!c.group) emptyList() else c.addresses.take(4).map { a ->
+        val e = index.find(T9.clean(a))
+        PinnedFace(e?.name ?: "", e?.photo, e?.look)
+    }
+    val line: @Composable (Conversation, Modifier) -> Unit = { c, cardModifier ->
         ConversationLine(
             c,
+            modifier = cardModifier,
+            members = remember(c.addresses, index) { membersOf(c) },
             name = nameOf(c),
             photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
             look = if (c.group) null else index.find(T9.clean(c.address))?.look,
@@ -512,13 +521,34 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     else -> AppIcons.Message
                 },                modifier = Modifier.fillMaxSize().padding(padding)
             )
-            else -> LazyColumn(
+            else -> BoxWithConstraints(Modifier.fillMaxSize()) {
+              // From the Medium width class the cards go in 2 columns, 3 when Expanded and each card keeps
+              // at least 320 dp; a phone upright keeps one (navigation/WindowWidth.kt).
+              val gap = 8.dp
+              val inner = maxWidth - 32.dp
+              val columns = when (com.yaz.sms.navigation.WidthClass.of(maxWidth)) {
+                  com.yaz.sms.navigation.WidthClass.COMPACT -> 1
+                  com.yaz.sms.navigation.WidthClass.MEDIUM -> 2
+                  com.yaz.sms.navigation.WidthClass.EXPANDED -> if ((inner - gap * 2) / 3 >= 320.dp) 3 else 2
+              }
+              val cell = (inner - gap * (columns - 1)) / columns
+              val oneColumn = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth()
+              LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding() + 96.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
-            ) {
+              ) {
+                // The cards of a list, one per line or in rows of equal cells: this app's SettingsScreen.kt
+                // TileGrid (tiles.chunked(columns), a row per chunk), after AOSP SystemUI's TileLayout
+                // https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/packages/SystemUI/src/com/android/systemui/qs/TileLayout.java
+                fun androidx.compose.foundation.lazy.LazyListScope.cards(list: List<Conversation>, key: (Conversation) -> Any) {
+                    if (columns == 1) items(list, key = key) { c -> Box(Modifier.animateItem()) { line(c, oneColumn) } }
+                    else items(list.chunked(columns), key = { row -> key(row.first()) }) { row ->
+                        CardRow(row, cell, gap, Modifier.animateItem()) { c, m -> line(c, m) }
+                    }
+                }
                 if (code != null && filter == Filter.ALL && query.isBlank()) {
                     item(key = "code") { CodeChip(code.first, code.second, nameOf(code.first)) }
                 }
@@ -531,7 +561,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                             faces,
                             face = { c ->
                                 val entry = if (c.group) null else index.find(T9.clean(c.address))
-                                PinnedFace(nameOf(c) ?: Numbers.format(context, c.address), entry?.photo, entry?.look)
+                                PinnedFace(nameOf(c) ?: Numbers.format(context, c.address), entry?.photo, entry?.look, membersOf(c))
                             },
                             selected = { c -> picked?.contains(c.threadId) },
                             onOpen = openConversation,
@@ -543,15 +573,14 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 // People first; every service (banks, deliveries, codes) in one stack.
                 val (services, people) = shown.filterNot { it.threadId in onFaces }.partition { Lists.isService(it) && filter == Filter.ALL && query.isBlank() }
                 if (services.isNotEmpty() && people.isNotEmpty()) item(key = "people") { Heading("People") }
-                items(people, key = { it.threadId }) { c -> line(c) }
+                cards(people) { it.threadId }
                 if (services.isNotEmpty()) {
                     item(key = "services") {
                         ServicesStack(services, open = servicesOpen) { servicesOpen = !servicesOpen }
                     }
-                    if (servicesOpen) items(services, key = { "s/${it.threadId}" }) { c ->
-                        Box(Modifier.animateItem()) { line(c) }
-                    }
+                    if (servicesOpen) cards(services) { "s/${it.threadId}" }
                 }
+              }
             }
         }
     }
@@ -755,7 +784,11 @@ private fun ConversationLine(
     note: String? = null,
     onSwipe: (com.yaz.sms.core.sms.SwipeAction) -> Unit,
     /** Several at once (AOSP Messaging's multi select): null out of it, else whether this one is taken. */
-    selected: Boolean? = null
+    selected: Boolean? = null,
+    /** A group's people, for the cluster of their faces. */
+    members: List<PinnedFace> = emptyList(),
+    /** The card's outer size: a column's width by default, a grid cell's in the grid. */
+    modifier: Modifier = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth()
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -772,7 +805,7 @@ private fun ConversationLine(
     var armed by remember { mutableStateOf(false) }
     val reach = with(androidx.compose.ui.platform.LocalDensity.current) { 88.dp.toPx() }
     val side = if (pull.value < 0f) left else right
-    Box(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().pointerInput(c.threadId, left, right) {
+    Box(modifier.pointerInput(c.threadId, left, right) {
         detectHorizontalDragGestures(
             onDragEnd = {
                 val action = if (pull.value < 0f) left else right
@@ -842,10 +875,10 @@ private fun ConversationLine(
                 Text(label, style = MaterialTheme.typography.labelLarge, color = tint)
             }
         }
-        val shape = RoundedCornerShape(22.dp)
+        val shape = RoundedCornerShape(28.dp)
         ZoneSurface(
             shape = shape,
-            modifier = Modifier.fillMaxWidth().graphicsLayer {
+            modifier = Modifier.fillMaxSize().graphicsLayer {
                 scaleX = sink
                 scaleY = sink
                 translationX = pull.value
@@ -864,95 +897,144 @@ private fun ConversationLine(
                 }
             )
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 14.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)) {
-                Box {
+            // The person card (iOS Messages' pinned conversations, the face with its name centred under it,
+            // for every conversation): a fixed column for the face and the name, the last message as a small
+            // bubble beside it, the time and the unread count at the end of its top line.
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp, end = 14.dp, top = 10.dp, bottom = 10.dp)) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(CARD_FACE_COLUMN)) {
                     // Taken in the multi select: the check stands where the face was.
                     if (selected == true) Box(
                         contentAlignment = Alignment.Center,
-                        modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.primary, CircleShape)
+                        modifier = Modifier.size(CARD_FACE).background(MaterialTheme.colorScheme.primary, CircleShape)
                     ) {
                         Icon(AppIcons.Done, contentDescription = "Selected", tint = MaterialTheme.colorScheme.onPrimary)
                     }
-                    else ContactAvatar(name, photo, 48.dp, look = look)
-                    if (unread) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .offset(x = 4.dp, y = (-4).dp)
-                                .size(20.dp)
-                                .background(MaterialTheme.colorScheme.primary, CircleShape)
-                        ) {
-                            Text(
-                                if (c.unread > 9) "9+" else c.unread.toString(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                        }
-                    }
+                    else FaceAvatar(name, photo, look, members, CARD_FACE)
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp, end = 4.dp)
+                    )
                 }
-                Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // The name takes all the room the time leaves, the pin right after it.
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Text(
-                                title,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false)
-                            )
-                            if (encrypted) {
-                                Spacer(Modifier.width(6.dp))
-                                Icon(AppIcons.Lock, contentDescription = "End-to-end encrypted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                            }
-                            if (pinned) {
-                                Spacer(Modifier.width(6.dp))
-                                Icon(AppIcons.PushPin, contentDescription = "Pinned", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                Column(Modifier.weight(1f).padding(start = 6.dp)) {
+                    // The lock, the pin, the unread count and the time, at the end of the top line.
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.align(Alignment.End)) {
+                        if (encrypted) {
+                            Icon(AppIcons.Lock, contentDescription = "End-to-end encrypted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        if (pinned) {
+                            Icon(AppIcons.PushPin, contentDescription = "Pinned", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        if (unread) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .padding(end = 6.dp)
+                                    .size(20.dp)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                            ) {
+                                Text(
+                                    if (c.unread > 9) "9+" else c.unread.toString(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
                             }
                         }
-                        Spacer(Modifier.width(8.dp))
                         Text(
                             note ?: timeLabel(context, c.date),
                             style = MaterialTheme.typography.labelMedium,
                             color = if (unread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    // A picture message's subject over its snippet, as AOSP Messaging's conversation list does
-                    // (ConversationListItemView.setSubject: the "Subject: " label and the cleansed subject, a line of its own).
-                    if (c.subject != null && c.draft == null) Text(
-                        "Subject: " + c.subject,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = if (unread) FontWeight.Medium else FontWeight.Normal,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    val line = when {
-                        // A draft wins the line, as AOSP Messaging shows its drafts first.
-                        c.draft != null -> "Draft: " + com.yaz.sms.core.sms.Markup.plain(c.draft)
-                        c.failed -> "Not sent: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
-                        c.fromMe -> "You: " + com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
-                        else -> com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
-                    }
-                    // A message of a subject alone has no snippet line (fromMe or not: "You: " alone says nothing).
-                    if (c.snippet.isNotEmpty() || c.draft != null) Text(
-                        line,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = when {
-                            c.draft != null -> MaterialTheme.colorScheme.primary
-                            c.failed -> MaterialTheme.colorScheme.error
-                            unread -> MaterialTheme.colorScheme.onSurface
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        fontWeight = if (unread) FontWeight.Medium else FontWeight.Normal,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    LastMessageBubble(c, unread, Modifier.padding(top = 4.dp).align(Alignment.Start))
                 }
             }
         }
+    }
+}
+
+/** The face of a person card, and the column it stands in with the name under it. */
+private val CARD_FACE = 56.dp
+private val CARD_FACE_COLUMN = 88.dp
+
+/** The corners of the card's bubble: Signal's small radius on the avatar's side, a smaller big radius than the thread's. */
+private val CARD_BUBBLE = RoundedCornerShape(
+    topStart = com.yaz.sms.feature.thread.Clusters.SMALL_RADIUS, topEnd = 14.dp, bottomEnd = 14.dp, bottomStart = 14.dp
+)
+
+/**
+ * The conversation's last message as a small bubble, its tail (the small corner) toward the face. The same
+ * bubble glass as the thread's (ThreadScreen's `ZoneSurface(shape, accent = mine)`, feature/thread/ThreadScreen.kt)
+ * and its corners from BubbleCluster.kt's Clusters: a message received in the neutral glass, the user's own in the
+ * accent glass without "You:". A draft keeps "Draft:" (bold), a message that failed keeps "Not sent:" in the error
+ * colour on the neutral glass, a picture message's subject is the first line (AOSP Messaging's
+ * ConversationListItemView.setSubject). Three lines at most. Not clickable: the card is the tap target.
+ */
+@Composable
+private fun LastMessageBubble(c: Conversation, unread: Boolean, modifier: Modifier = Modifier) {
+    val words = com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(c.snippet)))
+    val draft = c.draft?.let { com.yaz.sms.core.sms.Markup.plain(it) }
+    val subject = c.subject?.takeIf { c.draft == null }
+    // A message of a subject alone has no snippet line.
+    val text = when {
+        draft != null -> androidx.compose.ui.text.buildAnnotatedString {
+            withStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold)) { append("Draft:") }
+            append(" ")
+            append(draft)
+        }
+        c.snippet.isEmpty() -> null
+        c.failed -> androidx.compose.ui.text.AnnotatedString("Not sent: $words")
+        else -> androidx.compose.ui.text.AnnotatedString(words)
+    }
+    if (text == null && subject == null) return
+    val mine = (c.fromMe && !c.failed) || draft != null
+    val ink = when {
+        mine -> androidx.compose.ui.graphics.Color.Unspecified
+        c.failed -> MaterialTheme.colorScheme.error
+        unread -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val weight = if (unread) FontWeight.Medium else FontWeight.Normal
+    ZoneSurface(shape = CARD_BUBBLE, accent = mine, modifier = modifier) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            if (subject != null) Text(
+                "Subject: $subject",
+                style = MaterialTheme.typography.bodyMedium,
+                color = ink,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (text != null) Text(
+                text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = ink,
+                fontWeight = weight,
+                maxLines = if (subject != null) 2 else 3,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/**
+ * The conversations laid out in [columns] cells of equal width, each row as tall as its tallest card, as
+ * SettingsScreen's TileGrid does it (equal cells, a row of IntrinsicSize.Min whose cells fill its height; a
+ * last row that is not full is centred).
+ */
+@Composable
+private fun CardRow(cards: List<Conversation>, cell: androidx.compose.ui.unit.Dp, gap: androidx.compose.ui.unit.Dp, modifier: Modifier, card: @Composable (Conversation, Modifier) -> Unit) {
+    Row(
+        modifier.fillMaxWidth().height(androidx.compose.foundation.layout.IntrinsicSize.Min),
+        horizontalArrangement = Arrangement.spacedBy(gap, Alignment.CenterHorizontally)
+    ) {
+        cards.forEach { c -> androidx.compose.runtime.key(c.threadId) { card(c, Modifier.width(cell).fillMaxHeight()) } }
     }
 }
 
