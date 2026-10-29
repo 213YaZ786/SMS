@@ -17,8 +17,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -311,7 +311,8 @@ fun PersonPage(
 private fun androidx.compose.foundation.layout.FlowRowScope.Row(icon: ImageVector, label: String, danger: Boolean = false, hint: String? = null, onClick: () -> Unit) {
     val haptics = rememberHaptics()
     val tint = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    ZoneSurface(shape = RoundedCornerShape(24.dp), modifier = Modifier.weight(1f).fillMaxRowHeight().heightIn(min = 100.dp), onClick = {
+    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+    ZoneSurface(shape = ShapeDefaults.ExtraLarge, modifier = Modifier.weight(1f).fillMaxRowHeight().heightIn(min = 100.dp), onClick = {
         haptics.tick()
         onClick()
     }) {

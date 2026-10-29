@@ -182,7 +182,9 @@ fun SettingsListDetail(
 private fun SectionListRow(section: SettingsSection, selected: Boolean, expanded: Boolean? = null, onClick: () -> Unit) {
     val haptics = rememberHaptics()
     ZoneSurface(
-        shape = RoundedCornerShape(20.dp),
+        // A zone on the page: Material 3's extra large corner, as the tiles (ShapeDefaults,
+        // https://developer.android.com/reference/kotlin/androidx/compose/material3/ShapeDefaults).
+        shape = androidx.compose.material3.ShapeDefaults.ExtraLarge,
         accent = selected,
         onClick = {
             haptics.tick()
@@ -464,7 +466,7 @@ private fun SwitchDialog(tile: SettingsSwitchTile, onDismiss: () -> Unit) {
                     Modifier
                         .fillMaxWidth()
                         .padding(top = 16.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(androidx.compose.material3.ShapeDefaults.Large) // inside a tile: Material 3's large, 16 dp
                         .clickable(enabled = tile.enabled) { change(!tile.checked) }
                         .padding(vertical = 8.dp, horizontal = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,

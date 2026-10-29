@@ -13,10 +13,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
@@ -92,8 +92,9 @@ fun InviteDialog(onDismiss: () -> Unit, onJoined: (String) -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center
                 )
+                // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
                 Box(
-                    Modifier.size(220.dp).clip(RoundedCornerShape(20.dp)).background(Color.White).padding(12.dp),
+                    Modifier.size(220.dp).clip(ShapeDefaults.ExtraLarge).background(Color.White).padding(12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     val bitmap = code

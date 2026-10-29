@@ -20,9 +20,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -197,7 +197,8 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
 @Composable
 private fun Line(name: String?, photo: String?, look: com.yaz.sms.core.dial.ContactLook.Look?, title: String, under: String?, chosen: Boolean, onClick: () -> Unit) {
     val haptics = rememberHaptics()
-    val shape = RoundedCornerShape(22.dp)
+    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+    val shape = ShapeDefaults.ExtraLarge
     ZoneSurface(
         shape = shape,
         accent = chosen,

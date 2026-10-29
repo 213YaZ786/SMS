@@ -21,8 +21,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ShapeDefaults
 import com.yaz.sms.ui.component.BoldButton
 import com.yaz.sms.ui.component.BoldIconButton
 import com.yaz.sms.ui.component.QuietButton
@@ -151,9 +151,10 @@ internal fun PollCard(poll: Polls.Poll, counts: Map<String, Int>, mine: List<Str
                     .fillMaxWidth()
                     .heightIn(min = 44.dp)
                     .graphicsLayer { scaleX = press.value; scaleY = press.value }
-                    .clip(RoundedCornerShape(14.dp))
+                    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+                    .clip(ShapeDefaults.Large)
                     .drawBehind {
-                        val r = CornerRadius(14.dp.toPx())
+                        val r = CornerRadius(ShapeDefaults.Large.topStart.toPx(size, this))
                         drawRoundRect(track, cornerRadius = r)
                         val w = size.width * fill * grown.value
                         if (w > 0f) drawRoundRect(accent.copy(alpha = if (chosen) 0.38f else 0.18f), size = Size(w, size.height), cornerRadius = r)

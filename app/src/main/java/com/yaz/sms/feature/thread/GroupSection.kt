@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -184,7 +184,8 @@ fun GroupFace(path: String?, name: String, size: Dp) {
 fun MemberLine(member: GroupMember, number: String, onRemove: (() -> Unit)?) {
     val haptics = rememberHaptics()
     val body = @Composable {
-        ZoneSurface(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
+        // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+        ZoneSurface(shape = ShapeDefaults.ExtraLarge, modifier = Modifier.fillMaxWidth()) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -223,7 +224,7 @@ fun MemberLine(member: GroupMember, number: String, onRemove: (() -> Unit)?) {
         enableDismissFromStartToEnd = false,
         backgroundContent = {
             Box(
-                Modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(MaterialTheme.colorScheme.errorContainer).padding(end = 20.dp),
+                Modifier.fillMaxSize().clip(ShapeDefaults.ExtraLarge).background(MaterialTheme.colorScheme.errorContainer).padding(end = 20.dp),
                 contentAlignment = Alignment.CenterEnd
             ) {
                 Icon(AppIcons.PersonRemove, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)

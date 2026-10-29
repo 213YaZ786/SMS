@@ -9,8 +9,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -75,7 +75,8 @@ internal fun MessageBody(
         tiles.isNotEmpty() ->
             WithFooter(if (!caption || mixed) FooterAt.Below else FooterAt.Aligned, { footer(it, false) }, words = plain) { onLayout ->
                 Column {
-                    if (visual.isNotEmpty()) Box(Modifier.padding(4.dp).clip(RoundedCornerShape(18.dp)).align(Alignment.CenterHorizontally)) { gallery(Modifier) }
+                    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+                    if (visual.isNotEmpty()) Box(Modifier.padding(4.dp).clip(ShapeDefaults.Large).align(Alignment.CenterHorizontally)) { gallery(Modifier) }
                     tiles.forEach { part ->
                         Box(Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = if (caption || head != null) 0.dp else 2.dp)) {
                             MediaTile(part, mine, held = held, onMore = onMore, interactive = interactive)
@@ -89,12 +90,12 @@ internal fun MessageBody(
             WithFooter(FooterAt.Overlay, { footer(it, true) }) { gallery(Modifier) }
         visual.isNotEmpty() && !caption && head == null ->
             WithFooter(FooterAt.Below, { footer(it, false) }) {
-                Box(Modifier.padding(4.dp).clip(RoundedCornerShape(18.dp))) { gallery(Modifier) }
+                Box(Modifier.padding(4.dp).clip(ShapeDefaults.Large)) { gallery(Modifier) }
             }
         visual.isNotEmpty() ->
             WithFooter(if (!caption || mixed) FooterAt.Below else FooterAt.Aligned, { footer(it, false) }, words = plain) { onLayout ->
                 Column {
-                    Box(Modifier.padding(4.dp).clip(RoundedCornerShape(18.dp)).align(Alignment.CenterHorizontally)) { gallery(Modifier) }
+                    Box(Modifier.padding(4.dp).clip(ShapeDefaults.Large).align(Alignment.CenterHorizontally)) { gallery(Modifier) }
                     if (head != null) SubjectLine(head, 4.dp, bottom = if (caption) 0.dp else 6.dp)
                     if (caption) Words(words, blurred, if (head != null) 2.dp else 4.dp, onLayout)
                 }

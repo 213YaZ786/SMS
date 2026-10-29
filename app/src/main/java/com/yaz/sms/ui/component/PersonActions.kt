@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -143,15 +142,17 @@ fun PersonActionTile(
     val press = remember { MutableInteractionSource() }
     val pressed by press.collectIsPressedAsState()
     val sink by animateFloatAsState(if (pressed) 0.9f else 1f, spring(dampingRatio = 0.45f, stiffness = 700f), label = "sink")
+    // A tile on the page: Material 3's extra large corner, 28 dp (ShapeDefaults,
+    // https://developer.android.com/reference/kotlin/androidx/compose/material3/ShapeDefaults).
     ZoneSurface(
-        shape = RoundedCornerShape(26.dp),
+        shape = androidx.compose.material3.ShapeDefaults.ExtraLarge,
         modifier = modifier
             .height(88.dp)
             .graphicsLayer {
                 scaleX = sink
                 scaleY = sink
             }
-            .clip(RoundedCornerShape(26.dp))
+            .clip(androidx.compose.material3.ShapeDefaults.ExtraLarge)
             .clickable(interactionSource = press, indication = null, role = Role.Button, onClickLabel = description) {
                 haptics.tick()
                 onClick()

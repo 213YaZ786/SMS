@@ -23,7 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -225,7 +225,8 @@ fun VoiceTile(part: MmsPart, mine: Boolean, inBubble: Boolean = false) {
 @Composable
 private fun VoiceFrame(inBubble: Boolean, mine: Boolean, content: @Composable () -> Unit) {
     if (inBubble) Box(Modifier.width(240.dp)) { content() }
-    else ZoneSurface(shape = RoundedCornerShape(22.dp), accent = mine, modifier = Modifier.width(240.dp), content = content)
+    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+    else ZoneSurface(shape = ShapeDefaults.ExtraLarge, accent = mine, modifier = Modifier.width(240.dp), content = content)
 }
 
 /**

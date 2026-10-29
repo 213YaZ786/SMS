@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import com.yaz.sms.ui.component.BoldButton
 import com.yaz.sms.ui.component.QuietButton
@@ -318,7 +319,8 @@ fun EffectSheet(carried: Boolean, onLater: (() -> Unit)?, onPick: (com.yaz.sms.c
                         effectFaces.filter { it.first.screen == screen }.forEach { (effect, face) ->
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.width(78.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).clickable {
+                                // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+                                modifier = Modifier.width(78.dp).clip(ShapeDefaults.Large).clickable {
                                     haptics.firm()
                                     onPick(effect)
                                 }.padding(vertical = 6.dp)

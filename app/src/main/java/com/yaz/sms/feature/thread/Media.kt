@@ -38,9 +38,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
@@ -111,7 +111,8 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
     } else if (image || isFilm(part, kind)) {
         // A picture or a film alone, if one is handed here: the conversation lays them out in the message's
         // bubble (MediaGallery); this is the same tile in a box of its own.
-        Box(Modifier.widthIn(max = 280.dp).clip(RoundedCornerShape(20.dp))) {
+        // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+        Box(Modifier.widthIn(max = 280.dp).clip(ShapeDefaults.Large)) {
             MediaCell(part, kind, held, single = true, onMore = onMore)
         }
     } else if (sound) {
@@ -135,7 +136,7 @@ fun MediaTile(part: MmsPart, mine: Boolean, held: Boolean = false, onMore: (() -
                 }.getOrNull()
             }
         }
-        val shape = RoundedCornerShape(12.dp)
+        val shape = ShapeDefaults.Large
         AttachmentRow(
             icon = when {
                 part.contentType.contains("vcard") -> AppIcons.ContactPage
@@ -198,7 +199,7 @@ internal fun readLocation(context: Context, uri: Uri): com.yaz.sms.core.sms.Plac
 private fun AttachmentRow(icon: androidx.compose.ui.graphics.vector.ImageVector, name: String, detail: String?, modifier: Modifier = Modifier) {
     val ink = androidx.compose.material3.LocalContentColor.current
     Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.padding(end = 4.dp)) {
-        Box(Modifier.size(36.dp).background(ink.copy(alpha = 0.12f), RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(36.dp).background(ink.copy(alpha = 0.12f), ShapeDefaults.ExtraSmall), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
         }
         Spacer(Modifier.width(8.dp))
@@ -475,7 +476,7 @@ internal fun VideoViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null) {
 @Composable
 private fun HeldTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, interactive: Boolean, onShow: () -> Unit) {
     val haptics = rememberHaptics()
-    val shape = RoundedCornerShape(12.dp)
+    val shape = ShapeDefaults.Large
     AttachmentRow(
         icon = icon,
         name = label,

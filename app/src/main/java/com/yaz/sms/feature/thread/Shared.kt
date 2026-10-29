@@ -26,7 +26,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -193,8 +193,9 @@ internal fun PictureCell(part: MmsPart, modifier: Modifier, held: Boolean = fals
     var open by remember(part.uri, held) { mutableStateOf(!held) }
     val context = LocalContext.current
     if (!open) {
+        // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
         Box(
-            modifier.aspectRatio(1f).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { open = true },
+            modifier.aspectRatio(1f).clip(ShapeDefaults.Large).background(MaterialTheme.colorScheme.surfaceVariant).clickable { open = true },
             contentAlignment = Alignment.Center
         ) {
             Icon(if (ContentType.isVideoType(part.contentType)) AppIcons.Play else AppIcons.Image, contentDescription = "From an unknown number, tap to show")
@@ -204,7 +205,7 @@ internal fun PictureCell(part: MmsPart, modifier: Modifier, held: Boolean = fals
     val image by rememberPicture(part.uri, 360)
     val kind by rememberKind(part.uri)
     Box(
-        modifier.aspectRatio(1f).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable {
+        modifier.aspectRatio(1f).clip(ShapeDefaults.Large).background(MaterialTheme.colorScheme.surfaceVariant).clickable {
             when {
                 ContentType.isImageType(part.contentType) && kind == com.yaz.sms.core.security.MediaCheck.Kind.IMAGE -> large = true
                 ContentType.isVideoType(part.contentType) && kind == com.yaz.sms.core.security.MediaCheck.Kind.VIDEO -> video = true
@@ -242,7 +243,7 @@ internal fun Line(item: Item) {
         is Item.Picture -> Triple(AppIcons.Image, "Photo", day)
     }
     ZoneSurface(
-        shape = RoundedCornerShape(20.dp),
+        shape = ShapeDefaults.ExtraLarge,
         modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
         onClick = {
             haptics.tick()

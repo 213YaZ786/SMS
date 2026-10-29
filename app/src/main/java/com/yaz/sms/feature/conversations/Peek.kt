@@ -21,12 +21,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import com.yaz.sms.ui.component.BoldButton
 import com.yaz.sms.ui.component.QuietButton
@@ -121,7 +121,8 @@ internal fun Peek(
             contentAlignment = Alignment.Center
         ) {
             ZoneSurface(
-                shape = RoundedCornerShape(28.dp),
+                // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+                shape = ShapeDefaults.ExtraLarge,
                 modifier = Modifier
                     .padding(16.dp)
                     .widthIn(max = 520.dp)
@@ -152,7 +153,7 @@ internal fun Peek(
                         val mine = m.box != MessageBox.RECEIVED
                         Box(Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
                             ZoneSurface(
-                                shape = RoundedCornerShape(18.dp),
+                                shape = ShapeDefaults.Large,
                                 accent = mine,
                                 modifier = Modifier.widthIn(max = 360.dp)
                             ) {
@@ -167,7 +168,7 @@ internal fun Peek(
                         }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
-                        FloatingPane(shape = RoundedCornerShape(24.dp), modifier = Modifier.weight(1f)) {
+                        FloatingPane(shape = ShapeDefaults.Large, modifier = Modifier.weight(1f)) {
                             Box(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                                 if (text.isEmpty()) Text("Quick reply", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 BasicTextField(
@@ -246,7 +247,7 @@ private fun Action(icon: ImageVector, label: String, onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            .clip(ShapeDefaults.Large)
             .clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = label) {
                 haptics.tick()
                 onClick()

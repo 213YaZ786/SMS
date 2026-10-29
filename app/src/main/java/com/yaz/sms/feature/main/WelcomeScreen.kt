@@ -18,10 +18,10 @@ import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -220,7 +220,8 @@ private fun WelcomeZone(
         }
         return
     }
-    ZoneSurface(shape = RoundedCornerShape(24.dp), modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth()) {
+    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+    ZoneSurface(shape = ShapeDefaults.ExtraLarge, modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth()) {
         Column(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp)

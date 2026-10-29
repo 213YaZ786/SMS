@@ -424,7 +424,7 @@ fun GlassVideo(
                     .align(Alignment.Center)
                     .offset(y = if (shown) (-96).dp else 0.dp)
             ) {
-                GlassPane(shape = RoundedCornerShape(24.dp)) {
+                GlassPane(shape = androidx.compose.material3.ShapeDefaults.ExtraLarge) { // Material 3's 28 dp, as every pane
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -518,7 +518,7 @@ fun GlassVideo(
                         enter = fadeIn() + scaleIn(initialScale = 0.85f, transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)),
                         exit = fadeOut() + scaleOut(targetScale = 0.9f, transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f))
                     ) {
-                        GlassPane(shape = RoundedCornerShape(22.dp), modifier = Modifier.padding(bottom = 10.dp)) {
+                        GlassPane(shape = androidx.compose.material3.ShapeDefaults.ExtraLarge, modifier = Modifier.padding(bottom = 10.dp)) {
                             Column(Modifier.padding(vertical = 6.dp)) {
                                 SPEEDS.forEach { choice ->
                                     val chosen = choice == speed

@@ -20,10 +20,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -142,7 +142,8 @@ private fun StarredLine(m: Message, name: String, onOpen: () -> Unit, onUnstar: 
         if (value != SwipeToDismissBoxValue.Settled) onUnstar()
         value != SwipeToDismissBoxValue.Settled
     })
-    val shape = RoundedCornerShape(20.dp)
+    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+    val shape = ShapeDefaults.ExtraLarge
     SwipeToDismissBox(
         state = state,
         modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),

@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -199,7 +199,8 @@ fun Palette(actions: List<MessageAction>, onDismiss: () -> Unit, modifier: Modif
     // Lines as even as can be: 5 = 3 + 2, 6 = 3 + 3, 7 = 4 + 3, 8 = 4 + 4.
     val lines = (actions.size + 3) / 4
     val perLine = if (lines == 0) 1 else (actions.size + lines - 1) / lines
-    ZoneSurface(shape = RoundedCornerShape(28.dp), shadowElevation = 6.dp, modifier = modifier.popIn(1)) {
+    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+    ZoneSurface(shape = ShapeDefaults.ExtraLarge, shadowElevation = 6.dp, modifier = modifier.popIn(1)) {
         Column(
             Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -222,7 +223,7 @@ fun Palette(actions: List<MessageAction>, onDismiss: () -> Unit, modifier: Modif
                                     translationY = rise.value * 8.dp.toPx()
                                     alpha = 1f - rise.value
                                 }
-                                .clip(RoundedCornerShape(20.dp))
+                                .clip(ShapeDefaults.Large)
                                 .clickable(onClickLabel = action.label) {
                                     haptics.tick()
                                     onDismiss()
@@ -404,7 +405,7 @@ private fun CountField(state: androidx.compose.foundation.text.input.TextFieldSt
         state = state,
         modifier = Modifier
             .width(72.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(ShapeDefaults.Large)
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
             .padding(vertical = 6.dp)
             // Tapped, the number is selected whole, so "3" typed replaces it (with the cursor before

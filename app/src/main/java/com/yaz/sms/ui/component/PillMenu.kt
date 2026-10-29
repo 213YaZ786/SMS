@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -184,7 +183,9 @@ fun PillMenu(state: PillMenuState, items: List<PillItem>, @Suppress("UNUSED_PARA
                 )
             }
             val glass = LocalGlass.current
-            val shape = RoundedCornerShape(22.dp)
+            // A pane on the screen: Material 3's extra large corner, 28 dp (ShapeDefaults,
+            // https://developer.android.com/reference/kotlin/androidx/compose/material3/ShapeDefaults).
+            val shape = androidx.compose.material3.ShapeDefaults.ExtraLarge
             Box(
                 Modifier
                     .offset { IntOffset(paneX.toInt(), paneY.toInt()) }

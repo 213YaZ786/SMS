@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -127,7 +127,8 @@ internal fun MessageFooter(
         verticalAlignment = Alignment.CenterVertically,
         modifier = if (onMedia) {
             modifier
-                .background(scheme.scrim.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+                .background(scheme.scrim.copy(alpha = 0.5f), ShapeDefaults.Medium)
                 .padding(horizontal = 6.dp, vertical = 2.dp)
         } else {
             modifier.padding(pad)

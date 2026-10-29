@@ -54,6 +54,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import com.yaz.sms.ui.component.BoldButton
 import com.yaz.sms.ui.component.QuietButton
@@ -855,7 +856,8 @@ private fun ThreadContent(
                 scope.launch { if (locator.stopSharing(people)) haptics.done() else haptics.reject() }
             }
             // A group the user left can be read, not written to (Delta Chat's chat that can no longer send).
-            if (left) FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+            if (left) FloatingPane(shape = ShapeDefaults.ExtraLarge, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Text(
                     "You left this group",
                     style = MaterialTheme.typography.bodyLarge,
@@ -991,7 +993,7 @@ private fun ThreadContent(
                             fadeOutSpec = androidx.compose.animation.core.tween(450)
                         )
                             .padding(top = cluster.top, bottom = cluster.bottom)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f * wash), RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f * wash), ShapeDefaults.Large)
                     ) {
                       val mineRow = row.message.box != MessageBox.RECEIVED
                       Column(
@@ -1502,8 +1504,8 @@ private fun Bubble(
             val busy by com.yaz.sms.core.mms.MmsTransport.downloading.collectAsState()
             val fetching = m.id in busy
             ZoneSurface(
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable(enabled = !fetching) {
+                shape = ShapeDefaults.ExtraLarge,
+                modifier = Modifier.clip(ShapeDefaults.ExtraLarge).clickable(enabled = !fetching) {
                     haptics.tick()
                     Thread {
                         if (!com.yaz.sms.core.mms.MmsTransport.downloadStored(context, m.id)) {

@@ -27,9 +27,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
@@ -79,7 +79,8 @@ internal fun CodeChip(c: Conversation, code: String, from: String?) {
         unfold.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 300f))
     }
     val pop by animateFloatAsState(if (copied) 1.04f else 1f, spring(dampingRatio = 0.4f, stiffness = 600f), label = "pop")
-    val shape = RoundedCornerShape(22.dp)
+    // Corners from Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+    val shape = ShapeDefaults.ExtraLarge
     ZoneSurface(
         shape = shape,
         modifier = Modifier
@@ -138,7 +139,7 @@ internal fun ServicesStack(services: List<Conversation>, open: Boolean, onToggle
         // The panes underneath, seen only while folded.
         for (k in 2 downTo 1) {
             ZoneSurface(
-                shape = RoundedCornerShape(22.dp),
+                shape = ShapeDefaults.ExtraLarge,
                 modifier = Modifier
                     .matchParentSizeOf()
                     .padding(horizontal = (10 * k).dp)
@@ -146,7 +147,7 @@ internal fun ServicesStack(services: List<Conversation>, open: Boolean, onToggle
                     .graphicsLayer { alpha = 0.55f * spread }
             ) { Box(Modifier.height(60.dp)) }
         }
-        val shape = RoundedCornerShape(22.dp)
+        val shape = ShapeDefaults.ExtraLarge
         ZoneSurface(
             shape = shape,
             modifier = Modifier.fillMaxWidth().clip(shape).clickable {
@@ -250,7 +251,7 @@ private fun PinnedFaceItem(c: Conversation, face: PinnedFace, selected: Boolean?
                 scaleX = sink
                 scaleY = sink
             }
-            .clip(RoundedCornerShape(16.dp))
+            .clip(ShapeDefaults.Large)
             .combinedClickable(
                 interactionSource = press,
                 indication = null,
@@ -268,7 +269,7 @@ private fun PinnedFaceItem(c: Conversation, face: PinnedFace, selected: Boolean?
     ) {
         // The last message of an unread conversation, two lines at most, above the avatar.
         if (last.isNotEmpty()) {
-            ZoneSurface(shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+            ZoneSurface(shape = ShapeDefaults.Large, modifier = Modifier.padding(bottom = 4.dp)) {
                 Text(
                     last,
                     style = MaterialTheme.typography.labelSmall,

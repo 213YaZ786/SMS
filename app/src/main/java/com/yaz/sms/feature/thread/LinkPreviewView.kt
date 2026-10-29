@@ -19,10 +19,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.ZeroCornerSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -114,8 +115,10 @@ internal fun LinkPreviewCapsule(url: String) {
                 }
             }
         } else {
+            // Material 3's shape scale; the picture takes the card's top corners, as Shapes.kt's top():
+            // https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
             FloatingPane(
-                shape = RoundedCornerShape(20.dp),
+                shape = ShapeDefaults.ExtraLarge,
                 modifier = Modifier.padding(top = 4.dp).widthIn(max = 300.dp),
                 onClick = {
                     haptics.tick()
@@ -128,7 +131,7 @@ internal fun LinkPreviewCapsule(url: String) {
                             picture.asImageBitmap(),
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxWidth().aspectRatio(1.91f).clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                            modifier = Modifier.fillMaxWidth().aspectRatio(1.91f).clip(ShapeDefaults.ExtraLarge.copy(bottomStart = ZeroCornerSize, bottomEnd = ZeroCornerSize))
                         )
                     }
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
@@ -156,7 +159,7 @@ internal fun PlaceCard(place: com.yaz.sms.core.sms.Places.Place, subtitle: Strin
     val drop = remember { Animatable(-14f) }
     LaunchedEffect(Unit) { drop.animateTo(0f, spring(dampingRatio = 0.4f, stiffness = 400f)) }
     FloatingPane(
-        shape = RoundedCornerShape(20.dp),
+        shape = ShapeDefaults.ExtraLarge,
         modifier = Modifier.padding(top = 4.dp).widthIn(max = 300.dp),
         onClick = {
             haptics.tick()

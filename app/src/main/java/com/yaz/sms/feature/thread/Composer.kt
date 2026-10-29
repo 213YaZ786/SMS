@@ -34,7 +34,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.semantics.contentDescription
@@ -260,7 +260,8 @@ fun Composer(
         androidx.compose.animation.AnimatedVisibility(visible = quote != null || editing != null) {
             var shown by remember { mutableStateOf("") }
             (editing ?: quote)?.let { shown = it }
-            FloatingPane(shape = RoundedCornerShape(18.dp), onClick = {
+            // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+            FloatingPane(shape = ShapeDefaults.ExtraLarge, onClick = {
                 haptics.tick()
                 if (editing != null) {
                     text = before
@@ -408,11 +409,11 @@ fun Composer(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 16.dp, bottom = 6.dp).graphicsLayer { translationX = slide * 0.5f }
                     )
-                    FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth()) {
+                    FloatingPane(shape = ShapeDefaults.ExtraLarge, modifier = Modifier.fillMaxWidth()) {
                         VoiceLevels(recording, Modifier.padding(vertical = 12.dp))
                     }
                 }
-            } else FloatingPane(shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f).graphicsLayer { alpha = veil }) {
+            } else FloatingPane(shape = ShapeDefaults.ExtraLarge, modifier = Modifier.weight(1f).graphicsLayer { alpha = veil }) {
               Column {
                 // An effect chosen from the +, inside the bar with the words it goes with.
                 armed?.let { effect ->
@@ -439,7 +440,7 @@ fun Composer(
                             val picture by rememberPicture(a.uri, 240)
                             Box(Modifier.size(72.dp)) {
                                 Box(
-                                    Modifier.padding(top = 6.dp, end = 6.dp).size(66.dp).clip(RoundedCornerShape(16.dp))
+                                    Modifier.padding(top = 6.dp, end = 6.dp).size(66.dp).clip(ShapeDefaults.Large)
                                         .background(MaterialTheme.colorScheme.surfaceVariant),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -610,7 +611,7 @@ fun Composer(
             }) {
             // While recording, the lock waits above the mic; slid up to, it frees the hand.
             if (take != null && take?.locked == false) {
-                FloatingPane(shape = RoundedCornerShape(18.dp), modifier = Modifier
+                FloatingPane(shape = ShapeDefaults.ExtraLarge, modifier = Modifier
                     .align(Alignment.Center)
                     .graphicsLayer { translationY = -88.dp.toPx() + rise * 0.6f }
                     .size(36.dp, 56.dp)) {

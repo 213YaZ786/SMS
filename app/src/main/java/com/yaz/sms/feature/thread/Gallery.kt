@@ -18,9 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -281,7 +281,8 @@ private fun FilmFace(part: MmsPart, side: Int, onRatio: (Float) -> Unit) {
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(6.dp)
-                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f), ShapeDefaults.Medium)
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
                 Icon(AppIcons.Videocam, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))

@@ -19,9 +19,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -291,7 +291,8 @@ private fun SceneTile(look: GlassLook?, label: String, chosen: Boolean, order: I
     }
     val accent = MaterialTheme.colorScheme.primary
     val bubble = if (look?.dark ?: false) Color.White.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.75f)
-    val shape = RoundedCornerShape(18.dp)
+    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+    val shape = ShapeDefaults.Large
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.width(84.dp).graphicsLayer {

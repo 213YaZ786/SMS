@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -124,8 +123,11 @@ fun BannerAction(
     }
 }
 
-/** The corner of every standalone zone in these apps. */
-private val BannerShape = RoundedCornerShape(24.dp)
+/**
+ * The corner of every standalone zone in these apps: Material 3's extra large, 28 dp (ShapeDefaults,
+ * https://developer.android.com/reference/kotlin/androidx/compose/material3/ShapeDefaults).
+ */
+private val BannerShape = androidx.compose.material3.ShapeDefaults.ExtraLarge
 
 /** Space the banner leaves around itself, so it never touches what follows. */
 private val BannerGap = 6.dp
