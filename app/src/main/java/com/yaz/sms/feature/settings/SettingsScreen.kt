@@ -151,6 +151,12 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
     var section by rememberSaveable { mutableStateOf(SettingsSection.CHAT) }
     // On a phone every section starts folded; the one open stays open across a turn of the screen.
     var openSection by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
+    // The page's scroll, held here so a drag on the header drives it (FloatingFrame's `scroll`): the folded
+    // list on a phone, the chosen section's page on a wide window (it starts at the top again for each section).
+    val compactScroll = rememberScrollState()
+    val detailScroll = rememberSaveable(section, saver = androidx.compose.foundation.ScrollState.Saver) {
+        androidx.compose.foundation.ScrollState(0)
+    }
     // What Android gives as the SIM's number, read once (OwnNumbers.sim): shown under "My number" and prefilled in its field.
     val simNumber = remember { com.yaz.sms.core.mms.OwnNumbers.sim(context).firstOrNull() }
 
@@ -362,6 +368,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
         CompositionLocalProvider(LocalReadableInset provides if (wide) 0.dp else LocalReadableInset.current) {
             FloatingFrame(
                 bottom = 0.dp,
+                scroll = if (wide) detailScroll else compactScroll,
                 top = { FloatingTop("Settings", leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) }) },
                 largeTitle = LargeTitle(
                     "Settings",
@@ -373,6 +380,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                         padding = padding,
                         section = section,
                         onSection = { section = it },
+                        detailScroll = detailScroll,
                         detail = { page(section) }
                     )
                 } else {
@@ -381,7 +389,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
+                            .verticalScroll(compactScroll)
                             .padding(horizontal = LocalReadableInset.current)
                     ) {
                         HeaderSpacer(padding)
@@ -513,6 +521,7 @@ private fun ListDetail(
     padding: PaddingValues,
     section: SettingsSection,
     onSection: (SettingsSection) -> Unit,
+    detailScroll: androidx.compose.foundation.ScrollState,
     detail: @Composable ColumnScope.() -> Unit
 ) {
     Row(Modifier.fillMaxSize()) {
@@ -534,7 +543,7 @@ private fun ListDetail(
                 Modifier
                     .weight(2f)
                     .fillMaxHeight()
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(detailScroll)
             ) {
                 HeaderSpacer(padding)
                 detail()

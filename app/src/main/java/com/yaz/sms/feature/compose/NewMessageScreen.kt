@@ -108,8 +108,10 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
         onPick(address)
     }
 
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
     FloatingFrame(
         bottom = bottom,
+        scroll = list,
         top = {
             FloatingTop(
                 title = if (group) "New group" else "New message",
@@ -159,6 +161,7 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
         }
     ) { padding ->
         LazyColumn(
+            state = list,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(8.dp),

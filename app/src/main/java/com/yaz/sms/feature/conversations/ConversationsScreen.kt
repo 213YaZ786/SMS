@@ -347,6 +347,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     TabFrame(
         title = if (archive) "Archive" else if (inTrash) "Trash" else null,
         onOpenSettings = onOpenSettings,
+        scroll = listState,
         // Top left, facing Settings: the archive, and back from it or from the Trash.
         leading = {
             com.yaz.sms.ui.component.FloatingAction(

@@ -1,6 +1,11 @@
 package com.yaz.sms.ui.component
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.ScrollableDefaults
+import androidx.compose.foundation.gestures.ScrollableState
+import androidx.compose.foundation.gestures.scrollable
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -206,6 +211,18 @@ fun FloatingAction(icon: ImageVector, label: String, onClick: () -> Unit, tint: 
  * row's small title (see [LargeTitle]). [content]'s padding then follows the header as it
  * shrinks: read it where it is laid out (a Spacer with Modifier.layout, a lazy list's
  * contentPadding), not in composition, or the whole content recomposes on every frame.
+ *
+ * Every pixel of the screen scrolls the content (the user, 2026-10-29: "jamais de zone morte"): given the
+ * content's [scroll] state, a vertical drag that starts on a pane of the header (a round action, a pill)
+ * scrolls and flings the content, and collapses the large title, as a drag on the content does; a tap still
+ * reaches the pane. This is AppBarLayout's behaviour, where a drag that starts on the app bar, past the touch
+ * slop, scrolls with the content and flings with a VelocityTracker (Material Components'
+ * https://github.com/material-components/material-components-android/blob/master/lib/java/com/google/android/material/appbar/HeaderBehavior.java),
+ * done the Compose way: Modifier.scrollable on the header drives the content's own ScrollableState
+ * (https://github.com/androidx/androidx/blob/androidx-main/compose/foundation/foundation/src/commonMain/kotlin/androidx/compose/foundation/gestures/Scrollable.kt).
+ * [reverseLayout] is the content list's own (a thread laid out from the bottom), so a drag goes the same way
+ * as on the list (ScrollableDefaults.reverseDirection). Floating pieces over the content (the [overlay], a
+ * [FloatingDock] inside it) take the same drag from [LocalFrameScroll]. Without [scroll] nothing changes.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -214,6 +231,8 @@ fun FloatingFrame(
     top: @Composable ColumnScope.() -> Unit,
     overlay: @Composable BoxScope.() -> Unit = {},
     largeTitle: LargeTitle? = null,
+    scroll: ScrollableState? = null,
+    reverseLayout: Boolean = false,
     content: @Composable (PaddingValues) -> Unit
 ) {
     val density = LocalDensity.current
@@ -246,17 +265,31 @@ fun FloatingFrame(
         val fade = with(density) { headerNow().toPx() }
         if (fade <= 0f) 0f else (scrolled.floatValue / fade).coerceIn(0f, 1f)
     }
-    Box(Modifier.fillMaxSize()) {
+    // A drag on the header or on a floating piece drives the content's own state, as a drag on the
+    // content does (see the doc above). Scrollable.kt's ScrollableDefaults.reverseDirection and flingBehavior.
+    val dragScroll: Modifier = if (scroll != null) {
+        val fling = ScrollableDefaults.flingBehavior()
+        Modifier.scrollable(
+            state = scroll,
+            orientation = Orientation.Vertical,
+            reverseDirection = ScrollableDefaults.reverseDirection(LocalLayoutDirection.current, Orientation.Vertical, reverseLayout),
+            flingBehavior = fling
+        )
+    } else Modifier
+    Box(
+        Modifier.fillMaxSize()
+            // Material 3's exitUntilCollapsed: the scroll first collapses the large title, and opens
+            // it again only once the content is back at its top. On the frame, not the content, so a
+            // drag on the header does it too and drives the soft top edge below.
+            .then(if (collapse != null) Modifier.nestedScroll(collapse.behavior.nestedScrollConnection) else Modifier)
+            .nestedScroll(scrolledConnection)
+    ) {
         val frame = this
         // The fade is outside glassSource: the backdrop records the content whole.
         Box(
             Modifier.fillMaxSize()
                 .then(if (headerState.value > 0.dp) Modifier.softTopEdge(headerNow, edgeStrength) else Modifier)
                 .then(if (look != null) Modifier.glassSource(backdrop, look) else Modifier)
-                // Material 3's exitUntilCollapsed: the content's scroll first collapses the large
-                // title, and opens it again only once the content is back at its top.
-                .then(if (collapse != null) Modifier.nestedScroll(collapse.behavior.nestedScrollConnection) else Modifier)
-                .nestedScroll(scrolledConnection)
         ) {
             ProvideBounce {
                 if (collapse == null) {
@@ -276,6 +309,7 @@ fun FloatingFrame(
                         if (collapse == null) Modifier.onSizeChanged { headerState.value = with(density) { it.height.toDp() } }
                         else Modifier
                     )
+                    .then(dragScroll)
             ) {
                 Column(
                     if (collapse == null) Modifier
@@ -288,10 +322,18 @@ fun FloatingFrame(
                 if (collapse != null && largeTitle != null) LargeTitleBlock(largeTitle, collapse)
             }
             // What else floats over the content in glass, a message being written.
-            frame.overlay()
+            CompositionLocalProvider(LocalFrameScroll provides dragScroll) { frame.overlay() }
         }
     }
 }
+
+/**
+ * The vertical drag of the enclosing [FloatingFrame] (its content's scroll), empty where the frame was
+ * given no state. A floating piece over the content (FloatingDock, an overlay's pane) applies it with
+ * `.then(LocalFrameScroll.current)` so a drag that starts on it scrolls the content; a piece with drags
+ * of its own (a slider, the dialpad) does not.
+ */
+val LocalFrameScroll = staticCompositionLocalOf<Modifier> { Modifier }
 
 /**
  * A large title centred at the top of a screen, with an optional one-line [status] under it:

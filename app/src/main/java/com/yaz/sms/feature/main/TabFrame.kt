@@ -30,10 +30,13 @@ fun TabFrame(
     center: (@Composable () -> Unit)? = null,
     controls: (@Composable () -> Unit)? = null,
     overlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
+    /** The content's own scroll state: a drag on the header scrolls it (FloatingFrame's `scroll`). */
+    scroll: androidx.compose.foundation.gestures.ScrollableState? = null,
     content: @Composable (PaddingValues) -> Unit
 ) {
     val inset = LocalReadableInset.current
     FloatingFrame(
+        scroll = scroll,
         bottom = LocalDockPadding.current + 16.dp,
         top = {
             FloatingTop(title = title, leading = leading, center = center, trailing = { FloatingAction(AppIcons.Settings, "Settings", onOpenSettings) })

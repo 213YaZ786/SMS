@@ -716,6 +716,9 @@ private fun ThreadContent(
     val keyboard = WindowInsets.ime.exclude(WindowInsets.navigationBars).asPaddingValues().calculateBottomPadding()
     FloatingFrame(
         bottom = composerHeight + 8.dp + keyboard,
+        // The list is laid out from the bottom: a drag on the header scrolls it the way a drag on it does.
+        scroll = listState,
+        reverseLayout = true,
         top = {
             // Back, the person's face and name, and the calls one tap away on the right.
           Column(horizontalAlignment = Alignment.CenterHorizontally) {
