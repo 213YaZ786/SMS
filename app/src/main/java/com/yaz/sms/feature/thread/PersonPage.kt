@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,9 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -146,10 +143,22 @@ fun PersonPage(
         PageBars()
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             Box(Modifier.fillMaxSize().glassGround(com.yaz.sms.ui.glass.LocalGlass.current, MaterialTheme.colorScheme.surface)) {
+            // Back floats in the panes kit's FloatingFrame, as on Contacts' contact page (ContactScreen): the list
+            // starts under the header's measured height, so the face is never under Back, and a drag on the
+            // header scrolls the list (FloatingFrame's dragScroll, from Material 3's AppBar.kt
+            // https://android.googlesource.com/platform/frameworks/support/+/refs/heads/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/AppBar.kt).
+            val list = androidx.compose.foundation.lazy.rememberLazyListState()
+            com.yaz.sms.ui.component.FloatingFrame(
+                bottom = 40.dp,
+                scroll = list,
+                top = { com.yaz.sms.ui.component.FloatingTop(title = null, leading = { FloatingAction(AppIcons.ArrowBack, "Back", onClose) }) }
+            ) { padding ->
+            Box(Modifier.fillMaxSize()) {
                 HeroGlow(if (group) null else photo, height = 420.dp)
                 LazyColumn(
+                    state = list,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 72.dp, bottom = 40.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 8.dp, bottom = 40.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -289,7 +298,8 @@ fun PersonPage(
                         }
                     }
                 }
-                Box(Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(16.dp)) { FloatingAction(AppIcons.ArrowBack, "Back", onClose) }
+            }
+            }
             }
         }
     }
