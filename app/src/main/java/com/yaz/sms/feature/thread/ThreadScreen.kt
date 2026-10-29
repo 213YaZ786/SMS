@@ -102,6 +102,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import com.yaz.sms.core.chat.RichRef
+import com.yaz.sms.core.translate.TranslationResult
+import com.yaz.sms.core.translate.Translator
+import java.util.Locale
 import com.yaz.sms.data.contacts.PhoneBook
 import com.yaz.sms.data.contacts.PhoneIndex
 import com.yaz.sms.data.sms.Box as MessageBox
@@ -1393,6 +1396,16 @@ private fun Bubble(
             dismissButton = { QuietButton(onClick = { confirmDeleteAll = false }) { Text("Cancel") } }
         )
     }
+    // Translate: the words in the user's language, in the same bubble, with a line to switch to the original. The idea is
+    // WhatsApp's and iOS 26 Messages' (the translation in the bubble, a tap shows the original); in memory only, never
+    // stored, never sent. Translator is DavidVentura/offline-translator, reached through its AidlTranslationService
+    // (https://github.com/DavidVentura/offline-translator/blob/main/app/src/main/java/dev/davidv/translator/AidlTranslationService.kt)
+    // by core/translate/Translator.
+    var translated by remember(m.uid) { mutableStateOf<String?>(null) }
+    var showOriginal by remember(m.uid) { mutableStateOf(false) }
+    var translating by remember(m.uid) { mutableStateOf(false) }
+    val translatorHere = remember { Translator.installed(context) }
+    val shown = translated?.takeIf { !showOriginal } ?: said
     val code = remember(said) { if (mine) null else Codes.find(said) }
     val parcel = remember(said) { if (mine || code != null) null else com.yaz.sms.core.sms.Finds.parcel(said) }
     val appointment = remember(said) { if (code != null) null else com.yaz.sms.core.sms.Finds.appointment(said) }
@@ -1414,8 +1427,8 @@ private fun Bubble(
         if (mine) SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
         else SpanStyle(color = accent, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium, background = accent.copy(alpha = 0.14f))
     }
-    val text = remember(said, accent, checks, highlight, mentionWords, mentionStyle) {
-        marked(linked(said, accent, danger, checks, mentionWords, mentionStyle) { url, verdict ->
+    val text = remember(shown, accent, checks, highlight, mentionWords, mentionStyle) {
+        marked(linked(shown, accent, danger, checks, mentionWords, mentionStyle) { url, verdict ->
             if (verdict != null) haptics.reject() else haptics.tick()
             tapped = url to verdict
         }, highlight, found)
@@ -1446,7 +1459,18 @@ private fun Bubble(
         else -> Delivery.Sent
     }
     val footer = @Composable { mismatched: Boolean, onMedia: Boolean ->
-        MessageFooter(clock, delivery, starred, onMedia = onMedia, mismatched = mismatched)
+        if (translated != null && !showOriginal && !onMedia) {
+            // iOS 26 Messages' "Translated" mark before the time; no zone, the switch back is in the long press menu.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Translated",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.66f),
+                    modifier = Modifier.padding(end = 6.dp)
+                )
+                MessageFooter(clock, delivery, starred, onMedia = false, mismatched = mismatched)
+            }
+        } else MessageFooter(clock, delivery, starred, onMedia = onMedia, mismatched = mismatched)
     }
     Column(
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
@@ -1498,6 +1522,32 @@ private fun Bubble(
             }
         }
         val scope = rememberCoroutineScope()
+        // One Translator.Session per tap, closed after it (Keyboard's TranslateActivity.kt keeps one per panel), into the
+        // phone's language, on https://github.com/DavidVentura/offline-translator/blob/main/app/src/main/java/dev/davidv/translator/AidlTranslationService.kt
+        // through core/translate; each TranslationResult said plainly.
+        fun translate() {
+            if (translating) return
+            translating = true
+            scope.launch {
+                try {
+                    val to = Translator.codeFor(Locale.getDefault()) ?: "en"
+                    when (val r = Translator.Session(context).use { it.translate(said, to) }) {
+                        // The same words back: Translator took them for the phone's language (its log: "from English to English").
+                        is TranslationResult.Ok -> if (r.text.trim() == said.trim()) {
+                            android.widget.Toast.makeText(context, "Translator found it already in your language", android.widget.Toast.LENGTH_SHORT).show()
+                        } else { haptics.done(); translated = r.text; showOriginal = false }
+                        is TranslationResult.NotDownloaded -> {
+                            android.widget.Toast.makeText(context, "${r.language} is not downloaded in Translator", android.widget.Toast.LENGTH_LONG).show()
+                            Translator.launchIntent(context)?.let { runCatching { context.startActivity(it) } }
+                        }
+                        TranslationResult.NotDetected -> android.widget.Toast.makeText(context, "Language not recognised", android.widget.Toast.LENGTH_SHORT).show()
+                        TranslationResult.Failed -> android.widget.Toast.makeText(context, "Could not translate", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } finally {
+                    translating = false
+                }
+            }
+        }
         val pull = remember { Animatable(0f) }
         var armed by remember { mutableStateOf(false) }
         val reach = with(LocalDensity.current) { 56.dp.toPx() }
@@ -1645,7 +1695,7 @@ private fun Bubble(
             if (big != null) BigEmojiRow(big, emojiPlay, if (inked) held.blur(14.dp, androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded) else held)
             else BubbleGlass(shape = shape, mine = mine, modifier = held) {
                 MessageBody(
-                    words = text, plain = said, blurred = inked,
+                    words = text, plain = shown, blurred = inked,
                     poll = if (poll != null && rich != null) ({ PollCard(poll, rich.counts, rich.myReactions, onVote = onReact) }) else null,
                     visual = visual, kinds = visualKinds, held = holdMedia && !mine, footer = footer,
                     onMore = {
@@ -1679,6 +1729,13 @@ private fun Bubble(
                     if (said.isNotBlank()) MessageAction(AppIcons.Copy, "Copy") { copy(context, "Message", said) } else null,
                     if (said.length > 12) MessageAction(AppIcons.SelectAll, "Select") { selecting = true } else null,
                     if (said.isNotBlank()) MessageAction(AppIcons.Forward, "Forward") { forward(context, said) } else null,
+                    // Translate, or switch a translated bubble: WhatsApp's and iOS 26 Messages' long press Translate; the call is
+                    // Keyboard's TranslateActivity.kt (Translator.Session) on offline-translator's AidlTranslationService
+                    // (https://github.com/DavidVentura/offline-translator/blob/main/app/src/main/java/dev/davidv/translator/AidlTranslationService.kt).
+                    if (translatorHere && said.isNotBlank() && big == null && poll == null) {
+                        if (translated != null) MessageAction(AppIcons.Translate, if (showOriginal) "Show translation" else "Show original") { showOriginal = !showOriginal }
+                        else MessageAction(AppIcons.Translate, "Translate") { translate() }
+                    } else null,
                     // Send again x N: the user's own sent messages only (not a poll, which would make a second poll).
                     if (onSendAgain != null && mine && m.box == MessageBox.SENT && poll == null && (said.isNotBlank() || m.parts.isNotEmpty()))
                         MessageAction(AppIcons.Send, "Send again") { sendingAgain = true } else null,
@@ -1715,7 +1772,7 @@ private fun Bubble(
                     accent = mine, shadowElevation = 8.dp
                 ) {
                     MessageBody(
-                        words = text, plain = said, blurred = false,
+                        words = text, plain = shown, blurred = false,
                         poll = null,
                         visual = visual, kinds = visualKinds, held = holdMedia && !mine, footer = footer,
                         onMore = null, interactive = false,

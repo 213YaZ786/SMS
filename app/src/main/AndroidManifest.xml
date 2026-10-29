@@ -77,6 +77,9 @@
         <!-- Our Voice app, which writes voice messages out (its signature compared). -->
         <package android:name="com.yaz.voice" />
         <package android:name="com.yaz.voice.debug" />
+        <!-- Translator, whose service the message menu's Translate binds (signature checked in core/translate/Translator);
+             as Keyboard's manifest, https://github.com/213YaZ786/Keyboard/blob/main/app/src/main/AndroidManifest.xml -->
+        <package android:name="dev.davidv.translator" />
         <intent>
             <action android:name="com.dialer.app.action.SHOW_NUMBER" />
             <data android:scheme="tel" />

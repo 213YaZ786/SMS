@@ -63,6 +63,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        aidl = true // Translator's service interface (kit translate), https://developer.android.com/reference/tools/gradle-api/com/android/build/api/dsl/BuildFeatures#aidl()
     }
 
     // Screens drawn on the JVM by Robolectric and compared by Roborazzi (its README's setup).
