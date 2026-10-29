@@ -63,6 +63,7 @@ import com.yaz.sms.ui.icon.AppIcons
  * [contactId] is the contact's id when saved, null when not; 0 or less is a
  * private person of the Contacts app, who has nothing to open in Android's
  * contacts (the Contact tile is then left to [onContact]).
+ * [contact] false hides the Contact and Add contact tiles, for the page that is the contact itself.
  *
  * Android 11+ package visibility: the app needs the matching `<queries>` intents
  * in its manifest (DIAL tel, SENDTO smsto, VIEW and INSERT_OR_EDIT of a contact)
@@ -72,6 +73,7 @@ import com.yaz.sms.ui.icon.AppIcons
 fun PersonActions(
     number: String?,
     contactId: Long?,
+    contact: Boolean = true,
     modifier: Modifier = Modifier,
     onCall: (() -> Unit)? = null,
     onMessage: (() -> Unit)? = null,
@@ -82,7 +84,7 @@ fun PersonActions(
     if (number.isNullOrBlank()) return
     val context = LocalContext.current
     val saved = contactId != null
-    val tiles = remember(number, contactId, onCall, onMessage, onContact, onCopy) {
+    val tiles = remember(number, contactId, contact, onCall, onMessage, onContact, onCopy) {
         buildList {
             if (onCall != null || isIntentRegistered(context, dialIntent(number))) {
                 add(Tile(AppIcons.Call, "Call", "Call") { onCall?.invoke() ?: NumberActions.dial(context, number) })
@@ -90,7 +92,9 @@ fun PersonActions(
             if (onMessage != null || isIntentRegistered(context, messageIntent(number))) {
                 add(Tile(AppIcons.Message, "Message", "Message") { onMessage?.invoke() ?: NumberActions.message(context, number) })
             }
-            if (saved) {
+            if (!contact) {
+                // The page is the contact itself: nothing to open or add.
+            } else if (saved) {
                 val id = contactId ?: 0L
                 if (onContact != null || (id > 0 && isIntentRegistered(context, openIntent(id)))) {
                     add(Tile(AppIcons.Person, "Contact", "Contact") { onContact?.invoke() ?: NumberActions.openContact(context, id) })
