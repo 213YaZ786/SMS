@@ -33,6 +33,13 @@ class OpenRequests {
      */
     val showIn = MutableStateFlow<Long?>(null)
 
+    /**
+     * The conversation (its address) whose person page is open. Held here, in the process, not in the screen: a
+     * window going from one pane to two (a phone turned on its side) moves the conversation from its own route
+     * into the right pane, a new place whose saved state starts empty; the same one-shot store as [showIn].
+     */
+    val personOf = MutableStateFlow<String?>(null)
+
     /** A chat invite link from outside (a code read by the camera, a link tapped): asked, never joined unasked. */
     val invite = MutableStateFlow<String?>(null)
 

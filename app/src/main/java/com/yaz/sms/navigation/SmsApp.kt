@@ -12,7 +12,10 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -37,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -59,6 +63,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.yaz.sms.BuildConfig
@@ -69,6 +74,7 @@ import com.yaz.sms.feature.conversations.ConversationsScreen
 import com.yaz.sms.feature.main.WelcomeScreen
 import com.yaz.sms.feature.settings.SettingsScreen
 import com.yaz.sms.feature.thread.ThreadScreen
+import com.yaz.sms.ui.component.EmptyZone
 import com.yaz.sms.ui.component.LocalDockPadding
 import com.yaz.sms.ui.component.UpdatePrompt
 import com.yaz.sms.ui.component.rememberHaptics
@@ -90,18 +96,77 @@ fun SmsApp() {
     // and take them as padding themselves. Transparent, because the page's
     // ground with its ambient light is painted once under the whole app.
     Scaffold(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onBackground) { _ ->
-        SmsNavHost(navController)
+        // From 840 dp (Material's expanded width class) the list and the open conversation stand side by side:
+        // Contacts' ContactsApp.kt Main (BoxWithConstraints, wide = maxWidth >= 840.dp), after Android's
+        // list-detail canonical layout
+        // https://developer.android.com/develop/ui/compose/layouts/adaptive/list-detail
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            SmsNavHost(navController, wide = WidthClass.of(maxWidth) == WidthClass.EXPANDED)
+        }
     }
 }
 
+/**
+ * The conversation open beside the list on a wide window. [draft] is the text waiting in its composer.
+ * Kept across a turn of the screen (rememberSaveable), as Contacts keeps its `picked`.
+ */
+private data class OpenThread(val threadId: Long?, val address: String, val draft: String)
+
+// rememberSaveable's Saver (androidx compose.runtime.saveable listSaver pattern, the official recipe
+// https://developer.android.com/develop/ui/compose/state-saving#listsaver) for a nullable open conversation.
+private val OpenThreadSaver: Saver<OpenThread?, Any> = Saver(
+    save = { o -> if (o == null) emptyList<Any>() else listOf(o.threadId ?: -1L, o.address, o.draft) },
+    restore = { saved ->
+        val v = saved as List<*>
+        if (v.isEmpty()) null else OpenThread((v[0] as Long).takeIf { it >= 0 }, v[1] as String, v[2] as String)
+    }
+)
+
 @Composable
-private fun SmsNavHost(navController: NavHostController) {
+private fun SmsNavHost(navController: NavHostController, wide: Boolean) {
     val requests: OpenRequests = koinInject()
     val pending by requests.pending.collectAsState()
+    var open by rememberSaveable(stateSaver = OpenThreadSaver) { mutableStateOf<OpenThread?>(null) }
+    val wideNow by rememberUpdatedState(wide)
+
+    // The window turns wide or narrow: the open conversation goes with it. Wide, a conversation page (the
+    // THREAD route) moves into the pane; narrow, the pane's conversation becomes the THREAD route, on top of
+    // the list. Android's list-detail keeps the selected item across such a change, the same behaviour by hand.
+    val current by navController.currentBackStackEntryAsState()
+    val currentRoute = current?.destination?.route
+    LaunchedEffect(wide, currentRoute) {
+        val entry = current ?: return@LaunchedEffect
+        val there = open
+        if (wide && currentRoute == Routes.THREAD) {
+            open = OpenThread(
+                entry.arguments?.getLong("t")?.takeIf { it >= 0 },
+                entry.arguments?.getString("a").orEmpty(),
+                ""
+            )
+            navController.popBackStack()
+        } else if (!wide && there != null && currentRoute == Routes.MAIN) {
+            open = null
+            navController.navigate(Routes.thread(there.threadId, there.address))
+        }
+    }
+
     // A notification or another app asked for a conversation.
     LaunchedEffect(pending) {
         val asked = pending ?: return@LaunchedEffect
         requests.consume()
+        // Wide: the conversation opens in the pane, any other screen (Settings, New message) closed first.
+        if (wideNow && (asked.threadId != null || asked.address != null)) {
+            val shown = open
+            if (asked.message == null || asked.threadId == null || shown?.threadId != asked.threadId) {
+                navController.popBackStack(Routes.MAIN, inclusive = false)
+                open = OpenThread(asked.threadId, asked.address.orEmpty(), asked.text.orEmpty())
+            }
+            if (asked.message != null && asked.threadId != null) {
+                requests.showIn.value = asked.threadId
+                requests.showMessage.value = asked.message
+            }
+            return@LaunchedEffect
+        }
         // A message of the conversation already on screen (SHOW_MESSAGE): no second screen, the one shown scrolls to it
         // and lights it (the one leaving would take the request and the new one never see it).
         val here = navController.currentBackStackEntry
@@ -145,8 +210,15 @@ private fun SmsNavHost(navController: NavHostController) {
     ) {
         composable(Routes.MAIN) {
             Main(
+                wide = wide,
+                open = open,
+                onClose = { open = null },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                onOpenThread = { thread, address -> navController.navigate(Routes.thread(thread, address)) },
+                // Wide, a tap sets the conversation beside the list instead of navigating.
+                onOpenThread = { thread, address ->
+                    if (wide) open = OpenThread(thread, address, "")
+                    else navController.navigate(Routes.thread(thread, address))
+                },
                 onNew = { navController.navigate(Routes.new()) }
             )
         }
@@ -190,7 +262,9 @@ private fun SmsNavHost(navController: NavHostController) {
                         picked = true
                         requests.sharedTo.value = address
                         navController.popBackStack()
-                        navController.navigate(Routes.thread(null, address, text))
+                        // Wide, the conversation opens in the pane beside the list.
+                        if (wide) open = OpenThread(null, address, text)
+                        else navController.navigate(Routes.thread(null, address, text))
                     }
                 )
             }
@@ -208,7 +282,7 @@ private fun SmsNavHost(navController: NavHostController) {
 
 /** The conversations, the way to a new message floating over them, the first launch page until closed. */
 @Composable
-private fun Main(onOpenSettings: () -> Unit, onOpenThread: (Long, String) -> Unit, onNew: () -> Unit) {
+private fun Main(wide: Boolean, open: OpenThread?, onClose: () -> Unit, onOpenSettings: () -> Unit, onOpenThread: (Long, String) -> Unit, onNew: () -> Unit) {
     val store: SettingsStore = koinInject()
     var showWelcome by rememberSaveable { mutableStateOf(!store.current.welcomeSeen) }
     val settings by store.settings.collectAsState()
@@ -222,13 +296,47 @@ private fun Main(onOpenSettings: () -> Unit, onOpenThread: (Long, String) -> Uni
     val backdrop = rememberGlassBackdrop()
     val navigationBar = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     Box(Modifier.fillMaxSize()) {
-        CompositionLocalProvider(LocalDockPadding provides navigationBar + 72.dp) {
-            Box(Modifier.fillMaxSize().then(if (look != null) Modifier.glassSource(backdrop, look) else Modifier)) {
-                ReadableScroll { ConversationsScreen(onOpenSettings = onOpenSettings, onOpenThread = onOpenThread) }
+        // Wide, the back gesture closes the open conversation before it leaves the app (the same
+        // BackHandler as PlainBack.kt; registered before the thread's own, which therefore win).
+        if (wide) BackHandler(enabled = open != null) { onClose() }
+        // The list and the open conversation side by side, 0.42 and 0.58 as Contacts' ContactsApp.kt Main. The
+        // list keeps its place in the tree narrow or wide, so a turn of the screen keeps its search and scroll.
+        Row(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(if (wide) 0.42f else 1f).fillMaxHeight()) {
+                CompositionLocalProvider(LocalDockPadding provides navigationBar + 72.dp) {
+                    Box(Modifier.fillMaxSize().then(if (look != null) Modifier.glassSource(backdrop, look) else Modifier)) {
+                        ReadableScroll {
+                            ConversationsScreen(
+                                onOpenSettings = onOpenSettings,
+                                onOpenThread = onOpenThread,
+                                openThread = if (wide) open?.threadId else null
+                            )
+                        }
+                    }
+                }
+                CompositionLocalProvider(LocalGlassBackdrop provides backdrop.takeIf { look != null }) {
+                    MovableComposeButton(onClick = onNew, above = 16.dp)
+                }
             }
-        }
-        CompositionLocalProvider(LocalGlassBackdrop provides backdrop.takeIf { look != null }) {
-            MovableComposeButton(onClick = onNew, above = 16.dp)
+            if (wide) Box(Modifier.weight(0.58f).fillMaxHeight()) {
+                // The conversation has its own background and glass (ThreadScreen), so it stands outside the
+                // list's glass source. Crossfade between the empty pane and the page, as Contacts.
+                androidx.compose.animation.Crossfade(open, label = "pane") { shown ->
+                    if (shown == null) EmptyZone(
+                        title = "Choose a conversation",
+                        message = "It opens here.",
+                        icon = AppIcons.Message,
+                        modifier = Modifier.fillMaxSize()
+                    ) else ReadableScroll {
+                        ThreadScreen(
+                            threadId = shown.threadId,
+                            address = shown.address,
+                            draft = shown.draft,
+                            onBack = onClose
+                        )
+                    }
+                }
+            }
         }
         if (showWelcome) {
             Surface(

@@ -100,7 +100,7 @@ import org.koin.compose.koinInject
  * one, a long press offers the rest.
  */
 @Composable
-fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String) -> Unit) {
+fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String) -> Unit, openThread: Long? = null) {
     val messages: Messages = koinInject()
     val chat: com.yaz.sms.core.chat.RichChat = koinInject()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -301,7 +301,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     com.yaz.sms.core.sms.SwipeAction.NONE -> Unit
                 }
             },
-            selected = picked?.contains(c.threadId)
+            selected = picked?.contains(c.threadId),
+            open = c.threadId == openThread
         )
     }
 
@@ -797,6 +798,11 @@ private fun ConversationLine(
     onSwipe: (com.yaz.sms.core.sms.SwipeAction) -> Unit,
     /** Several at once (AOSP Messaging's multi select): null out of it, else whether this one is taken. */
     selected: Boolean? = null,
+    /**
+     * The conversation shown beside the list on a wide window: its card carries the accent, as the open
+     * conversation in Google Messages and Signal on a tablet (ZoneSurface's accent, Modules ui/component).
+     */
+    open: Boolean = false,
     /** A group's people, for the cluster of their faces. */
     members: List<PinnedFace> = emptyList(),
     /** The card's outer size: a column's width by default, a grid cell's in the grid. */
@@ -894,6 +900,7 @@ private fun ConversationLine(
         val shape = MaterialTheme.shapes.extraLarge
         ZoneSurface(
             shape = shape,
+            accent = open,
             modifier = Modifier.fillMaxSize().graphicsLayer {
                 scaleX = sink
                 scaleY = sink

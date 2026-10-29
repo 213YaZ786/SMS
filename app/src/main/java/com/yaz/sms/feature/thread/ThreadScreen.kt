@@ -554,7 +554,13 @@ private fun ThreadContent(
         if (listState.firstVisibleItemIndex <= 2 + added) listState.animateScrollToItem(0)
     }
     // The person's page, opened from their face: the calls, the tools, what was shared.
-    var personOpen by remember { mutableStateOf(false) }
+    // Held by OpenRequests, so a turn of the screen or a move between one pane and two keeps it open.
+    val requests: com.yaz.sms.core.sms.OpenRequests = koinInject()
+    val personOf by requests.personOf.collectAsState()
+    val personOpen = personOf == address
+    val showPerson: (Boolean) -> Unit = { on -> requests.personOf.value = if (on) address else null }
+    // Another conversation opened (a notification) forgets the page left open in the last one.
+    LaunchedEffect(address) { if (requests.personOf.value != address) requests.personOf.value = null }
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var at by remember { mutableStateOf(0) }
@@ -563,7 +569,6 @@ private fun ThreadContent(
     var choosingVanish by remember { mutableStateOf(false) }
     var encryptionOpen by remember { mutableStateOf(false) }
     // Asked from the Contacts app's "verified" mark: the keys at once.
-    val requests: com.yaz.sms.core.sms.OpenRequests = koinInject()
     val keysFor by requests.keysFor.collectAsState()
     LaunchedEffect(keysFor) {
         val number = keysFor ?: return@LaunchedEffect
@@ -682,7 +687,7 @@ private fun ThreadContent(
         calls = calls,
         onBackground = if (thread != null && appLook != null) ({ backgroundOpen = true }) else null,
         onEncryption = { encryptionOpen = true },
-        onStarred = if (thread != null) ({ personOpen = false; starredOpen = true }) else null,
+        onStarred = if (thread != null) ({ showPerson(false); starredOpen = true }) else null,
         onName = { name ->
             thread?.let { t ->
                 store.update { s -> s.copy(groupNames = if (name.isBlank()) s.groupNames - t else s.groupNames + (t to name.trim())) }
@@ -703,7 +708,7 @@ private fun ThreadContent(
             onRemove = { who -> scope.launch { if (chat.removeMember(people, who.phone)) haptics.done() else haptics.reject() } },
             onLeave = { scope.launch { if (chat.leaveGroup(people)) haptics.done() else haptics.reject() } }
         ) else null,
-        onClose = { personOpen = false }
+        onClose = { showPerson(false) }
     )
     LaunchedEffect(personOpen) { if (personOpen && window < 5000) window = 5000 }
     if (sharedOpen) {
@@ -747,7 +752,7 @@ private fun ThreadContent(
                             onClickLabel = "About them"
                         ) {
                             haptics.tick()
-                            personOpen = true
+                            showPerson(true)
                         }
                         .semantics { contentDescription = "$title, details" }
                 ) {
