@@ -1,15 +1,6 @@
 package com.yaz.sms.feature.thread
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.semantics.Role
-import com.yaz.sms.ui.theme.zone
 import com.yaz.sms.ui.glass.glassGround
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,7 +27,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import com.yaz.sms.ui.component.BoldButton
 import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -48,22 +38,23 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.yaz.sms.core.dial.NumberActions
+import com.yaz.sms.core.dial.Sisters
 import com.yaz.sms.data.sms.Message
+import com.yaz.sms.ui.component.BlockConfirm
 import com.yaz.sms.ui.component.ContactAvatar
 import com.yaz.sms.ui.component.FloatingAction
 import com.yaz.sms.ui.component.FloatingPane
 import com.yaz.sms.ui.component.HeroGlow
-import com.yaz.sms.ui.component.ZoneAlertDialog
+import com.yaz.sms.ui.component.PersonActionTile
+import com.yaz.sms.ui.component.PersonActions
+import com.yaz.sms.ui.component.PersonHeader
 import com.yaz.sms.ui.component.ZoneSurface
 import com.yaz.sms.ui.component.rememberHaptics
 import com.yaz.sms.ui.icon.AppIcons
@@ -141,26 +132,17 @@ fun PersonPage(
     var showAll by remember { mutableStateOf(false) }
     if (showAll) SharedPage(name, messages, stranger, holdMedia, start = seeAll) { showAll = false }
     var confirmBlock by remember { mutableStateOf(false) }
-    var choosingSignature by remember { mutableStateOf(false) }
     var naming by remember { mutableStateOf(false) }
-    if (choosingSignature) SignatureDialog(address) { choosingSignature = false }
     if (naming) GroupNameDialog(if (group && name.contains(',')) "" else name, onDone = { n ->
         naming = false
         onName(n)
     }) { naming = false }
-    if (confirmBlock) ZoneAlertDialog(
-        onDismissRequest = { confirmBlock = false },
-        title = { Text("Block $name?") },
-        text = { Text("Calls and messages from this number will not reach you.") },
-        confirmButton = {
-            BoldButton(filled = true, onClick = {
-                confirmBlock = false
-                NumberActions.block(context, address)
-                blocked = NumberActions.isBlocked(context, address)
-            }) { Text("Block") }
-        },
-        dismissButton = { QuietButton(onClick = { confirmBlock = false }) { Text("Cancel") } }
-    )
+    // The shared confirmation (ui/component/BlockConfirm), from AOSP Dialer's BlockReportSpamDialogs.
+    if (confirmBlock) BlockConfirm(name, onDismiss = { confirmBlock = false }) {
+        confirmBlock = false
+        NumberActions.block(context, address)
+        blocked = NumberActions.isBlocked(context, address)
+    }
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         PageBars()
@@ -173,51 +155,50 @@ fun PersonPage(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Who they are.
+                    // Who they are: the shared person header (ui/component/PersonHeader), from AOSP Dialer's call details
+                    // header, the photo then the name and the number to its end
+                    // (https://android.googlesource.com/platform/packages/apps/Dialer/+/refs/heads/main/java/com/android/dialer/calldetails/res/layout/contact_container.xml, Apache-2.0).
                     item {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
-                            if (group && groupTools != null) Box(
-                                Modifier.clip(CircleShape).clickable(onClickLabel = "Group picture") { groupUi.needsChat(groupTools) { groupUi.pick?.invoke() } }
-                            ) { GroupFace(groupTools.picture, name, 112.dp) }
-                            else ContactAvatar(name, if (group) null else photo, 112.dp, look = if (group) null else com.yaz.sms.ui.component.rememberLook(address).value)
-                            Spacer(Modifier.height(14.dp))
-                            Text(name, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            number?.takeIf { it != name }?.let {
-                                Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            if (encrypted) {
-                                Spacer(Modifier.height(10.dp))
-                                FloatingPane(shape = CircleShape, onClick = onEncryption) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
-                                        Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("End-to-end encrypted", style = MaterialTheme.typography.labelLarge)
+                        Box(Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
+                            PersonHeader(
+                                name = name,
+                                number = number?.takeIf { it != name },
+                                face = { size ->
+                                    if (group && groupTools != null) GroupFace(groupTools.picture, name, size)
+                                    else ContactAvatar(name, if (group) null else photo, size, look = if (group) null else com.yaz.sms.ui.component.rememberLook(address).value)
+                                },
+                                onFace = if (group && groupTools != null) ({ groupUi.needsChat(groupTools) { groupUi.pick?.invoke() } })
+                                else if (!group && contactId != null && contactId > 0) ({ NumberActions.openContact(context, contactId) })
+                                else null,
+                                badges = if (encrypted) {
+                                    {
+                                        FloatingPane(shape = CircleShape, onClick = onEncryption) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                                                Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                                                Spacer(Modifier.width(6.dp))
+                                                Text("End-to-end encrypted", style = MaterialTheme.typography.labelLarge)
+                                            }
+                                        }
                                     }
-                                }
-                            }
+                                } else null
+                            )
                         }
                     }
-                    // What can be done with them, side by side and onto a second line.
-                    item {
-                        // Lines as even as can be: 6 = 3 + 3, 5 = 3 + 2.
-                        // Someone not saved yet: adding them comes first, at hand.
-                        val unsaved = !group && address.count(Char::isDigit) >= 3 && contactId == null
-                        val count = listOfNotNull(calls.phone, calls.encrypted, calls.video, onBackground).size + (if (unsaved) 1 else 0)
-                        // Cards in two columns, as the rest of the page and as wide as it (560 dp, the members and
-                        // the media below); the calls in their colour.
-                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                            maxItemsInEachRow = 2,
-                            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
-                        ) {
-                            if (unsaved) Tile(AppIcons.PersonAdd, "Add contact", MaterialTheme.colorScheme.primary) { NumberActions.addContact(context, address) }
-                            calls.phone?.let { Tile(AppIcons.Call, "Call", CallGreen, it) }
-                            calls.encrypted?.let { Tile(AppIcons.Lock, "Encrypted call", MaterialTheme.colorScheme.primary, it) }
-                            calls.video?.let { Tile(AppIcons.Videocam, "Video call", MaterialTheme.colorScheme.primary, it) }
-                            onBackground?.let { Tile(AppIcons.Palette, "Background", null, it) }
-                        }
+                    // What can be done with them: the shared row of tiles (ui/component/PersonActions), wired as Dialer's
+                    // number page does (feature/recents/NumberScreen.kt). This page lies over the conversation, so
+                    // Message goes back to it. A group or a sender without a number has no row.
+                    if (!group && address.count(Char::isDigit) >= 3) item {
+                        Box(Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
+                            PersonActions(
+                                number = address,
+                                contactId = contactId,
+                                onCall = calls.phone,
+                                onMessage = onClose,
+                                more = {
+                                    calls.encrypted?.let { PersonActionTile(AppIcons.Lock, "Encrypted call", Modifier.weight(1f), onClick = it) }
+                                    calls.video?.let { PersonActionTile(AppIcons.Videocam, "Video call", Modifier.weight(1f), onClick = it) }
+                                }
+                            )
                         }
                     }
                     // About them: the rest of the actions, Block last.
@@ -232,13 +213,11 @@ fun PersonPage(
                             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
                         ) {
                             if (digits && NumberActions.canShowCalls(context)) Row(AppIcons.Recents, "Calls with them") { NumberActions.showCalls(context, address) }
-                            // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
-                            if (!group && contactId != null && contactId > 0) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
-                            if (!group) Row(AppIcons.Copy, "Copy number") { NumberActions.copy(context, address) }
+                            onBackground?.let { open -> Row(AppIcons.Palette, "Background") { open() } }
                             onStarred?.let { open -> Row(AppIcons.Star, "Starred messages") { open() } }
-                            // Kept in the contact by the Contacts app when it is on the phone; here otherwise.
-                            if (!group) Row(AppIcons.Vibration, "Vibration") {
-                                if (contactId == null || contactId < 0 || !com.yaz.sms.core.dial.ContactLook.openInContacts(context, contactId)) choosingSignature = true
+                            // The person's look is kept by the Contacts app: the row shows only when it is ours and on the phone.
+                            if (!group && contactId != null && contactId > 0 && Sisters.packages("contacts").any { Sisters.isOurs(context, it) }) {
+                                Row(AppIcons.Vibration, "Vibration") { com.yaz.sms.core.dial.ContactLook.openInContacts(context, contactId) }
                             }
                             if (group) Row(AppIcons.Create, "Name the group") { naming = true }
                             // A group's own: its picture, who is in it, leaving it, mentions. Delta Chat Android's group profile
@@ -321,55 +300,6 @@ fun PersonPage(
                     }
                 }
                 Box(Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(16.dp)) { FloatingAction(AppIcons.ArrowBack, "Back", onClose) }
-            }
-        }
-    }
-}
-
-/**
- * A card of glass, its icon over its name; one that calls is tinted by its colour, the colour on the icon, the
- * name in the page's text colour. Dialer's NumberParts.kt CallBar and ActionTile
- * (https://github.com/213YaZ786/Dialer/blob/main/app/src/main/java/com/yaz/dialer/feature/recents/NumberParts.kt):
- * the glass tinted at low alpha through [rememberTinted] and provided as LocalGlass around the ZoneSurface, and the
- * sink on press (spring, damping 0.45, stiffness 700). The shape and sizes are the card's own.
- */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun androidx.compose.foundation.layout.FlowRowScope.Tile(icon: ImageVector, label: String, color: Color?, onClick: () -> Unit) {
-    val haptics = rememberHaptics()
-    val shape = RoundedCornerShape(24.dp)
-    val press = remember { MutableInteractionSource() }
-    val pressed by press.collectIsPressedAsState()
-    val sink by animateFloatAsState(if (pressed) 0.95f else 1f, spring(dampingRatio = 0.45f, stiffness = 700f), label = "sink")
-    val glass = com.yaz.sms.ui.glass.LocalGlass.current
-    val tinted = rememberTinted(glass, color?.copy(alpha = 0.32f))
-    CompositionLocalProvider(com.yaz.sms.ui.glass.LocalGlass provides (tinted ?: glass)) {
-        ZoneSurface(
-            shape = shape,
-            // Without glass: the colour's wash on the page's own fill.
-            color = color?.copy(alpha = 0.2f) ?: MaterialTheme.colorScheme.zone,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxRowHeight()
-                .heightIn(min = 100.dp)
-                .graphicsLayer {
-                    scaleX = sink
-                    scaleY = sink
-                }
-                .clip(shape)
-                .clickable(interactionSource = press, indication = null, role = Role.Button, onClickLabel = label) {
-                    if (color != null) haptics.firm() else haptics.tick()
-                    onClick()
-                }
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 16.dp)
-            ) {
-                Icon(icon, contentDescription = null, tint = color ?: MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
-                Spacer(Modifier.height(8.dp))
-                Text(label, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center, maxLines = 2)
             }
         }
     }

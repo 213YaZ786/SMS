@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -101,16 +100,15 @@ fun CallButtons(
     vanish: Int? = null,
     onVanish: () -> Unit = {}
 ) {
-    val quiet = MaterialTheme.colorScheme.secondaryContainer
-    val onQuiet = MaterialTheme.colorScheme.onSecondaryContainer
+    // Every item is the same clear glass as the menu's own button; only Call keeps its green.
     val actions = buildList {
-        choices.phone?.let { add(Reach(AppIcons.Call, "Call", CallGreen, Color.White, it)) }
-        choices.encrypted?.let { add(Reach(AppIcons.CallLocked, "Encrypted call", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, it)) }
-        choices.video?.let { add(Reach(AppIcons.Videocam, "Video call", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, it)) }
-        onAddContact?.let { add(Reach(AppIcons.PersonAdd, "Add contact", quiet, onQuiet, it)) }
-        add(Reach(AppIcons.Search, "Search", quiet, onQuiet, onSearch))
-        onSilence?.let { add(Reach(if (silenced) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silenced) "Silenced" else "Silence", quiet, onQuiet, it)) }
-        if (vanish != null) add(Reach(AppIcons.Timer, if (vanish > 0) "Vanish after ${vanishLabel(vanish)}" else "Vanishing messages", quiet, onQuiet, onVanish))
+        choices.phone?.let { add(Reach(AppIcons.Call, "Call", it, green = true)) }
+        choices.encrypted?.let { add(Reach(AppIcons.CallLocked, "Encrypted call", it)) }
+        choices.video?.let { add(Reach(AppIcons.Videocam, "Video call", it)) }
+        onAddContact?.let { add(Reach(AppIcons.PersonAdd, "Add contact", it)) }
+        add(Reach(AppIcons.Search, "Search", onSearch))
+        onSilence?.let { add(Reach(if (silenced) AppIcons.NotificationsOn else AppIcons.NotificationsOff, if (silenced) "Silenced" else "Silence", it)) }
+        if (vanish != null) add(Reach(AppIcons.Timer, if (vanish > 0) "Vanish after ${vanishLabel(vanish)}" else "Vanishing messages", onVanish))
     }
     var open by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     Box {
@@ -128,10 +126,13 @@ fun CallButtons(
                 ) {
                     actions.forEachIndexed { i, reach ->
                         Drop(i) {
-                            GlassCallButton(reach.icon, reach.label, reach.color, {
+                            val tap = {
                                 open = false
                                 reach.onTap()
-                            }, iconTint = reach.tint, diameter = 48.dp)
+                            }
+                            // FloatingAction is the panes kit's glass round action (Kyant0/AndroidLiquidGlass's press lens), 48 dp.
+                            if (reach.green) GlassCallButton(reach.icon, reach.label, CallGreen, tap, iconTint = Color.White, diameter = 48.dp)
+                            else com.yaz.sms.ui.component.FloatingAction(reach.icon, reach.label, tap)
                         }
                     }
                 }
@@ -140,7 +141,7 @@ fun CallButtons(
     }
 }
 
-private class Reach(val icon: ImageVector, val label: String, val color: Color, val tint: Color, val onTap: () -> Unit)
+private class Reach(val icon: ImageVector, val label: String, val onTap: () -> Unit, val green: Boolean = false)
 
 /** Falls into place from the button, a little after the one above it. */
 @Composable

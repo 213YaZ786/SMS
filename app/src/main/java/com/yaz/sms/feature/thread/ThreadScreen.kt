@@ -56,7 +56,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import com.yaz.sms.ui.component.BoldButton
-import com.yaz.sms.ui.component.GlassRadio
 import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -1231,84 +1230,6 @@ private fun rememberCallChoices(phone: String, encrypted: Boolean, canCall: Bool
     )
 }
 
-/** The name at the top: a tap offers the calls with them, their contact, blocking. */
-@Composable
-private fun PersonPill(title: String, address: String, contactId: Long?, group: Boolean, vanish: Int?, under: String? = null, face: Pair<String?, String?>? = null, onUnder: (() -> Unit)? = null, onName: (String) -> Unit = {}, onVanish: (Int) -> Unit) {
-    val context = LocalContext.current
-    val haptics = rememberHaptics()
-    var menuOpen by remember { mutableStateOf(false) }
-    var pillBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
-    var blocked by remember(address) { mutableStateOf(NumberActions.isBlocked(context, address)) }
-    var confirmBlock by remember { mutableStateOf(false) }
-    var choosingSignature by remember { mutableStateOf(false) }
-    if (choosingSignature) SignatureDialog(address) { choosingSignature = false }
-    var choosingVanish by remember { mutableStateOf(false) }
-    var naming by remember { mutableStateOf(false) }
-    if (naming) GroupNameDialog(if (group && title.contains(',')) "" else title, onDone = { name ->
-        naming = false
-        onName(name)
-    }) { naming = false }
-    if (choosingVanish && vanish != null) VanishDialog(vanish, onPick = onVanish) { choosingVanish = false }
-    Box(Modifier.onGloballyPositioned { pillBounds = it.boundsInWindow() }) {
-        FloatingPane(shape = CircleShape, onClick = {
-            haptics.firm()
-            menuOpen = true
-        }) {
-          Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = if (face != null) 5.dp else 0.dp)) {
-            face?.let { (name, photo) -> com.yaz.sms.ui.component.ContactAvatar(name, photo, 34.dp, look = if (group) null else com.yaz.sms.ui.component.rememberLook(address).value) }
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(start = if (face != null) 10.dp else 18.dp, end = 18.dp, top = if (under != null) 6.dp else 10.dp, bottom = if (under != null) 6.dp else 10.dp)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                under?.let {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = if (onUnder != null) Modifier.clickable(onClickLabel = "Encryption", onClick = onUnder) else Modifier) {
-                        Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(11.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                    }
-                }
-            }
-          }
-        }
-        val digits = !group && address.count(Char::isDigit) >= 3
-        if (menuOpen) PaletteMenu(
-            pillBounds,
-            listOfNotNull(
-                if (digits && NumberActions.canShowCalls(context)) MessageAction(AppIcons.Recents, "Calls") { NumberActions.showCalls(context, address) } else null,
-                // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
-                if (contactId != null && contactId > 0) MessageAction(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
-                else if (digits && contactId == null) MessageAction(AppIcons.PersonAdd, "Add to contacts") { NumberActions.addContact(context, address) } else null,
-                if (!group) MessageAction(AppIcons.Copy, "Copy number") { NumberActions.copy(context, address) } else null,
-                if (!group) MessageAction(AppIcons.Vibration, "Vibration") { choosingSignature = true } else null,
-                if (group) MessageAction(AppIcons.Create, "Name the group") { naming = true } else null,
-                if (vanish != null) MessageAction(AppIcons.Timer, "Vanishing") { choosingVanish = true } else null,
-                if (!group && NumberActions.canBlock(context)) MessageAction(AppIcons.Block, if (blocked) "Unblock" else "Block", danger = !blocked) {
-                    if (blocked) {
-                        NumberActions.unblock(context, address)
-                        blocked = NumberActions.isBlocked(context, address)
-                    } else {
-                        confirmBlock = true
-                    }
-                } else null
-            ),
-            onDismiss = { menuOpen = false }
-        )
-    }
-    if (confirmBlock) {
-        ZoneAlertDialog(
-            onDismissRequest = { confirmBlock = false },
-            title = { Text("Block $title?") },
-            text = { Text("Calls and messages from this number will not reach you.") },
-            confirmButton = {
-                BoldButton(filled = true, onClick = {
-                    confirmBlock = false
-                    NumberActions.block(context, address)
-                    blocked = NumberActions.isBlocked(context, address)
-                }) { Text("Block") }
-            },
-            dismissButton = { QuietButton(onClick = { confirmBlock = false }) { Text("Cancel") } }
-        )
-    }
-}
-
 /**
  * A message as a pane of glass: received on the left, the user's own on
  * the right in the accent. A code carries a button to copy it; links are
@@ -2158,38 +2079,6 @@ private fun PendingBubble(p: com.yaz.sms.core.sms.PendingSends.Waiting, modifier
         }
         Text("Tap to take it back", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, end = 6.dp))
     }
-}
-
-/** A vibration of their own for this person: felt while choosing. */
-@Composable
-internal fun SignatureDialog(address: String, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val store: SettingsStore = koinInject()
-    val settings by store.settings.collectAsState()
-    val key = com.yaz.sms.core.sms.Signatures.key(address)
-    val current = settings.signatures[key]
-    ZoneAlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Vibration") },
-        text = {
-            Column {
-                (listOf<String?>(null) + com.yaz.sms.core.sms.Signatures.patterns.keys).forEach { name ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            if (name != null) com.yaz.sms.core.sms.Signatures.play(context, name)
-                            store.update { s -> s.copy(signatures = if (name == null) s.signatures - key else s.signatures + (key to name)) }
-                        }.padding(vertical = 10.dp)
-                    ) {
-                        GlassRadio(selected = current == name, onClick = null)
-                        Spacer(Modifier.width(12.dp))
-                        Text(name ?: "As usual", style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-            }
-        },
-        confirmButton = { BoldButton(filled = true, onClick = onDismiss) { Text("Done") } }
-    )
 }
 
 /**
