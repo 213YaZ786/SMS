@@ -17,11 +17,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -50,10 +48,10 @@ import com.yaz.sms.data.sms.Message
 import com.yaz.sms.ui.component.BlockConfirm
 import com.yaz.sms.ui.component.ContactAvatar
 import com.yaz.sms.ui.component.FloatingAction
-import com.yaz.sms.ui.component.FloatingPane
 import com.yaz.sms.ui.component.HeroGlow
 import com.yaz.sms.ui.component.PersonActionTile
 import com.yaz.sms.ui.component.PersonActions
+import com.yaz.sms.ui.component.PersonBadge
 import com.yaz.sms.ui.component.PersonHeader
 import com.yaz.sms.ui.component.ZoneSurface
 import com.yaz.sms.ui.component.rememberHaptics
@@ -171,15 +169,7 @@ fun PersonPage(
                                 else if (!group && contactId != null && contactId > 0) ({ NumberActions.openContact(context, contactId) })
                                 else null,
                                 badges = if (encrypted) {
-                                    {
-                                        FloatingPane(shape = CircleShape, onClick = onEncryption) {
-                                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
-                                                Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
-                                                Spacer(Modifier.width(6.dp))
-                                                Text("End-to-end encrypted", style = MaterialTheme.typography.labelLarge)
-                                            }
-                                        }
-                                    }
+                                    { PersonBadge(AppIcons.Lock, "Encrypted", onClick = onEncryption) }
                                 } else null
                             )
                         }
