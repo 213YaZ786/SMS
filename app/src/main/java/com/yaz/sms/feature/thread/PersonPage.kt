@@ -91,6 +91,8 @@ fun PersonPage(
     calls: CallChoices,
     onBackground: (() -> Unit)?,
     onEncryption: () -> Unit,
+    /** The conversation's starred messages (the page closes first); null when there is no conversation yet. */
+    onStarred: (() -> Unit)? = null,
     onName: (String) -> Unit,
     /** A group's picture, members, leaving and mentions (Delta Chat Android's group profile); null for one person. */
     groupTools: GroupTools? = null,
@@ -233,6 +235,7 @@ fun PersonPage(
                             // A private person of the Contacts app (no id in Android's contacts): nothing to open or add.
                             if (!group && contactId != null && contactId > 0) Row(AppIcons.Person, "Contact") { NumberActions.openContact(context, contactId) }
                             if (!group) Row(AppIcons.Copy, "Copy number") { NumberActions.copy(context, address) }
+                            onStarred?.let { open -> Row(AppIcons.Star, "Starred messages") { open() } }
                             // Kept in the contact by the Contacts app when it is on the phone; here otherwise.
                             if (!group) Row(AppIcons.Vibration, "Vibration") {
                                 if (contactId == null || contactId < 0 || !com.yaz.sms.core.dial.ContactLook.openInContacts(context, contactId)) choosingSignature = true

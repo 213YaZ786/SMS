@@ -683,6 +683,7 @@ private fun ThreadContent(
         calls = calls,
         onBackground = if (thread != null && appLook != null) ({ backgroundOpen = true }) else null,
         onEncryption = { encryptionOpen = true },
+        onStarred = if (thread != null) ({ personOpen = false; starredOpen = true }) else null,
         onName = { name ->
             thread?.let { t ->
                 store.update { s -> s.copy(groupNames = if (name.isBlank()) s.groupNames - t else s.groupNames + (t to name.trim())) }
@@ -780,7 +781,7 @@ private fun ThreadContent(
             }
 
             androidx.compose.animation.AnimatedVisibility(visible = searching) {
-                SearchBar(query, { query = it }, matches.size, at, onOlder = { if (matches.isNotEmpty()) at = (at + 1) % matches.size }, onNewer = { if (matches.isNotEmpty()) at = (at - 1 + matches.size) % matches.size }, onStarred = if (thread != null) ({ starredOpen = true }) else null, onClose = {
+                SearchBar(query, { query = it }, matches.size, at, onOlder = { if (matches.isNotEmpty()) at = (at + 1) % matches.size }, onNewer = { if (matches.isNotEmpty()) at = (at - 1 + matches.size) % matches.size }, onClose = {
                     searching = false
                     query = ""
                 })
@@ -1925,33 +1926,13 @@ internal fun vanishLabel(seconds: Int): String = when {
 /** How long messages last in this chat, for both sides. */
 @Composable
 internal fun VanishDialog(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
-    ZoneAlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Vanishing messages") },
-        text = {
-            Column {
-                Text(
-                    "New messages vanish on both phones this long after they are read.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                listOf(0, 300, 3600, 86_400, 604_800).forEach { seconds ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            onPick(seconds)
-                            onDismiss()
-                        }.padding(vertical = 10.dp)
-                    ) {
-                        GlassRadio(selected = current == seconds, onClick = null)
-                        Spacer(Modifier.width(12.dp))
-                        Text(if (seconds == 0) "Off" else vanishLabel(seconds), style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-            }
-        },
-        confirmButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
+    com.yaz.sms.ui.component.ChoiceDialog(
+        title = "Vanishing messages",
+        text = "New messages vanish on both phones this long after they are read.",
+        options = listOf(0, 300, 3600, 86_400, 604_800).map { seconds -> seconds to (if (seconds == 0) "Off" else vanishLabel(seconds)) },
+        selected = current,
+        onPick = onPick,
+        onDismiss = onDismiss
     )
 }
 

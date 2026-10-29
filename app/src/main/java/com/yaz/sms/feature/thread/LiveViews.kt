@@ -31,32 +31,14 @@ import com.yaz.sms.ui.icon.AppIcons
  */
 @Composable
 internal fun LiveDurationSheet(onPick: (Int) -> Unit, onDismiss: () -> Unit) {
-    val haptics = rememberHaptics()
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        DialogPane {
-            Column(Modifier.padding(vertical = 16.dp)) {
-                Text("Share live location", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-                Text(
-                    "Updates while the app is open.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 8.dp)
-                )
-                LiveLocation.durations.forEach { d ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().clickable(onClickLabel = "Share for ${d.label}") {
-                            haptics.firm()
-                            onPick(d.seconds)
-                        }.padding(horizontal = 24.dp, vertical = 14.dp)
-                    ) {
-                        Icon(AppIcons.MyLocation, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                        Text(d.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(start = 16.dp))
-                    }
-                }
-            }
-        }
-    }
+    com.yaz.sms.ui.component.ChoiceDialog(
+        title = "Share live location",
+        icon = AppIcons.MyLocation,
+        text = "Updates while the app is open.",
+        options = LiveLocation.durations.map { d -> d.seconds to d.label },
+        onPick = onPick,
+        onDismiss = onDismiss
+    )
 }
 
 /**

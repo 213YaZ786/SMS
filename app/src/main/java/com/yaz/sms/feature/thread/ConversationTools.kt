@@ -114,39 +114,25 @@ private fun Fingerprint(whose: String, print: String) {
  */
 @Composable
 fun SilenceDialog(until: Long?, onPick: (Long?) -> Unit, onDismiss: () -> Unit) {
-    val haptics = rememberHaptics()
     val now = System.currentTimeMillis()
     val morning = LocalDate.now().plusDays(1).atTime(LocalTime.of(8, 0)).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-    ZoneAlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(AppIcons.NotificationsOff, contentDescription = null) },
-        title = { Text(if (until != null) "Silenced" else "Silence") },
-        text = {
-            Column {
-                if (until != null) Text(
-                    if (until == Long.MAX_VALUE) "No notifications from this conversation." else "No notifications until ${android.text.format.DateFormat.getTimeFormat(androidx.compose.ui.platform.LocalContext.current).format(java.util.Date(until))}.",
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                listOfNotNull(
-                    "For an hour" to now + 60 * 60 * 1000L,
-                    "Until tomorrow morning" to morning,
-                    "Until I turn it back on" to Long.MAX_VALUE,
-                    if (until != null) "Notifications back on" to null else null
-                ).forEach { (label, at) ->
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (at == null) MaterialTheme.colorScheme.primary else LocalContentColor.current,
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            haptics.tick()
-                            onPick(at)
-                            onDismiss()
-                        }.padding(vertical = 12.dp)
-                    )
-                }
-            }
+    val timeFormat = android.text.format.DateFormat.getTimeFormat(androidx.compose.ui.platform.LocalContext.current)
+    com.yaz.sms.ui.component.ChoiceDialog<Long?>(
+        title = if (until != null) "Silenced" else "Silence",
+        icon = AppIcons.NotificationsOff,
+        text = when (until) {
+            null -> null
+            Long.MAX_VALUE -> "No notifications from this conversation."
+            else -> "No notifications until ${timeFormat.format(java.util.Date(until))}."
         },
-        confirmButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
+        options = listOfNotNull(
+            "For an hour" to now + 60 * 60 * 1000L,
+            "Until tomorrow morning" to morning,
+            "Until I turn it back on" to Long.MAX_VALUE,
+            if (until != null) "Notifications back on" to null else null
+        ).map { (label, at) -> at to label },
+        onPick = onPick,
+        onDismiss = onDismiss
     )
 }
 
@@ -155,7 +141,7 @@ fun SilenceDialog(until: Long?, onPick: (Long?) -> Unit, onDismiss: () -> Unit) 
  * how many messages hold the words, and the way from one to the next.
  */
 @Composable
-fun SearchBar(query: String, onQuery: (String) -> Unit, found: Int, at: Int, onOlder: () -> Unit, onNewer: () -> Unit, onClose: () -> Unit, onStarred: (() -> Unit)? = null) {
+fun SearchBar(query: String, onQuery: (String) -> Unit, found: Int, at: Int, onOlder: () -> Unit, onNewer: () -> Unit, onClose: () -> Unit) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -186,16 +172,13 @@ fun SearchBar(query: String, onQuery: (String) -> Unit, found: Int, at: Int, onO
             RoundIcon(AppIcons.Close, "Close search", enabled = true, onClick = onClose)
         }
     }
-    // The conversation's starred messages, where its search lives: the same pill as the list's Unread.
-    if (onStarred != null && query.isBlank()) StarredEntry(onStarred)
     }
 }
 
 // The entry to the starred messages: a filter chip (Jetpack Compose,
 // https://developer.android.com/develop/ui/compose/components/chip) made as a pill of glass with
 // a star and its name, drawn as the conversation list's Unread toggle
-// (feature/conversations/ConversationsScreen.kt), placed with the search as Google Messages
-// places its Starred entry (https://support.google.com/messages/answer/10930955).
+// (feature/conversations/ConversationsScreen.kt); the list's Starred chip.
 @Composable
 internal fun StarredEntry(onClick: () -> Unit) {
     val haptics = rememberHaptics()

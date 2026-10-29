@@ -42,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.component.ChoiceDialog
 import com.yaz.sms.ui.component.GlassRadio
 import com.yaz.sms.ui.component.GlassSwitch
 import com.yaz.sms.ui.component.QuietButton
@@ -418,21 +419,21 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             title = "Theme",
             options = ThemeMode.entries.map { it to themeLabel(it) },
             selected = settings.themeMode,
-            onSelect = viewModel::setTheme,
+            onPick = viewModel::setTheme,
             onDismiss = { dialog = OpenDialog.NONE }
         )
         OpenDialog.TEXT_SIZE -> ChoiceDialog(
             title = "Text size",
             options = TEXT_SCALES.map { it to textScaleLabel(it) },
             selected = settings.textScale,
-            onSelect = viewModel::setTextScale,
+            onPick = viewModel::setTextScale,
             onDismiss = { dialog = OpenDialog.NONE }
         )
         OpenDialog.UPDATES -> ChoiceDialog(
             title = "Updates",
             options = UpdateMode.entries.map { it to updatesLabel(it) },
             selected = settings.updates,
-            onSelect = { mode ->
+            onPick = { mode ->
                 viewModel.setUpdates(mode)
                 // Installing needs Android's leave, asked when chosen.
                 if (mode == UpdateMode.INSTALL && !Updates.canInstall(context)) Updates.allowInstalls(context)
@@ -451,7 +452,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     }
                 },
                 selected = settings.relay,
-                onSelect = { host ->
+                onPick = { host ->
                     viewModel.setRelay(host)
                     // A relay picked by hand joins the profile at once.
                     if (host.isNotBlank()) scope.launch { chat.addRelay(host) }
@@ -463,21 +464,21 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             title = "Undo send",
             options = listOf(0, 2, 4, 6, 10).map { it to if (it == 0) "Off" else "$it seconds" },
             selected = settings.undoSeconds,
-            onSelect = viewModel::setUndoSeconds,
+            onPick = viewModel::setUndoSeconds,
             onDismiss = { dialog = OpenDialog.NONE }
         )
         OpenDialog.SWIPE_LEFT -> ChoiceDialog(
             title = "Swipe left",
             options = com.yaz.sms.core.sms.SwipeAction.entries.map { it.name to it.label },
             selected = settings.swipeLeft,
-            onSelect = viewModel::setSwipeLeft,
+            onPick = viewModel::setSwipeLeft,
             onDismiss = { dialog = OpenDialog.NONE }
         )
         OpenDialog.SWIPE_RIGHT -> ChoiceDialog(
             title = "Swipe right",
             options = com.yaz.sms.core.sms.SwipeAction.entries.map { it.name to it.label },
             selected = settings.swipeRight,
-            onSelect = viewModel::setSwipeRight,
+            onPick = viewModel::setSwipeRight,
             onDismiss = { dialog = OpenDialog.NONE }
         )
         OpenDialog.OWN_NUMBER -> OwnNumberDialog(
@@ -489,7 +490,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             title = "Reactions sent to others",
             options = com.yaz.sms.data.settings.ReactionFormat.entries.map { it to reactionFormatLabel(it) },
             selected = settings.reactionFormat,
-            onSelect = viewModel::setReactionFormat,
+            onPick = viewModel::setReactionFormat,
             onDismiss = { dialog = OpenDialog.NONE }
         )
         OpenDialog.NONE -> Unit
@@ -892,43 +893,6 @@ private fun reactionFormatLabel(format: com.yaz.sms.data.settings.ReactionFormat
     com.yaz.sms.data.settings.ReactionFormat.AUTOMATIC -> "Automatic"
     com.yaz.sms.data.settings.ReactionFormat.GOOGLE -> "Google Messages"
     com.yaz.sms.data.settings.ReactionFormat.IPHONE -> "iPhone (readable text)"
-}
-
-@Composable
-private fun <T> ChoiceDialog(
-    title: String,
-    options: List<Pair<T, String>>,
-    selected: T,
-    onSelect: (T) -> Unit,
-    onDismiss: () -> Unit
-) {
-    ZoneAlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            // A long list scrolls inside the dialog, never past the screen.
-            val tall = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.55f).dp
-            Column(Modifier.heightIn(max = tall).verticalScroll(rememberScrollState())) {
-                options.forEach { (value, label) ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable {
-                                onSelect(value)
-                                onDismiss()
-                            }
-                            .padding(vertical = 10.dp, horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        GlassRadio(selected = value == selected, onClick = null)
-                        Text(label, modifier = Modifier.padding(start = 12.dp))
-                    }
-                }
-            }
-        },
-        confirmButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
-    )
 }
 
 

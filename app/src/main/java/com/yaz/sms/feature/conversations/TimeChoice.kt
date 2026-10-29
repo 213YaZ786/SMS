@@ -23,43 +23,23 @@ import com.yaz.sms.ui.component.rememberHaptics
 /** When: in an hour, this evening, tomorrow morning. */
 @Composable
 fun TimeChoice(title: String, onPick: (Long) -> Unit, onDismiss: () -> Unit, explain: String? = null) {
-    val haptics = rememberHaptics()
     var choosing by remember { mutableStateOf(false) }
+    // A choice made closes the dialog, but is not a cancel: the caller's onDismiss gives the text back.
+    var done by remember { mutableStateOf(false) }
     if (choosing) {
         DayAndTime(onPick = { at -> choosing = false; onPick(at) }, onDismiss = { choosing = false })
         return
     }
-    ZoneAlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                explain?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
-                }
-                Timed.choices().forEach { (label, at) ->
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            haptics.done()
-                            onPick(at)
-                        }.padding(vertical = 12.dp)
-                    )
-                }
-                // Any day and time: the day first, then the hour.
-                Text(
-                    "Choose a day and time",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        haptics.tick()
-                        choosing = true
-                    }.padding(vertical = 12.dp)
-                )
-            }
+    com.yaz.sms.ui.component.ChoiceDialog<Long?>(
+        title = title,
+        text = explain,
+        // null: any day and time, the day first, then the hour.
+        options = Timed.choices().map { (label, at) -> at to label } + (null to "Choose a day and time"),
+        onPick = { at ->
+            done = true
+            if (at == null) choosing = true else onPick(at)
         },
-        confirmButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
+        onDismiss = { if (!done) onDismiss() else done = false }
     )
 }
 
