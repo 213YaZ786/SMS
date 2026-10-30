@@ -23,9 +23,9 @@ permissions:
   contents: read
 
 env:
-  CORE_VERSION: "2.62.0"
-  # v2.62.0's commit, so a moved tag changes nothing.
-  CORE_COMMIT: "c41cac76d284f44094341c5d9f4eb3a847e2c34b"
+  CORE_VERSION: "2.65.0"
+  # v2.65.0's commit, so a moved tag changes nothing.
+  CORE_COMMIT: "706ee7a48ca509229bb75c836c00a4268e095a02"
   PATCH: "p1"
 
 jobs:
@@ -45,7 +45,7 @@ jobs:
           persist-credentials: false
 
       # The same Nix installer, at the same commit, as chatmail core's job.
-      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
 
       - name: Known flaws before
         run: nix shell nixpkgs#osv-scanner --command osv-scanner scan -L Cargo.lock || true
@@ -56,10 +56,7 @@ jobs:
       - name: Move the dependencies to their fixes
         run: |
           nix shell nixpkgs#cargo --command sh -eu -c '
-            cargo update rustls@0.23.45 --precise 0.23.46
-            cargo update rustls-webpki@0.103.15 --precise 0.103.16
             cargo update tokio@1.53.1 --precise 1.53.3
-            cargo update webpki-roots@0.26.8 --precise 0.26.11
             cargo update event-listener@5.4.0 --precise 5.4.2
             cargo update quinn-proto@0.11.16 --precise 0.11.18
           '
