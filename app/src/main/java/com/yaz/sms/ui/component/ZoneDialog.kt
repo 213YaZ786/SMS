@@ -161,16 +161,20 @@ private fun ZoneDialogButtons(content: @Composable () -> Unit) {
         // Whether every label fits on one line in its share of the row.
         val sideBySide = count <= 1 || measurables.all { it.maxIntrinsicWidth(Constraints.Infinity) <= share }
         val cell = if (sideBySide) share else width
-        val placeables = measurables.map { it.measure(Constraints(minWidth = cell, maxWidth = cell)) }
         if (sideBySide) {
-            // Equal height in the row, so two glass buttons read as a pair.
-            val rowHeight = placeables.maxOfOrNull { it.height } ?: 0
-            val even = measurables.map { it.measure(Constraints(cell, cell, rowHeight, rowHeight)) }
-            layout(width, rowHeight) {
+            // Equal height in the row, so two glass buttons read as a pair: the tallest height is asked
+            // first (maxIntrinsicHeight is a query, not a measure), then each button is measured once, as
+            // Compose requires (https://developer.android.com/develop/ui/compose/layouts/intrinsic-measurements:
+            // measuring a child twice throws).
+            val rowHeight = measurables.maxOfOrNull { it.maxIntrinsicHeight(cell) } ?: 0
+            val even = measurables.map { it.measure(Constraints(cell, cell, rowHeight, maxOf(rowHeight, constraints.maxHeight))) }
+            val height = even.maxOfOrNull { it.height } ?: 0
+            layout(width, height) {
                 even.forEachIndexed { index, placeable -> placeable.placeRelative(index * (cell + gapPx), 0) }
             }
         } else {
             // Confirm first, the dismiss button under it.
+            val placeables = measurables.map { it.measure(Constraints(minWidth = cell, maxWidth = cell)) }
             val order = placeables.asReversed()
             val height = order.sumOf { it.height } + gapPx * (order.size - 1)
             layout(width, height) {

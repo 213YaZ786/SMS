@@ -81,6 +81,10 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
@@ -122,15 +126,31 @@ fun MessageMenu(
     var listSize by remember { mutableStateOf(IntSize.Zero) }
     // The pane's height with all its rows, reported by Palette, whatever room it is given.
     var naturalPane by remember { mutableStateOf(0) }
-    Popup(
-        popupPositionProvider = remember { Whole },
+    // The conversation's own window: the bounds are in its coordinates, the dialog's window may sit elsewhere.
+    val host = androidx.compose.ui.platform.LocalView.current
+    val heldBounds = bounds
+    // A window of its own over the conversation, blurred behind it, as PillMenu does (this app's
+    // ui/component/PillMenu.kt, Modules' panes kit; AOSP's window-blur recipe,
+    // https://source.android.com/docs/core/display/window-blurs): Dialog with usePlatformDefaultWidth = false and
+    // decorFitsSystemWindows = false, BlurBehind and rememberCrossWindowBlur from ui/component/ZoneDialog.kt.
+    Dialog(
         onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true, clippingEnabled = false)
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
+        // Blur off (battery saver, GrapheneOS): BlurBehind gives a stronger dim, the same as PillMenu's.
+        val blur = com.yaz.sms.ui.component.rememberCrossWindowBlur()
+        com.yaz.sms.ui.component.BlurBehind(radiusDp = 24, blur = blur)
+        // Where the dialog's window starts on the screen, against the conversation's: PillMenu maps the item's
+        // bounds the same way (item = state.bounds.translate(-at), positionOnScreen).
+        var origin by remember { mutableStateOf<Offset?>(null) }
+        val bounds = origin?.let { at ->
+            val hostAt = IntArray(2).also { host.getLocationOnScreen(it) }
+            heldBounds.translate(Offset(hostAt[0].toFloat(), hostAt[1].toFloat()) - at)
+        } ?: heldBounds
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.18f))
+                .onGloballyPositioned { origin = it.positionOnScreen() }
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
         ) {
             var window by remember { mutableStateOf(IntSize.Zero) }

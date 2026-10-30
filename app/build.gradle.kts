@@ -105,7 +105,7 @@ android {
 
 dependencies {
     // The encrypted calls' voice: WebRTC's Android build by webrtc-sdk (MIT, LiveKit's community).
-    implementation("io.github.webrtc-sdk:android:150.7871.01")
+    implementation("io.github.webrtc-sdk:android:150.7871.04")
     // Any emoji as a reaction: Android's own emoji picker (Apache-2.0).
     implementation("androidx.emoji2:emoji2-emojipicker:1.7.0")
     // A message of only emoji shows them big and moving: Lottie by Airbnb (Apache-2.0)
@@ -113,7 +113,7 @@ dependencies {
     implementation("com.airbnb.android:lottie-compose:6.7.1")
     // Numbers shown as the country writes them, offline: Google's libphonenumber (Apache-2.0),
     // with its own data, no network.
-    implementation("com.googlecode.libphonenumber:libphonenumber:9.0.41")
+    implementation("com.googlecode.libphonenumber:libphonenumber:9.0.42")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.process)
