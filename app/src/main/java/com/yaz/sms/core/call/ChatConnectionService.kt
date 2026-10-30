@@ -94,8 +94,9 @@ class ChatConnection(private val context: Context) : Connection(), KoinComponent
     /** Answered on Dialer's screen, a headset or a watch. */
     override fun onAnswer(videoState: Int) {
         Ringer.stop()
-        // Answered is active for Telecom at once; the voice joins a moment later.
-        setActive()
+        // Active for Telecom only once the line connects (CallLine.onState), as Signal activates the call in
+        // handleCallConnected: https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/service/webrtc/CallSetupActionProcessorDelegate.java
+        // Until then Dialer shows "Connecting".
         CallLine.answer(context)
     }
 

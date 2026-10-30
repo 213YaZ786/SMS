@@ -80,6 +80,7 @@ class CallMedia(
     // (iceGatheringLatch, hasHostCandidate). A "complete" before any candidate is not taken.
     private val gatheringDone = CompletableDeferred<Unit>()
     @Volatile private var hostCandidate = false
+    @Volatile private var answering = false
     private var hasTurnServer = false
     private var hasStunServer = false
     private var noServers = false
@@ -234,6 +235,7 @@ class CallMedia(
 
     /** Our answer to a call we take. */
     suspend fun answer(offer: String): String {
+        answering = true
         logRemote(offer)
         setRemote(SessionDescription(SessionDescription.Type.OFFER, offer))
         val sdp = describe { pc.createAnswer(it, MediaConstraints()) }
@@ -298,6 +300,11 @@ class CallMedia(
             "srflx" -> srflxCandidate.complete(Unit)
             "host" -> hostCandidate = true
         }
+        // Answering, WebRTC may say "complete" before it hands over the candidates it already has: the
+        // offer's candidates let a pair hold at once, which stops gathering (p2p_transport_channel.cc,
+        // OnConnectionStateChange, stop_gather_on_strongly_connected), so a candidate after it is final too.
+        // Calling, no pair can hold before the answer: a "complete" before any candidate is not taken.
+        if (answering && gatheringComplete.isCompleted) gatheringDone.complete(Unit)
     }
 
     /** The other side took our call. */
