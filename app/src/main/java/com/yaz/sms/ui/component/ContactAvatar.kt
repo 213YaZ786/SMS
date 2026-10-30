@@ -38,9 +38,15 @@ import kotlinx.coroutines.withContext
  * else the monogram chosen in the Contacts app ([look]: an emoji, one or
  * two letters in a font, on their colour), else the first letter of their
  * name, else the outline of a person.
+ *
+ * [flat] is for a face that is not a tap (the call screen's): no glass, no rim,
+ * no shadow, a flat circle as AOSP Dialer's LetterTileDrawable draws it, a
+ * letter or the default avatar on a plain colour
+ * (https://android.googlesource.com/platform/packages/apps/Dialer/+/refs/heads/main/java/com/android/contacts/common/lettertiles/LetterTileDrawable.java,
+ * Apache-2.0). The photo is clipped to a circle the same way.
  */
 @Composable
-fun ContactAvatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifier, look: ContactLook.Look? = null) {
+fun ContactAvatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifier, look: ContactLook.Look? = null, flat: Boolean = false) {
     val context = LocalContext.current
     val px = with(LocalDensity.current) { size.roundToPx() }
     val image by produceState<ImageBitmap?>(null, photo, px) {
@@ -59,7 +65,7 @@ fun ContactAvatar(name: String?, photo: String?, size: Dp, modifier: Modifier = 
             }
         }
     }
-    ZoneSurface(shape = CircleShape, modifier = modifier.size(size)) {
+    val face: @Composable () -> Unit = {
         val bitmap = image
         val tone = look?.color?.let { Color(it) }
         // On their colour the letters take white or black, whichever reads.
@@ -68,9 +74,16 @@ fun ContactAvatar(name: String?, photo: String?, size: Dp, modifier: Modifier = 
             tone.luminance() > 0.5f -> Color.Black.copy(alpha = 0.8f)
             else -> Color.White
         }
+        // Flat: the colour is plain (nothing behind it to show through), else the neutral tonal circle.
+        val ground = when {
+            bitmap != null -> null
+            tone != null -> if (flat) tone else tone.copy(alpha = 0.85f)
+            flat -> MaterialTheme.colorScheme.surfaceContainerHighest
+            else -> null
+        }
         Box(
             contentAlignment = Alignment.Center,
-            modifier = if (bitmap == null && tone != null) Modifier.fillMaxSize().clip(CircleShape).background(tone.copy(alpha = 0.85f)) else Modifier
+            modifier = if (ground != null) Modifier.fillMaxSize().clip(CircleShape).background(ground) else Modifier
         ) {
             val letter = look?.letters?.takeIf { it.isNotBlank() } ?: name?.firstOrNull { it.isLetter() }?.uppercase()
             when {
@@ -102,4 +115,6 @@ fun ContactAvatar(name: String?, photo: String?, size: Dp, modifier: Modifier = 
             }
         }
     }
+    if (flat) Box(modifier.size(size), contentAlignment = Alignment.Center) { face() }
+    else ZoneSurface(shape = CircleShape, modifier = modifier.size(size)) { face() }
 }

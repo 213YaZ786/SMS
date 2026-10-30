@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.yaz.sms.ui.component.FloatingPane
+import androidx.compose.foundation.clickable
 import com.yaz.sms.ui.component.rememberHaptics
 import com.yaz.sms.ui.icon.AppIcons
 import kotlinx.coroutines.delay
@@ -128,9 +129,15 @@ private fun Tile(drop: Drop, order: Int, onClick: () -> Unit) {
                 Icon(drop.icon, contentDescription = drop.label, tint = MaterialTheme.colorScheme.primary)
             }
         }
-        // The name on a small pane of its own, readable over any message; a pane is a tap, so it does what its icon does.
-        FloatingPane(shape = CircleShape, onClick = onClick, modifier = Modifier.padding(top = 4.dp)) {
-            Text(drop.label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
-        }
+        // The name as plain text under its round (the user, 2026-10-30), as the labels under Dialer's call
+        // buttons; a tap on it does what its icon does, without a pane of its own.
+        Text(
+            drop.label,
+            style = MaterialTheme.typography.labelMedium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .clickable(interactionSource = null, indication = null, onClick = onClick)
+        )
     }
 }

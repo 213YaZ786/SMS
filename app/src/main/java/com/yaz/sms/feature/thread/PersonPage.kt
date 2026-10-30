@@ -46,7 +46,7 @@ import com.yaz.sms.ui.component.BlockConfirm
 import com.yaz.sms.ui.component.ContactAvatar
 import com.yaz.sms.ui.component.FloatingAction
 import com.yaz.sms.ui.component.HeroGlow
-import com.yaz.sms.ui.component.PersonActionTile
+import com.yaz.sms.ui.component.PersonActionSpec
 import com.yaz.sms.ui.component.PersonActions
 import com.yaz.sms.ui.component.PersonBadge
 import com.yaz.sms.ui.component.PersonHeader
@@ -193,10 +193,10 @@ fun PersonPage(
                                 contactId = contactId,
                                 onCall = calls.phone,
                                 onMessage = onClose,
-                                more = {
-                                    calls.encrypted?.let { PersonActionTile(AppIcons.Lock, "Encrypted call", Modifier.weight(1f), onClick = it) }
-                                    calls.video?.let { PersonActionTile(AppIcons.Videocam, "Video call", Modifier.weight(1f), onClick = it) }
-                                }
+                                extra = listOfNotNull(
+                                    calls.encrypted?.let { PersonActionSpec(AppIcons.Lock, "Encrypted call", onClick = it) },
+                                    calls.video?.let { PersonActionSpec(AppIcons.Videocam, "Video call", onClick = it) }
+                                )
                             )
                         }
                     }

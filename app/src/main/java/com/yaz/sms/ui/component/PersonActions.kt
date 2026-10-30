@@ -13,13 +13,17 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -33,17 +37,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.yaz.sms.core.dial.NumberActions
 import com.yaz.sms.ui.icon.AppIcons
 
 /**
- * The actions on a person's number, one row of equal glass tiles, the same in
+ * The actions on a person's number, equal glass tiles, the same in
  * Dialer, SMS and Contacts: Call, Message, Contact ("Contact" when the person
- * is saved, "Add contact" when not), Copy. Under 360 dp the row wraps to two.
+ * is saved, "Add contact" when not), Copy. The tiles flow and balance by the
+ * width, the font and the language (see the layout below), never a fixed row.
  *
  * Each tile takes an optional lambda: the app's own way, or, when null, the
  * default by intent, handed to the app that owns it (NumberActions: ACTION_DIAL
@@ -56,8 +65,8 @@ import com.yaz.sms.ui.icon.AppIcons
  * A hidden or private number ([number] null or blank) shows nothing.
  * Tiles come from Dialer's NumberParts.ActionTile (this suite): 88 dp glass,
  * icon over word. iOS shares one contact card across Phone, Messages and
- * Contacts, each app adding its own sections: [more] appends the app's own
- * tiles (Dialer's Block).
+ * Contacts, each app adding its own sections: [extra] appends the app's own
+ * tiles (Dialer's Block) to the same flow.
  *
  * [contactId] is the contact's id when saved, null when not; 0 or less is a
  * private person of the Contacts app, who has nothing to open in Android's
@@ -68,6 +77,7 @@ import com.yaz.sms.ui.icon.AppIcons
  * in its manifest (DIAL tel, SENDTO smsto, VIEW and INSERT_OR_EDIT of a contact)
  * or those tiles are hidden.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PersonActions(
     number: String?,
@@ -78,7 +88,7 @@ fun PersonActions(
     onMessage: (() -> Unit)? = null,
     onContact: (() -> Unit)? = null,
     onCopy: (() -> Unit)? = null,
-    more: (@Composable RowScope.() -> Unit)? = null
+    extra: List<PersonActionSpec> = emptyList()
 ) {
     if (number.isNullOrBlank()) return
     val context = LocalContext.current
@@ -86,43 +96,99 @@ fun PersonActions(
     val tiles = remember(number, contactId, contact, onCall, onMessage, onContact, onCopy) {
         buildList {
             if (onCall != null || isIntentRegistered(context, dialIntent(number))) {
-                add(Tile(AppIcons.Call, "Call", "Call") { onCall?.invoke() ?: NumberActions.dial(context, number) })
+                add(PersonActionSpec(AppIcons.Call, "Call", "Call") { onCall?.invoke() ?: NumberActions.dial(context, number) })
             }
             if (onMessage != null || isIntentRegistered(context, messageIntent(number))) {
-                add(Tile(AppIcons.Message, "Message", "Message") { onMessage?.invoke() ?: NumberActions.message(context, number) })
+                add(PersonActionSpec(AppIcons.Message, "Message", "Message") { onMessage?.invoke() ?: NumberActions.message(context, number) })
             }
             if (!contact) {
                 // The page is the contact itself: nothing to open or add.
             } else if (saved) {
                 val id = contactId ?: 0L
                 if (onContact != null || (id > 0 && isIntentRegistered(context, openIntent(id)))) {
-                    add(Tile(AppIcons.Person, "Contact", "Contact") { onContact?.invoke() ?: NumberActions.openContact(context, id) })
+                    add(PersonActionSpec(AppIcons.Person, "Contact", "Contact") { onContact?.invoke() ?: NumberActions.openContact(context, id) })
                 }
             } else if (onContact != null || isIntentRegistered(context, addIntent(number))) {
-                add(Tile(AppIcons.PersonAdd, "Add contact", "Add contact") { onContact?.invoke() ?: NumberActions.addContact(context, number) })
+                add(PersonActionSpec(AppIcons.PersonAdd, "Add contact", "Add contact") { onContact?.invoke() ?: NumberActions.addContact(context, number) })
             }
-            add(Tile(AppIcons.Copy, "Copy", "Copy number") { onCopy?.invoke() ?: NumberActions.copy(context, number) })
+            add(PersonActionSpec(AppIcons.Copy, "Copy", "Copy number") { onCopy?.invoke() ?: NumberActions.copy(context, number) })
         }
     }
+    val all = tiles + extra
+    // Adaptive, from Compose's flow layouts recipe: FlowRow with maxItemsInEachRow, every tile
+    // Modifier.weight(1f).fillMaxRowHeight()
+    // (https://developer.android.com/develop/ui/compose/layouts/flow). The tile's least width is
+    // measured, not guessed: the widest label on one line in the current style, font scale and language
+    // (TextMeasurer, https://developer.android.com/develop/ui/compose/text/measure-text-layout), plus
+    // 16 dp each side; never under 88 dp or the icon with its padding.
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        val perRow = if (maxWidth < 360.dp) 2 else Int.MAX_VALUE
-        val rows = tiles.chunked(perRow)
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            rows.forEachIndexed { index, row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    row.forEach { PersonActionTile(it.icon, it.label, Modifier.weight(1f), description = it.description, onClick = it.onClick) }
-                    // Wide: the app's tiles stand in the same row; narrow: in a row of their own.
-                    if (more != null && perRow == Int.MAX_VALUE && index == rows.lastIndex) more()
-                }
+        val style = MaterialTheme.typography.labelLarge
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        // The widest label on one line, and the widest single word (the least a tile can be when its
+        // label wraps between words), both in px, measured with TextMeasurer
+        // (https://developer.android.com/develop/ui/compose/text/measure-text-layout).
+        val widths = remember(all.map { it.label }, style, density) {
+            val oneLine = all.maxOf { measurer.measure(it.label, style, softWrap = false, maxLines = 1).size.width }
+            val word = all.maxOf { spec ->
+                spec.label.split(' ').filter { it.isNotEmpty() }.maxOfOrNull { measurer.measure(it, style, softWrap = false, maxLines = 1).size.width } ?: 0
             }
-            if (more != null && perRow != Int.MAX_VALUE) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) { more() }
+            oneLine to word
+        }
+        val floor = maxOf(MinTile, TileIcon + TileSide * 2)
+        val oneLineWidth = maxOf(floor, with(density) { widths.first.toDp() } + TileSide * 2)
+        val wordWidth = maxOf(floor, with(density) { widths.second.toDp() } + TileSide * 2)
+        val available = maxWidth
+        // How many tiles of a width fit in a FlowRow line, then balanced: rows = ceil(n / fit),
+        // perRow = ceil(n / rows), so 5 tiles that do not fit in one row make 3 + 2, never 4 + 1
+        // (maxItemsInEachRow of https://developer.android.com/develop/ui/compose/layouts/flow).
+        fun perRowFor(width: Dp): Int {
+            val fit = ((available + TileGap) / (width + TileGap)).toInt().coerceAtLeast(1)
+            val lines = (all.size + fit - 1) / fit
+            return (all.size + lines - 1) / lines
+        }
+        // A last row of one tile (2 + 2 + 1) is what a flow layout leaves by default; the same recipe's
+        // rows wrap between words, so labels may then take two lines (https://developer.android.com/develop/ui/compose/layouts/flow).
+        fun lone(perRow: Int) = all.size > perRow && all.size % perRow == 1
+        // One line labels first; if that leaves a lone tile, the width of the widest word; a lone tile
+        // stays only when neither leaves none.
+        val perOneLine = perRowFor(oneLineWidth)
+        val wrapped = lone(perOneLine) && !lone(perRowFor(wordWidth))
+        val perRow = if (wrapped) perRowFor(wordWidth) else perOneLine
+        val minWidth = if (wrapped) wordWidth else oneLineWidth
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(TileGap),
+            verticalArrangement = Arrangement.spacedBy(TileGap),
+            maxItemsInEachRow = perRow
+        ) {
+            all.forEach {
+                PersonActionTile(
+                    it.icon, it.label,
+                    Modifier.weight(1f).fillMaxRowHeight().widthIn(min = minOf(minWidth, available)),
+                    tint = it.tint, description = it.description, onClick = it.onClick
+                )
             }
         }
     }
 }
 
-private class Tile(val icon: ImageVector, val label: String, val description: String, val onClick: () -> Unit)
+private val MinTile = 88.dp
+private val TileSide = 16.dp
+private val TileIcon = 28.dp
+private val TileGap = 10.dp
+
+/**
+ * One action of [PersonActions]: the shared ones, and the app's own through `extra`
+ * (Dialer's Block, SMS's encrypted and video calls), all in the same flow.
+ */
+class PersonActionSpec(
+    val icon: ImageVector,
+    val label: String,
+    val description: String = label,
+    val tint: Color? = null,
+    val onClick: () -> Unit
+)
 
 /**
  * One action under a person: a tile of glass of its own, icon over word.
@@ -147,7 +213,7 @@ fun PersonActionTile(
     ZoneSurface(
         shape = androidx.compose.material3.ShapeDefaults.ExtraLarge,
         modifier = modifier
-            .height(88.dp)
+            .heightIn(min = 88.dp)
             .graphicsLayer {
                 scaleX = sink
                 scaleY = sink
@@ -161,17 +227,20 @@ fun PersonActionTile(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+            // Room for a two line label (a long word, a 200 % font) so it never touches the edge.
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Icon(icon, contentDescription = null, tint = tint ?: MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
             Spacer(Modifier.height(8.dp))
-            Text(
+            // Lines break between words only; a single word still too wide shrinks as the last resort:
+            // Compose's TextAutoSize.StepBased (https://developer.android.com/develop/ui/compose/text/autosize).
+            val style = MaterialTheme.typography.labelLarge
+            BasicText(
                 label,
-                style = MaterialTheme.typography.labelLarge,
-                color = tint ?: MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
+                style = style.copy(color = tint ?: MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center),
                 maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = style.fontSize, stepSize = 0.5.sp)
             )
         }
     }
