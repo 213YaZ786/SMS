@@ -109,7 +109,6 @@ data class MessageAction(val icon: ImageVector, val label: String, val danger: B
 @Composable
 fun MessageMenu(
     bounds: Rect,
-    mine: Boolean,
     reactions: List<String>?,
     chosen: List<String>,
     actions: List<MessageAction>,
@@ -155,12 +154,11 @@ fun MessageMenu(
         ) {
             var window by remember { mutableStateOf(IntSize.Zero) }
             Box(Modifier.fillMaxSize().onSizeChanged { window = it })
-            // The side of the message: the user's own on the right. The reaction bar and the actions hang off the
-            // message's own bounds (Signal's ReactionOverlayPlacement, see MenuPlacement), inside the conversation
-            // column, which on a tablet is narrower than the window.
+            // The reaction bar and the actions are centred on the message's own bounds (see MenuPlacement), inside
+            // the conversation column, which on a tablet is narrower than the window.
             val columnInset = with(density) { com.yaz.sms.navigation.LocalReadableInset.current.roundToPx() }
             fun xFor(width: Int): Int =
-                MenuPlacement.x(!mine, bounds.left.roundToInt(), bounds.right.roundToInt(), width, window.width, columnInset, edge)
+                MenuPlacement.x(bounds.left.roundToInt(), bounds.right.roundToInt(), width, window.width, columnInset, edge)
             // The message itself, above the veil, lifted a little.
             val rise = remember { Animatable(0f) }
             LaunchedEffect(Unit) { rise.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 500f)) }
@@ -175,26 +173,44 @@ fun MessageMenu(
             val bars = WindowInsets.safeDrawing
             val top = bars.getTop(density) + edge
             val bottomLimit = window.height - bars.getBottom(density) - edge
-            val reactionsH = if (reactions != null) rowSize.height + gap else 0
             val msgTop = bounds.top.roundToInt()
             val msgH = bounds.height.roundToInt()
-            val below = bounds.bottom.roundToInt() + gap
+            // The lift below (scale 1.05 around the centre, 4 dp up) draws the message beyond its bounds: graphicsLayer
+            // changes only the drawing, never the layout (TransformOrigin.Center,
+            // https://developer.android.com/develop/ui/compose/graphics/draw/modifiers). Its top edge rises by half the
+            // growth plus 4 dp, its bottom edge drops by half the growth less 4 dp; the gaps are kept beyond those
+            // edges, else a tall bubble at 200 % touches the reactions bar.
+            val rise4 = with(density) { 4.dp.roundToPx() }
+            val liftTop = (msgH * 0.025f).roundToInt() + rise4
+            val liftBottom = ((msgH * 0.025f).roundToInt() - rise4).coerceAtLeast(0)
+            val reactionsH = if (reactions != null) rowSize.height + gap + liftTop else 0
+            val below = bounds.bottom.roundToInt() + liftBottom + gap
             val roomBelow = bottomLimit - below
-            val roomAbove = msgTop - reactionsH - gap - top
+            val roomAbove = msgTop - (if (reactions != null) reactionsH else liftTop) - gap - top
             val fitsBelow = naturalPane <= roomBelow
             val fitsAbove = naturalPane <= roomAbove
-            val stacked = window.height > 0 && !fitsBelow && !fitsAbove
+            // What goes above the message's lifted top: the reactions bar and its gap, or only the lift.
+            val headH = if (reactions != null) reactionsH else liftTop
+            // A message partly scrolled out at the top or the bottom is brought fully on screen with the rest
+            // stacked around it, never with the bar pinned to the edge over it.
+            val offScreen = msgTop - headH < top || bounds.bottom.roundToInt() + liftBottom > bottomLimit
+            val stacked = window.height > 0 && (offScreen || (!fitsBelow && !fitsAbove))
             val total = bottomLimit - top
             val paneMin = minOf(naturalPane, with(density) { 220.dp.roundToPx() })
-            val shownH = if (!stacked || total - reactionsH - gap - msgH >= paneMin) msgH else minOf(msgH, window.height / 4)
-            val paneRoom = total - reactionsH - shownH - gap
-            val stackH = reactionsH + shownH + gap + minOf(naturalPane, paneRoom).coerceAtLeast(0)
-            val stackTop = (msgTop - reactionsH).coerceIn(top, maxOf(top, bottomLimit - stackH))
-            val msgY = if (stacked) stackTop + reactionsH else msgTop
-            val listY = if (stacked) msgY + shownH + gap else if (fitsBelow) below else (msgTop - gap - reactionsH - listSize.height).coerceAtLeast(top)
+            val shownH = if (!stacked || total - headH - gap - liftBottom - msgH >= paneMin) msgH else minOf(msgH, window.height / 4)
+            val paneRoom = total - headH - shownH - liftBottom - gap
+            val stackH = headH + shownH + liftBottom + gap + minOf(naturalPane, paneRoom).coerceAtLeast(0)
+            val stackTop = (msgTop - headH).coerceIn(top, maxOf(top, bottomLimit - stackH))
+            val msgY = if (stacked) stackTop + headH else msgTop
+            val listY = when {
+                stacked -> msgY + shownH + liftBottom + gap
+                fitsBelow -> below
+                reactions != null -> (msgTop - gap - reactionsH - listSize.height).coerceAtLeast(top)
+                else -> (msgTop - liftTop - gap - listSize.height).coerceAtLeast(top)
+            }
             val rowY = when {
                 stacked -> stackTop
-                fitsBelow -> (msgTop - gap - rowSize.height).coerceAtLeast(top)
+                fitsBelow -> (msgTop - liftTop - gap - rowSize.height).coerceAtLeast(top)
                 else -> listY + listSize.height + gap
             }
             val paneMax = when {

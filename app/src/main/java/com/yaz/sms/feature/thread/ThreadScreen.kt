@@ -1712,7 +1712,6 @@ private fun Bubble(
         // Out of the bubble's block: a message of only media opens its menu too.
         if (menuOpen) MessageMenu(
                 bounds = bounds,
-                mine = mine,
                 reactions = if (rich != null || onSmsReact != null) reactionBar else null,
                 chosen = if (rich != null) rich.myReactions else smsMine,
                 actions = listOfNotNull(
