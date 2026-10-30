@@ -1,9 +1,12 @@
 package com.yaz.sms.core.call
 
 import android.content.Context
+import android.util.Log
+import com.yaz.sms.BuildConfig
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -60,7 +63,18 @@ class CallMedia(
     private val audio: JavaAudioDeviceModule
     private val pc: PeerConnection
     private val track: AudioTrack
-    private val gathered = CompletableDeferred<Unit>()
+    // Port of Delta Chat Android's latches (relayCandidateLatch, srflxCandidateLatch, iceGatheringLatch)
+    // and flags (hasHostCandidate), GPL-3.0:
+    // https://github.com/deltachat/deltachat-android/blob/master/src/main/java/org/thoughtcrime/securesms/webrtc/WebRTCClient.java
+    // Changed: CompletableDeferred instead of CountDownLatch, a deferred done is the flag for relay
+    // and srflx, the schemes of the servers kept as three booleans read once from the parsed list.
+    private val relayCandidate = CompletableDeferred<Unit>()
+    private val srflxCandidate = CompletableDeferred<Unit>()
+    private val gatheringComplete = CompletableDeferred<Unit>()
+    @Volatile private var hostCandidate = false
+    private var hasTurnServer = false
+    private var hasStunServer = false
+    private var noServers = false
     private var effects: DataChannel? = null
 
     // Video: one GL context for the codecs and the two pictures Dialer lends.
@@ -84,11 +98,30 @@ class CallMedia(
                 setVideoDecoderFactory(DefaultVideoDecoderFactory(it.eglBaseContext))
             }
         }.createPeerConnectionFactory()
-        val config = PeerConnection.RTCConfiguration(iceServers(iceJson)).apply {
+        val servers = iceServers(iceJson)
+        // Which schemes the servers hold: "turns:" counts as turn (Delta Chat tests "turn:" and "stun:").
+        val urls = servers.flatMap { it.urls }
+        hasTurnServer = urls.any { it.startsWith("turn:") || it.startsWith("turns:") }
+        hasStunServer = urls.any { it.startsWith("stun:") }
+        noServers = servers.isEmpty()
+        // Debug only. Port of AppRTCMobile's PCObserver logging (BSD-3):
+        // https://webrtc.googlesource.com/src/+/refs/heads/main/examples/androidapp/src/org/appspot/apprtc/PeerConnectionClient.java
+        // Only the count and the scheme of each url (turn, turns, stun): the host, the user name and
+        // the credential name the relay and the account, so they are never logged.
+        if (BuildConfig.DEBUG) {
+            val schemes = servers.flatMap { it.urls }.joinToString(", ") { it.substringBefore(':') }
+            Log.d(TAG, "IceServers: ${servers.size} ($schemes)")
+            servers.forEach { Log.d(TAG, "IceServer: user ${it.username.isNotEmpty()}, password ${it.password.isNotEmpty()}") }
+        }
+        val config = PeerConnection.RTCConfiguration(servers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
+            // Gathering starts with the connection, while it rings, so the answer has its relay at
+            // once (Delta Chat Android's rtcConfig, GPL-3.0:
+            // https://github.com/deltachat/deltachat-android/blob/master/src/main/java/org/thoughtcrime/securesms/webrtc/WebRTCClient.java).
+            iceCandidatePoolSize = 1
         }
         pc = factory.createPeerConnection(config, Observer()) ?: error("no peer connection")
         val source = factory.createAudioSource(MediaConstraints())
@@ -187,21 +220,81 @@ class CallMedia(
     suspend fun offer(): String {
         val sdp = describe { pc.createOffer(it, MediaConstraints()) }
         setLocal(sdp)
-        withTimeoutOrNull(6000) { gathered.await() }
+        waitForEnoughIce()
         return pc.localDescription.description
     }
 
     /** Our answer to a call we take. */
     suspend fun answer(offer: String): String {
+        logRemote(offer)
         setRemote(SessionDescription(SessionDescription.Type.OFFER, offer))
         val sdp = describe { pc.createAnswer(it, MediaConstraints()) }
         setLocal(sdp)
-        withTimeoutOrNull(6000) { gathered.await() }
+        waitForEnoughIce()
         return pc.localDescription.description
     }
 
+    /**
+     * Waits for enough candidates before the description is read, because it travels whole in one
+     * chat message and no candidate can follow it. Port of Delta Chat Android's waitForEnoughIce(),
+     * GPL-3.0 (RELAY_WAIT_MS 10000, SRFLX_WAIT_MS 5000, SRFLX_BURST_DELAY_MS 150, HOST_WAIT_MS 3000):
+     * https://github.com/deltachat/deltachat-android/blob/master/src/main/java/org/thoughtcrime/securesms/webrtc/WebRTCClient.java
+     * Changed: suspend and withTimeoutOrNull on deferreds instead of CountDownLatch.await and
+     * Thread.sleep; the server schemes are read once in init; the debug line says what was waited for.
+     */
+    private suspend fun waitForEnoughIce(): Boolean {
+        if (hasTurnServer) {
+            val got = withTimeoutOrNull(RELAY_WAIT_MS) { relayCandidate.await() } != null
+            if (BuildConfig.DEBUG) Log.d(TAG, "Waited for relay: $got")
+            if (got) return true
+        } else if (hasStunServer) {
+            val got = withTimeoutOrNull(SRFLX_WAIT_MS) { srflxCandidate.await() } != null
+            if (BuildConfig.DEBUG) Log.d(TAG, "Waited for srflx: $got")
+            if (got) {
+                // A burst of more srflx candidates follows the first.
+                delay(SRFLX_BURST_DELAY_MS)
+                return true
+            }
+        } else if (noServers) {
+            val got = withTimeoutOrNull(HOST_WAIT_MS) { gatheringComplete.await() } != null
+            if (BuildConfig.DEBUG) Log.d(TAG, "Waited for gathering complete (host only): $got")
+            return hostCandidate
+        }
+        // Fallback, as Delta Chat: the relay or srflx did not come, gathering complete up to 10 s.
+        val got = withTimeoutOrNull(RELAY_WAIT_MS) { gatheringComplete.await() } != null
+        if (BuildConfig.DEBUG) Log.d(TAG, "Waited for gathering complete: $got")
+        return got
+    }
+
+    /**
+     * Notes each candidate by its type and ends the waits it satisfies. Port of Delta Chat Android's
+     * onIceCandidateGathered(), GPL-3.0, same file as above. Changed: the type comes from
+     * candidateType(), the deferreds replace the latches, no trickling (GATHER_ONCE).
+     */
+    private fun onCandidateGathered(sdp: String) {
+        when (candidateType(sdp)) {
+            "relay" -> relayCandidate.complete(Unit)
+            "srflx" -> srflxCandidate.complete(Unit)
+            "host" -> hostCandidate = true
+        }
+    }
+
     /** The other side took our call. */
-    suspend fun accepted(answer: String) = setRemote(SessionDescription(SessionDescription.Type.ANSWER, answer))
+    suspend fun accepted(answer: String) {
+        logRemote(answer)
+        setRemote(SessionDescription(SessionDescription.Type.ANSWER, answer))
+    }
+
+    // Debug only. Same source as the observer below (AppRTCMobile's PeerConnectionClient.java,
+    // BSD-3, https://webrtc.googlesource.com/src/+/refs/heads/main/examples/androidapp/src/org/appspot/apprtc/PeerConnectionClient.java).
+    // Only the number of remote candidates by type: the SDP and the addresses in it identify the
+    // other phone's network, so neither is logged.
+    private fun logRemote(sdp: String) {
+        if (!BuildConfig.DEBUG) return
+        val counts = sdp.lineSequence().filter { it.startsWith("a=candidate") }
+            .groupingBy { candidateType(it) }.eachCount()
+        Log.d(TAG, "Remote candidates: " + counts.entries.joinToString(", ") { "${it.key} ${it.value}" }.ifEmpty { "none" })
+    }
 
     fun mute(on: Boolean) {
         track.setEnabled(!on)
@@ -257,14 +350,32 @@ class CallMedia(
     }
 
     private inner class Observer : PeerConnection.Observer {
-        override fun onConnectionChange(state: PeerConnection.PeerConnectionState) = onState(state.name.lowercase())
-        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
-            if (state == PeerConnection.IceGatheringState.COMPLETE) gathered.complete(Unit)
+        // Debug only. Port of AppRTCMobile's PCObserver (BSD-3), which logs each state at debug level:
+        // https://webrtc.googlesource.com/src/+/refs/heads/main/examples/androidapp/src/org/appspot/apprtc/PeerConnectionClient.java
+        // States are names only; for a candidate just its type and protocol, never the address, port,
+        // sdp or ufrag, which identify the network.
+        override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "PeerConnectionState: $state")
+            onState(state.name.lowercase())
         }
-        override fun onSignalingChange(state: PeerConnection.SignalingState?) = Unit
-        override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) = Unit
+        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "IceGatheringState: $state")
+            if (state == PeerConnection.IceGatheringState.COMPLETE) gatheringComplete.complete(Unit)
+        }
+        override fun onSignalingChange(state: PeerConnection.SignalingState?) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "SignalingState: $state")
+        }
+        override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "IceConnectionState: $state")
+        }
         override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
-        override fun onIceCandidate(candidate: IceCandidate?) = Unit
+        override fun onIceCandidate(candidate: IceCandidate?) {
+            if (candidate != null) onCandidateGathered(candidate.sdp)
+            if (BuildConfig.DEBUG && candidate != null) {
+                val proto = candidate.sdp.split(' ').getOrNull(2) ?: "?"
+                Log.d(TAG, "Candidate: ${candidateType(candidate.sdp)} $proto")
+            }
+        }
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit
         override fun onAddStream(stream: MediaStream?) = Unit
         override fun onRemoveStream(stream: MediaStream?) = Unit
@@ -277,6 +388,24 @@ class CallMedia(
 
     companion object {
         @Volatile private var ready = false
+        private const val TAG = "CallMedia"
+
+        // Delta Chat Android's ICE gathering timeouts (WebRTCClient.java, GPL-3.0, see waitForEnoughIce).
+        private const val RELAY_WAIT_MS = 10000L
+        private const val SRFLX_WAIT_MS = 5000L
+        private const val SRFLX_BURST_DELAY_MS = 150L
+        private const val HOST_WAIT_MS = 3000L
+
+        // Debug log helper, from AppRTCMobile's PeerConnectionClient.java (BSD-3), which splits SDP lines
+        // on spaces to read them (preferCodec):
+        // https://webrtc.googlesource.com/src/+/refs/heads/main/examples/androidapp/src/org/appspot/apprtc/PeerConnectionClient.java
+        // The "typ X" token is the candidate grammar of RFC 8839 section 5.1 (host, srflx, prflx, relay).
+        // Only that type is kept: the address, port and ufrag around it identify the network.
+        private fun candidateType(line: String): String {
+            val words = line.split(' ')
+            val at = words.indexOf("typ")
+            return if (at < 0) "?" else words.getOrNull(at + 1) ?: "?"
+        }
 
         private fun init(context: Context) {
             if (ready) return
