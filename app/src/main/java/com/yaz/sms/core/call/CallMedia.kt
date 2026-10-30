@@ -7,6 +7,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -71,6 +72,13 @@ class CallMedia(
     private val relayCandidate = CompletableDeferred<Unit>()
     private val srflxCandidate = CompletableDeferred<Unit>()
     private val gatheringComplete = CompletableDeferred<Unit>()
+    // Gathering complete after a candidate came: final. With GATHER_ONCE, WebRTC stops gathering
+    // as soon as a pair is strongly connected (p2p_transport_channel.cc, BSD-3:
+    // https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/p2p_transport_channel.cc
+    // MaybeStopPortAllocatorSessions), as when we answer an offer that already holds the caller's
+    // relay: no relay of ours will come. Delta Chat's host-only wait reads the same pair
+    // (iceGatheringLatch, hasHostCandidate). A "complete" before any candidate is not taken.
+    private val gatheringDone = CompletableDeferred<Unit>()
     @Volatile private var hostCandidate = false
     private var hasTurnServer = false
     private var hasStunServer = false
@@ -240,21 +248,23 @@ class CallMedia(
      * GPL-3.0 (RELAY_WAIT_MS 10000, SRFLX_WAIT_MS 5000, SRFLX_BURST_DELAY_MS 150, HOST_WAIT_MS 3000):
      * https://github.com/deltachat/deltachat-android/blob/master/src/main/java/org/thoughtcrime/securesms/webrtc/WebRTCClient.java
      * Changed: suspend and withTimeoutOrNull on deferreds instead of CountDownLatch.await and
-     * Thread.sleep; the server schemes are read once in init; the debug line says what was waited for.
+     * Thread.sleep; the server schemes are read once in init; the debug line says what was waited for;
+     * the relay and srflx waits also end when gathering is done (gatheringDone): nothing more comes.
      */
     private suspend fun waitForEnoughIce(): Boolean {
         if (hasTurnServer) {
-            val got = withTimeoutOrNull(RELAY_WAIT_MS) { relayCandidate.await() } != null
-            if (BuildConfig.DEBUG) Log.d(TAG, "Waited for relay: $got")
-            if (got) return true
+            val got = withTimeoutOrNull(RELAY_WAIT_MS) { firstOf(relayCandidate, "relay") }
+            if (BuildConfig.DEBUG) Log.d(TAG, "Waited for relay: ${got ?: "timeout"}")
+            if (got != null) return true
         } else if (hasStunServer) {
-            val got = withTimeoutOrNull(SRFLX_WAIT_MS) { srflxCandidate.await() } != null
-            if (BuildConfig.DEBUG) Log.d(TAG, "Waited for srflx: $got")
-            if (got) {
+            val got = withTimeoutOrNull(SRFLX_WAIT_MS) { firstOf(srflxCandidate, "srflx") }
+            if (BuildConfig.DEBUG) Log.d(TAG, "Waited for srflx: ${got ?: "timeout"}")
+            if (got == "srflx") {
                 // A burst of more srflx candidates follows the first.
                 delay(SRFLX_BURST_DELAY_MS)
                 return true
             }
+            if (got != null) return true
         } else if (noServers) {
             val got = withTimeoutOrNull(HOST_WAIT_MS) { gatheringComplete.await() } != null
             if (BuildConfig.DEBUG) Log.d(TAG, "Waited for gathering complete (host only): $got")
@@ -264,6 +274,17 @@ class CallMedia(
         val got = withTimeoutOrNull(RELAY_WAIT_MS) { gatheringComplete.await() } != null
         if (BuildConfig.DEBUG) Log.d(TAG, "Waited for gathering complete: $got")
         return got
+    }
+
+    /**
+     * The candidate waited for, or the end of gathering, whichever comes first (the candidate wins a
+     * tie: select is biased to its first clause). kotlinx.coroutines' select over Deferred.onAwait,
+     * "Selecting deferred values" (Apache-2.0):
+     * https://github.com/Kotlin/kotlinx.coroutines/blob/master/kotlinx-coroutines-core/common/src/selects/Select.kt
+     */
+    private suspend fun firstOf(candidate: CompletableDeferred<Unit>, name: String): String = select {
+        candidate.onAwait { name }
+        gatheringDone.onAwait { "gathering done" }
     }
 
     /**
@@ -360,7 +381,10 @@ class CallMedia(
         }
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
             if (BuildConfig.DEBUG) Log.d(TAG, "IceGatheringState: $state")
-            if (state == PeerConnection.IceGatheringState.COMPLETE) gatheringComplete.complete(Unit)
+            if (state == PeerConnection.IceGatheringState.COMPLETE) {
+                gatheringComplete.complete(Unit)
+                if (hostCandidate || relayCandidate.isCompleted || srflxCandidate.isCompleted) gatheringDone.complete(Unit)
+            }
         }
         override fun onSignalingChange(state: PeerConnection.SignalingState?) {
             if (BuildConfig.DEBUG) Log.d(TAG, "SignalingState: $state")
