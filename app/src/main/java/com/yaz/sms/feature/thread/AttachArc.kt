@@ -84,32 +84,27 @@ fun AttachArc(open: Boolean, onOpen: (Boolean) -> Unit, drops: List<Drop> = Drop
 @Composable
 fun AttachTiles(drops: List<Drop>, onPick: (Drop) -> Unit) {
     val haptics = rememberHaptics()
-    // Rows as even as the count allows (7: 4 and 3, 6: 3 and 3), each spread over the whole width.
-    val rows = (drops.size + 3) / 4
-    val perRow = if (rows == 0) 1 else (drops.size + rows - 1) / rows
-    androidx.compose.foundation.layout.Column(
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
-        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
-    ) {
-        drops.chunked(perRow).forEachIndexed { row, line ->
-            androidx.compose.foundation.layout.Row(
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                line.forEachIndexed { col, drop ->
-                    Tile(drop, order = row * perRow + col) {
-                        haptics.firm()
-                        onPick(drop)
-                    }
-                }
-            }
+    // Four to a row at most, as even as the count allows (7: 4 and 3, 6: 3 and 3), measured from the names, the
+    // font and the width (BalancedFlow, MessageMenu.kt, from PersonActions), each row spread over the whole width.
+    BalancedFlow(
+        labels = drops.map { it.label },
+        style = MaterialTheme.typography.labelMedium,
+        floor = 64.dp,
+        gap = 10.dp,
+        modifier = Modifier.padding(bottom = 10.dp),
+        fill = true
+    ) { i, tileModifier ->
+        val drop = drops[i]
+        Tile(drop, order = i, tileModifier) {
+            haptics.firm()
+            onPick(drop)
         }
     }
 }
 
 /** One of them: a round of glass with the icon, its name under it; pops in a little after the one before. */
 @Composable
-private fun Tile(drop: Drop, order: Int, onClick: () -> Unit) {
+private fun Tile(drop: Drop, order: Int, modifier: Modifier, onClick: () -> Unit) {
     val pop = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         delay(35L * order)
@@ -117,7 +112,7 @@ private fun Tile(drop: Drop, order: Int, onClick: () -> Unit) {
     }
     androidx.compose.foundation.layout.Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.widthIn(min = 64.dp).graphicsLayer {
+        modifier = modifier.graphicsLayer {
             scaleX = 0.5f + 0.5f * pop.value
             scaleY = 0.5f + 0.5f * pop.value
             alpha = pop.value.coerceIn(0f, 1f)
@@ -130,14 +125,16 @@ private fun Tile(drop: Drop, order: Int, onClick: () -> Unit) {
             }
         }
         // The name as plain text under its round (the user, 2026-10-30), as the labels under Dialer's call
-        // buttons; a tap on it does what its icon does, without a pane of its own.
-        Text(
+        // buttons; a tap on it does what its icon does, without a pane of its own. A halo in the page's colour
+        // keeps it readable over a bubble behind it (TextStyle shadow, see haloShadow in MessageMenu.kt).
+        TileLabel(
             drop.label,
-            style = MaterialTheme.typography.labelMedium,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            MaterialTheme.typography.labelMedium,
+            androidx.compose.material3.LocalContentColor.current,
             modifier = Modifier
                 .padding(top = 6.dp)
-                .clickable(interactionSource = null, indication = null, onClick = onClick)
+                .clickable(interactionSource = null, indication = null, onClick = onClick),
+            halo = true
         )
     }
 }

@@ -43,7 +43,9 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.yaz.sms.core.dial.NumberActions
 import com.yaz.sms.ui.icon.AppIcons
@@ -156,6 +158,12 @@ fun PersonActions(
         val wrapped = lone(perOneLine) && !lone(perRowFor(wordWidth))
         val perRow = if (wrapped) perRowFor(wordWidth) else perOneLine
         val minWidth = if (wrapped) wordWidth else oneLineWidth
+        // One size for every label of the flow, computed once from the tile width the balanced rows give
+        // (rememberGroupLabelSize, ui/component/GroupLabelSize.kt: the ladder of TextAutoSize.StepBased asked of the whole group),
+        // so Call and Add contact never read in two sizes.
+        val inRow = minOf(perRow, all.size)
+        val tileWidth = maxOf(minOf(minWidth, available), (available - TileGap * (inRow - 1)) / inRow)
+        val labelSize = rememberGroupLabelSize(all.map { it.label }, style, tileWidth - TileSide * 2)
         FlowRow(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(TileGap),
@@ -166,7 +174,7 @@ fun PersonActions(
                 PersonActionTile(
                     it.icon, it.label,
                     Modifier.weight(1f).fillMaxRowHeight().widthIn(min = minOf(minWidth, available)),
-                    tint = it.tint, description = it.description, onClick = it.onClick
+                    tint = it.tint, description = it.description, labelSize = labelSize, onClick = it.onClick
                 )
             }
         }
@@ -202,6 +210,7 @@ fun PersonActionTile(
     modifier: Modifier = Modifier,
     tint: Color? = null,
     description: String = label,
+    labelSize: TextUnit = TextUnit.Unspecified,
     onClick: () -> Unit
 ) {
     val haptics = rememberHaptics()
@@ -232,16 +241,23 @@ fun PersonActionTile(
         ) {
             Icon(icon, contentDescription = null, tint = tint ?: MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
             Spacer(Modifier.height(8.dp))
-            // Lines break between words only; a single word still too wide shrinks as the last resort:
-            // Compose's TextAutoSize.StepBased (https://developer.android.com/develop/ui/compose/text/autosize).
+            // Lines break between words only. In a group the size is the one the group computed
+            // ([labelSize], rememberGroupLabelSize): every tile reads alike, no autosize of its own. Alone, a single
+            // word still too wide shrinks as the last resort: Compose's TextAutoSize.StepBased
+            // (https://developer.android.com/develop/ui/compose/text/autosize).
             val style = MaterialTheme.typography.labelLarge
-            BasicText(
-                label,
-                style = style.copy(color = tint ?: MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = style.fontSize, stepSize = 0.5.sp)
-            )
+            val color = tint ?: MaterialTheme.colorScheme.onSurface
+            if (labelSize.isSpecified) {
+                BasicText(label, style = style.copy(color = color, textAlign = TextAlign.Center, fontSize = labelSize))
+            } else {
+                BasicText(
+                    label,
+                    style = style.copy(color = color, textAlign = TextAlign.Center),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = style.fontSize, stepSize = 0.5.sp)
+                )
+            }
         }
     }
 }

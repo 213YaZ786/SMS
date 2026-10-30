@@ -16,7 +16,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /**
  * The head of a person's page, the same in Dialer, SMS and Contacts: the face
@@ -149,12 +153,21 @@ fun PersonBadge(
         }
     ) {
         Row(
-            Modifier.heightIn(min = 48.dp).padding(horizontal = 14.dp),
+            Modifier.heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(icon, contentDescription = null, tint = tint ?: MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // The label wraps between words and the capsule grows (another language, the 200 % font); a
+            // single word still too wide shrinks as the last resort: Compose's TextAutoSize.StepBased
+            // (https://developer.android.com/develop/ui/compose/text/autosize).
+            val style = MaterialTheme.typography.labelLarge
+            BasicText(
+                label,
+                style = style.copy(color = LocalContentColor.current),
+                autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = style.fontSize, stepSize = 0.5.sp),
+                modifier = Modifier.weight(1f, fill = false)
+            )
         }
     }
 }

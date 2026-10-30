@@ -1127,20 +1127,13 @@ private fun FloatingDay(label: String, visible: Boolean, modifier: Modifier = Mo
         exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 },
         modifier = modifier
     ) {
-        Text(
-            label,
-            // Plain text, no zone (it does nothing): a soft shadow keeps it readable over the bubbles
-            // https://developer.android.com/develop/ui/compose/text/style-text#add-shadow
-            style = MaterialTheme.typography.labelMedium.copy(
-                shadow = androidx.compose.ui.graphics.Shadow(
-                    color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.35f),
-                    offset = androidx.compose.ui.geometry.Offset(0f, 2f),
-                    blurRadius = 6f
-                )
-            ),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-        )
+        // Plain text, no zone (it does nothing): a halo in the page's own colour keeps it readable over the
+        // bubbles, light or dark (TextStyle shadow drawn twice, haloShadow in MessageMenu.kt;
+        // https://developer.android.com/develop/ui/compose/text/style-text#add-shadow)
+        val halo = MaterialTheme.typography.labelMedium.copy(shadow = haloShadow())
+        HaloStack(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) { m ->
+            Text(label, m, style = halo, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -2187,7 +2180,8 @@ private fun ReplyChips(replies: List<String>, onPick: (String) -> Unit) {
                         alpha = pop.value.coerceIn(0f, 1f)
                     }
                 ) {
-                    Text(reply, style = MaterialTheme.typography.labelLarge, maxLines = 1, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+                    // Up to two lines, broken between words, when a reply is wider than the row (the 200 % font, a longer language).
+                    Text(reply, style = MaterialTheme.typography.labelLarge, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
                 }
             }
         }

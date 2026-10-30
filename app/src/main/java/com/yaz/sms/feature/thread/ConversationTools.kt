@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -262,7 +263,8 @@ fun LatestButton(newCount: Int, onClick: () -> Unit) {
             }
         }
         if (newCount > 0) Box(
-            Modifier.align(Alignment.TopEnd).size(20.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
+            // A round of 20 dp that grows with its text into a pill (the 200 % font, "99+"): a minimum, never a size.
+            Modifier.align(Alignment.TopEnd).defaultMinSize(20.dp, 20.dp).background(MaterialTheme.colorScheme.primary, CircleShape).padding(horizontal = 5.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(if (newCount > 99) "99+" else "$newCount", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary)
@@ -311,23 +313,27 @@ fun EffectSheet(carried: Boolean, onLater: (() -> Unit)?, onPick: (com.yaz.sms.c
                 }
                 listOf("Bubble" to false, "Screen" to true).forEach { (title, screen) ->
                     Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
-                    androidx.compose.foundation.layout.FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        maxItemsInEachRow = if (screen) 3 else 2
-                    ) {
-                        effectFaces.filter { it.first.screen == screen }.forEach { (effect, face) ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
-                                modifier = Modifier.width(78.dp).clip(ShapeDefaults.Large).clickable {
-                                    haptics.firm()
-                                    onPick(effect)
-                                }.padding(vertical = 6.dp)
-                            ) {
-                                Text(face.first, style = MaterialTheme.typography.headlineMedium)
-                                Text(face.second, style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                            }
+                    // Names measured and balanced, wrapping between words, a tile at least 78 dp (BalancedFlow, MessageMenu.kt).
+                    val these = effectFaces.filter { it.first.screen == screen }
+                    BalancedFlow(
+                        labels = these.map { it.second.second },
+                        style = MaterialTheme.typography.labelMedium,
+                        floor = 78.dp,
+                        gap = 6.dp,
+                        rowGap = 8.dp,
+                        maxPerRow = if (screen) 3 else 2
+                    ) { i, tileModifier ->
+                        val (effect, face) = these[i]
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
+                            modifier = tileModifier.clip(ShapeDefaults.Large).clickable {
+                                haptics.firm()
+                                onPick(effect)
+                            }.padding(vertical = 6.dp)
+                        ) {
+                            Text(face.first, style = MaterialTheme.typography.headlineMedium)
+                            TileLabel(face.second, MaterialTheme.typography.labelMedium, MaterialTheme.colorScheme.onSurface)
                         }
                     }
                 }

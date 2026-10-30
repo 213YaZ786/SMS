@@ -27,7 +27,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.sp
 import com.yaz.sms.core.dial.ContactLook
 import com.yaz.sms.ui.icon.AppIcons
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +47,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ContactAvatar(name: String?, photo: String?, size: Dp, modifier: Modifier = Modifier, look: ContactLook.Look? = null, flat: Boolean = false) {
     val context = LocalContext.current
-    val px = with(LocalDensity.current) { size.roundToPx() }
+    val density = LocalDensity.current
+    val px = with(density) { size.roundToPx() }
     val image by produceState<ImageBitmap?>(null, photo, px) {
         value = photo?.let { uri ->
             withContext(Dispatchers.IO) {
@@ -93,10 +93,13 @@ fun ContactAvatar(name: String?, photo: String?, size: Dp, modifier: Modifier = 
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.size(size).clip(CircleShape)
                 )
-                !look?.emoji.isNullOrBlank() -> Text(look?.emoji.orEmpty(), fontSize = (size.value * 0.5f).sp)
+                // The circle is fixed by design and the letters are a picture in it: sized from the circle in dp
+                // (Density.toSp divides by the font scale, https://developer.android.com/reference/kotlin/androidx/compose/ui/unit/Density),
+                // so a 200 % font does not push them out of it.
+                !look?.emoji.isNullOrBlank() -> Text(look?.emoji.orEmpty(), fontSize = with(density) { (size * 0.5f).toSp() })
                 letter != null -> Text(
                     letter,
-                    fontSize = (size.value * (if (letter.length > 1) 0.36f else 0.42f)).sp,
+                    fontSize = with(density) { (size * (if (letter.length > 1) 0.36f else 0.42f)).toSp() },
                     color = ink,
                     fontFamily = when (look?.font) {
                         "serif" -> FontFamily.Serif

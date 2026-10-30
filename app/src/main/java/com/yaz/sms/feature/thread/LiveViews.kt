@@ -56,8 +56,7 @@ internal fun LivePill(until: Long, onStop: () -> Unit) {
             Text(
                 "Sharing live location until " +LiveLocation.clock(until),
                 style = MaterialTheme.typography.labelLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                // Wraps between words, the pill grows with it (the 200 % font, a longer language).
                 modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
             )
             Text(

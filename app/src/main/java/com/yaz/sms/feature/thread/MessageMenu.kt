@@ -7,7 +7,40 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.FlowRowScope
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.coerceAtLeast
+import androidx.compose.ui.unit.isSpecified
+import com.yaz.sms.ui.component.rememberGroupLabelSize
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -87,6 +120,8 @@ fun MessageMenu(
     val edge = with(density) { 12.dp.roundToPx() }
     var rowSize by remember { mutableStateOf(IntSize.Zero) }
     var listSize by remember { mutableStateOf(IntSize.Zero) }
+    // The pane's height with all its rows, reported by Palette, whatever room it is given.
+    var naturalPane by remember { mutableStateOf(0) }
     Popup(
         popupPositionProvider = remember { Whole },
         onDismissRequest = onDismiss,
@@ -109,21 +144,86 @@ fun MessageMenu(
             // The message itself, above the veil, lifted a little.
             val rise = remember { Animatable(0f) }
             LaunchedEffect(Unit) { rise.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 500f)) }
+            // The room is the window less the system bars (WindowInsets.safeDrawing, Android's inset types,
+            // https://developer.android.com/develop/ui/compose/system/insets) and the edge margin: the reactions
+            // bar, the lifted message and the pane all stay inside it. As long as the pane, whole, fits under the
+            // message or above it, everything hangs off the message's own place. Otherwise (the 200 % font, a tall
+            // message) the three are stacked by priority from the message's place: the reactions bar always whole,
+            // then the message, whole if it fits with a first part of the pane, else clipped to a quarter of the
+            // window with a soft fade at the cut (Signal's long press shows a clipped preview of a long message),
+            // then the pane takes the rest and its grid scrolls.
+            val bars = WindowInsets.safeDrawing
+            val top = bars.getTop(density) + edge
+            val bottomLimit = window.height - bars.getBottom(density) - edge
+            val reactionsH = if (reactions != null) rowSize.height + gap else 0
+            val msgTop = bounds.top.roundToInt()
+            val msgH = bounds.height.roundToInt()
+            val below = bounds.bottom.roundToInt() + gap
+            val roomBelow = bottomLimit - below
+            val roomAbove = msgTop - reactionsH - gap - top
+            val fitsBelow = naturalPane <= roomBelow
+            val fitsAbove = naturalPane <= roomAbove
+            val stacked = window.height > 0 && !fitsBelow && !fitsAbove
+            val total = bottomLimit - top
+            val paneMin = minOf(naturalPane, with(density) { 220.dp.roundToPx() })
+            val shownH = if (!stacked || total - reactionsH - gap - msgH >= paneMin) msgH else minOf(msgH, window.height / 4)
+            val paneRoom = total - reactionsH - shownH - gap
+            val stackH = reactionsH + shownH + gap + minOf(naturalPane, paneRoom).coerceAtLeast(0)
+            val stackTop = (msgTop - reactionsH).coerceIn(top, maxOf(top, bottomLimit - stackH))
+            val msgY = if (stacked) stackTop + reactionsH else msgTop
+            val listY = if (stacked) msgY + shownH + gap else if (fitsBelow) below else (msgTop - gap - reactionsH - listSize.height).coerceAtLeast(top)
+            val rowY = when {
+                stacked -> stackTop
+                fitsBelow -> (msgTop - gap - rowSize.height).coerceAtLeast(top)
+                else -> listY + listSize.height + gap
+            }
+            val paneMax = when {
+                window.height <= 0 -> Dp.Unspecified
+                stacked -> with(density) { paneRoom.coerceAtLeast(0).toDp() }
+                else -> with(density) {
+                    maxOf(roomBelow, roomAbove).coerceAtLeast(220.dp.roundToPx()).coerceAtMost(total - reactionsH).toDp()
+                }
+            }
+            // The message itself, above the veil, lifted a little; clipped with a fade when only part of it fits.
+            val clipped = shownH < msgH
             Box(
                 Modifier
-                    .offset { IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt()) }
-                    .size(with(density) { bounds.width.toDp() }, with(density) { bounds.height.toDp() })
+                    .offset { IntOffset(bounds.left.roundToInt(), msgY) }
+                    .size(with(density) { bounds.width.toDp() }, with(density) { shownH.toDp() })
                     .graphicsLayer {
                         val s = 1f + 0.05f * rise.value
                         scaleX = s
                         scaleY = s
                         translationY = -4.dp.toPx() * rise.value
                     }
-            ) { held() }
-            val below = bounds.bottom.roundToInt() + gap
-            val fitsBelow = below + listSize.height + edge < window.height
-            val listY = if (fitsBelow) below else (bounds.top.roundToInt() - gap - listSize.height - (if (reactions != null) rowSize.height + gap else 0)).coerceAtLeast(edge)
-            val rowY = if (fitsBelow) (bounds.top.roundToInt() - gap - rowSize.height).coerceAtLeast(edge) else listY + listSize.height + gap
+                    // Cut short, the end fades out instead of ending on a hard line: the layer is drawn offscreen and a
+                    // gradient from opaque to transparent is drawn over its last 48 dp with BlendMode.DstIn, the bottom
+                    // edge of OuterTune's fadingEdge (GPL-3.0,
+                    // https://github.com/OuterTune/OuterTune/blob/main/app/src/main/java/com/dd3boh/outertune/ui/utils/FadingEdge.kt),
+                    // clipped to the bounds first (https://developer.android.com/develop/ui/compose/graphics/draw/modifiers).
+                    .then(
+                        if (clipped) {
+                            Modifier
+                                .clipToBounds()
+                                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                                .drawWithContent {
+                                    drawContent()
+                                    drawRect(
+                                        brush = Brush.verticalGradient(
+                                            colors = listOf(Color.Black, Color.Transparent),
+                                            startY = size.height - 48.dp.toPx(),
+                                            endY = size.height
+                                        ),
+                                        blendMode = BlendMode.DstIn
+                                    )
+                                }
+                        } else Modifier
+                    )
+            ) {
+                if (clipped) {
+                    Box(Modifier.wrapContentSize(androidx.compose.ui.Alignment.TopStart, unbounded = true).size(with(density) { bounds.width.toDp() }, with(density) { msgH.toDp() })) { held() }
+                } else held()
+            }
 
             if (reactions != null) {
                 ZoneSurface(
@@ -182,72 +282,208 @@ fun MessageMenu(
                 onDismiss,
                 Modifier
                     .offset { IntOffset(xFor(listSize.width), listY) }
-                    .onSizeChanged { listSize = it }
+                    .onSizeChanged { listSize = it },
+                maxHeight = paneMax,
+                onNatural = { naturalPane = it }
             )
         }
     }
 }
 
 /**
- * The actions as a palette: a pane of glass with a tile for each, the
- * icon over its word, four to a line, rising one by one. Nothing scrolls,
- * everything reads at a glance; what takes something away is in red.
+ * Tiles of words in a flow that adapts, taken from PersonActions in this app (ui/component/PersonActions.kt, the
+ * suite's model): the least width of a tile is measured, not guessed, as the widest label on one line in the current
+ * style, font scale and language (TextMeasurer, https://developer.android.com/develop/ui/compose/text/measure-text-layout),
+ * plus [side] each side, never under [floor]; how many fit a line follows, then the rows are balanced (5 tiles that do
+ * not fit one row make 3 + 2, never 4 + 1), and when one line labels leave a lone tile the least width becomes the
+ * widest word, so labels wrap between words (FlowRow with maxItemsInEachRow, weight and fillMaxRowHeight,
+ * https://developer.android.com/develop/ui/compose/layouts/flow). [maxPerRow] keeps the design's count on a wide
+ * window. [fill] spreads the flow over the whole width, else it is as wide as its tiles. [tile] draws one tile with
+ * the modifier it must take; its label is a [TileLabel].
+ * Official: "Check that your app's layouts adapt correctly without breaking, overlapping, or hiding content"
+ * (https://developer.android.com/develop/ui/compose/accessibility/scalable-content).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun BalancedFlow(
+    labels: List<String>,
+    style: TextStyle,
+    floor: Dp,
+    gap: Dp,
+    modifier: Modifier = Modifier,
+    rowGap: Dp = gap,
+    side: Dp = 0.dp,
+    maxPerRow: Int = 4,
+    fill: Boolean = false,
+    tile: @Composable FlowRowScope.(index: Int, tileModifier: Modifier) -> Unit
+) {
+    if (labels.isEmpty()) return
+    BoxWithConstraints(if (fill) modifier.fillMaxWidth() else modifier) {
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val available = maxWidth
+        // The widest label on one line and the widest single word, in px.
+        val widths = remember(labels, style, density) {
+            val oneLine = labels.maxOf { measurer.measure(it, style, softWrap = false, maxLines = 1).size.width }
+            val word = labels.maxOf { label ->
+                label.split(' ').filter { it.isNotEmpty() }.maxOfOrNull { measurer.measure(it, style, softWrap = false, maxLines = 1).size.width } ?: 0
+            }
+            oneLine to word
+        }
+        val oneLineWidth = maxOf(floor, with(density) { widths.first.toDp() } + side * 2)
+        val wordWidth = maxOf(floor, with(density) { widths.second.toDp() } + side * 2)
+        fun perRowFor(width: Dp): Int {
+            val fit = ((available + gap) / (width + gap)).toInt().coerceIn(1, maxPerRow)
+            val lines = (labels.size + fit - 1) / fit
+            return (labels.size + lines - 1) / lines
+        }
+        fun lone(perRow: Int) = labels.size > perRow && labels.size % perRow == 1
+        // One line labels first; the widest word instead (labels wrapping between words, as Google Messages' and iOS's
+        // menu labels do) when it gives more tiles to a line, or when the one line width leaves a lone last tile and
+        // the word width does not. A lone tile stays only when neither width avoids it.
+        val perOneLine = perRowFor(oneLineWidth)
+        val perWord = perRowFor(wordWidth)
+        val wrapped = !lone(perWord) && (perWord > perOneLine || lone(perOneLine))
+        val perRow = if (wrapped) perWord else perOneLine
+        val minWidth = minOf(if (wrapped) wordWidth else oneLineWidth, available)
+        val inRow = minOf(perRow, labels.size)
+        // The row is as wide as its tiles' least widths and gaps added in whole pixels, as FlowRow rounds each of them
+        // (Dp.roundToPx): added in dp it came one pixel short of three tiles (3 x 78 dp + 2 x 6 dp = 645.75 px, three
+        // tiles of 205 px and two gaps of 16 px need 647), and the third tile of a line dropped to the next.
+        val rowWidth = minOf(with(density) { (minWidth.roundToPx() * inRow + gap.roundToPx() * (inRow - 1)).toDp() }, available)
+        // One size for every label of the group, computed once from the width a tile gets in a full row
+        // (rememberGroupLabelSize, ui/component/GroupLabelSize.kt: the ladder of TextAutoSize.StepBased asked of the
+        // whole group); the TileLabels below read it, none sizes itself.
+        val tileWidth = ((if (fill) available else rowWidth) - gap * (inRow - 1)) / inRow
+        val labelSize = rememberGroupLabelSize(labels, style, tileWidth - side * 2)
+        CompositionLocalProvider(LocalGroupLabelSize provides labelSize) {
+            FlowRow(
+                if (fill) Modifier.fillMaxWidth() else Modifier.width(rowWidth),
+                horizontalArrangement = Arrangement.spacedBy(gap),
+                verticalArrangement = Arrangement.spacedBy(rowGap),
+                maxItemsInEachRow = perRow
+            ) {
+                labels.indices.forEach { i -> tile(i, Modifier.weight(1f).fillMaxRowHeight().widthIn(min = minWidth)) }
+            }
+        }
+    }
+}
+
+/** The size a [BalancedFlow] computed for its group; unspecified outside one, where a label sizes itself. */
+internal val LocalGroupLabelSize = compositionLocalOf { TextUnit.Unspecified }
+
+/**
+ * A halo in the page's own colour for plain text drawn over messages: a TextStyle shadow, offset 0, blur 12 dp,
+ * the surface colour at high alpha (https://developer.android.com/develop/ui/compose/text/style-text#add-shadow),
+ * so it reads in light and dark over any bubble.
  */
 @Composable
-fun Palette(actions: List<MessageAction>, onDismiss: () -> Unit, modifier: Modifier) {
+internal fun haloShadow(): Shadow =
+    Shadow(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f), Offset.Zero, with(LocalDensity.current) { 12.dp.toPx() })
+
+/** The text drawn twice at the same place, so its halo is dense enough; the second copy is silent to TalkBack. */
+@Composable
+internal fun HaloStack(modifier: Modifier = Modifier, draw: @Composable (Modifier) -> Unit) {
+    Box(modifier) {
+        draw(Modifier)
+        draw(Modifier.clearAndSetSemantics {})
+    }
+}
+
+/**
+ * The name of a tile: lines break between words only. In a [BalancedFlow] it is drawn at the one size the group
+ * computed (no autosize of its own, so two tiles never read in two sizes); alone, a single word still too wide
+ * shrinks as the last resort, Compose's TextAutoSize.StepBased
+ * (https://developer.android.com/develop/ui/compose/text/autosize), as the label of PersonActionTile in this app.
+ * [halo] puts a halo in the page's colour behind it, for plain text over messages ([haloShadow]).
+ */
+@Composable
+internal fun TileLabel(text: String, style: TextStyle, color: Color, modifier: Modifier = Modifier, halo: Boolean = false) {
+    val group = LocalGroupLabelSize.current
+    val grouped = group.isSpecified
+    val size = if (grouped && group.value < style.fontSize.value) group else style.fontSize
+    val shadow = if (halo) haloShadow() else null
+    val look = style.copy(color = color, textAlign = TextAlign.Center, fontSize = size, shadow = shadow ?: style.shadow)
+    val draw: @Composable (Modifier) -> Unit = { m ->
+        if (grouped) {
+            BasicText(text, m, style = look)
+        } else {
+            BasicText(text, m, style = look, autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = style.fontSize, stepSize = 0.5.sp))
+        }
+    }
+    if (halo) HaloStack(modifier, draw) else draw(modifier)
+}
+
+/**
+ * The actions as a palette: a pane of glass with a tile for each, the
+ * icon over its word, four to a line at most, rising one by one. Nothing scrolls,
+ * everything reads at a glance; what takes something away is in red. The lines
+ * are measured and balanced ([BalancedFlow]), so a longer language or a larger
+ * font gives fewer to a line and names on two lines, never a cut word.
+ */
+@Composable
+fun Palette(
+    actions: List<MessageAction>,
+    onDismiss: () -> Unit,
+    modifier: Modifier,
+    maxHeight: Dp = Dp.Unspecified,
+    onNatural: (Int) -> Unit = {}
+) {
     val haptics = rememberHaptics()
-    // Lines as even as can be: 5 = 3 + 2, 6 = 3 + 3, 7 = 4 + 3, 8 = 4 + 4.
-    val lines = (actions.size + 3) / 4
-    val perLine = if (lines == 0) 1 else (actions.size + lines - 1) / lines
+    val density = LocalDensity.current
+    // The window less the pane's padding and its edge margin on each side.
+    val room = (LocalConfiguration.current.screenWidthDp - 44).dp
+    // Taller than [maxHeight] (the window less the system bars and the reactions bar, the 200 % font), the grid
+    // scrolls inside the pane and the pane stays on screen (Modifier.verticalScroll under heightIn,
+    // https://developer.android.com/develop/ui/compose/touch-input/pointer-input/scroll).
+    val inner = if (maxHeight.isSpecified) Modifier.heightIn(max = (maxHeight - 24.dp).coerceAtLeast(0.dp)).verticalScroll(rememberScrollState()) else Modifier
     // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
     ZoneSurface(shape = ShapeDefaults.ExtraLarge, shadowElevation = 6.dp, modifier = modifier.popIn(1)) {
-        Column(
-            Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
-        ) {
-            actions.chunked(perLine).forEachIndexed { line, row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    row.forEachIndexed { i, action ->
-                        val rise = remember { Animatable(1f) }
-                        LaunchedEffect(Unit) {
-                            delay(30L * (line * perLine + i))
-                            rise.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 500f))
+        Box(Modifier.padding(horizontal = 10.dp, vertical = 12.dp).widthIn(max = room).then(inner)) {
+            BalancedFlow(
+                labels = actions.map { it.label },
+                style = MaterialTheme.typography.labelLarge,
+                floor = 78.dp,
+                gap = 6.dp,
+                rowGap = 10.dp,
+                // Inside the scroll the grid is measured whole: its height, with the pane's padding, is the pane's natural one.
+                modifier = Modifier.onSizeChanged { onNatural(it.height + with(density) { 24.dp.roundToPx() }) }
+            ) { i, tileModifier ->
+                val action = actions[i]
+                val rise = remember { Animatable(1f) }
+                LaunchedEffect(Unit) {
+                    delay(30L * i)
+                    rise.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 500f))
+                }
+                val tint = if (action.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                Column(
+                    horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                    modifier = tileModifier
+                        .graphicsLayer {
+                            translationY = rise.value * 8.dp.toPx()
+                            alpha = 1f - rise.value
                         }
-                        val tint = if (action.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                        Column(
-                            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .width(78.dp)
-                                .graphicsLayer {
-                                    translationY = rise.value * 8.dp.toPx()
-                                    alpha = 1f - rise.value
-                                }
-                                .clip(ShapeDefaults.Large)
-                                .clickable(onClickLabel = action.label) {
-                                    haptics.tick()
-                                    onDismiss()
-                                    action.run()
-                                }
-                                .padding(vertical = 4.dp)
-                        ) {
-                            // Each action in a drop of polished glass of its own (rim, bevel, shadow), the
-                            // colour in the icon only: an accent wash flattened them into plain discs.
-                            ZoneSurface(shape = CircleShape, modifier = Modifier.size(56.dp)) {
-                                Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
-                                    Icon(action.icon, contentDescription = null, tint = tint, modifier = Modifier.size(28.dp))
-                                }
-                            }
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                action.label,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = if (action.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                                maxLines = 2,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
+                        .clip(ShapeDefaults.Large)
+                        .clickable(onClickLabel = action.label) {
+                            haptics.tick()
+                            onDismiss()
+                            action.run()
+                        }
+                        .padding(vertical = 4.dp)
+                ) {
+                    // Each action in a drop of polished glass of its own (rim, bevel, shadow), the
+                    // colour in the icon only: an accent wash flattened them into plain discs.
+                    ZoneSurface(shape = CircleShape, modifier = Modifier.size(56.dp)) {
+                        Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+                            Icon(action.icon, contentDescription = null, tint = tint, modifier = Modifier.size(28.dp))
                         }
                     }
+                    Spacer(Modifier.height(6.dp))
+                    TileLabel(
+                        action.label,
+                        MaterialTheme.typography.labelLarge,
+                        if (action.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
         }

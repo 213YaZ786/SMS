@@ -244,46 +244,57 @@ internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: Stri
         com.yaz.sms.ui.component.DialogPane {
             Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Background", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 12.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    maxItemsInEachRow = 3
-                ) {
-                    var order = 0
+                // The tiles listed first, so their names can be measured and the rows balanced (BalancedFlow, MessageMenu.kt).
+                val tiles = buildList<SceneChoice> {
                     // Their colour, from the Contacts app: what the conversation shows unless chosen here.
                     theirColor?.let { argb ->
-                        SceneTile(sceneLook(colorCode(argb), base, hour), "Their colour", current == null, order++) {
+                        add(SceneChoice(sceneLook(colorCode(argb), base, hour), "Their colour", current == null) {
                             haptics.tick()
                             onPick(null)
-                        }
+                        })
                     }
                     Scene.entries.forEach { scene ->
                         val chosen = (current ?: if (theirColor == null) Scene.YOURS.code else null) == scene.code
-                        SceneTile(sceneLook(scene.code, base, hour), scene.label, chosen, order++, doodles = scene == Scene.DOODLES) {
+                        add(SceneChoice(sceneLook(scene.code, base, hour), scene.label, chosen, doodles = scene == Scene.DOODLES) {
                             haptics.tick()
                             onPick(if (scene == Scene.YOURS && theirColor == null) null else scene.code)
-                        }
+                        })
                     }
                     val photoChosen = current?.startsWith(PHOTO) == true
-                    SceneTile(if (photoChosen) sceneLook(current, base, hour) else null, if (reading) "Reading…" else "From a photo", photoChosen, order++) {
+                    add(SceneChoice(if (photoChosen) sceneLook(current, base, hour) else null, if (reading) "Reading…" else "From a photo", photoChosen) {
                         haptics.tick()
                         pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    }
+                    })
                     theirPhoto?.let { photo ->
-                        SceneTile(null, "Their photo", false, order++, icon = false) {
+                        add(SceneChoice(null, "Their photo", false, icon = false) {
                             haptics.tick()
                             fromPhoto(Uri.parse(photo))
-                        }
+                        })
                     }
+                }
+                BalancedFlow(
+                    labels = tiles.map { it.label },
+                    style = MaterialTheme.typography.labelMedium,
+                    floor = 84.dp,
+                    gap = 10.dp,
+                    maxPerRow = 3
+                ) { i, tileModifier ->
+                    val t = tiles[i]
+                    SceneTile(t.look, t.label, t.chosen, i, t.icon, t.doodles, tileModifier, t.onClick)
                 }
             }
         }
     }
 }
 
+// What a background tile shows and does, listed before it is drawn so the names can be measured: the shape of
+// PersonActionSpec in ui/component/PersonActions.kt, feeding a FlowRow as in
+// https://github.com/androidx/androidx/blob/androidx-main/compose/foundation/foundation-layout/src/commonMain/kotlin/androidx/compose/foundation/layout/FlowLayout.kt
+private class SceneChoice(val look: GlassLook?, val label: String, val chosen: Boolean, val icon: Boolean = true, val doodles: Boolean = false, val onClick: () -> Unit)
+
 /** One background as a small conversation in its light; [look] null shows a photo's place. */
 @Composable
-private fun SceneTile(look: GlassLook?, label: String, chosen: Boolean, order: Int, icon: Boolean = true, doodles: Boolean = false, onClick: () -> Unit) {
+private fun SceneTile(look: GlassLook?, label: String, chosen: Boolean, order: Int, icon: Boolean, doodles: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val pop = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         delay(order * 30L)
@@ -295,7 +306,7 @@ private fun SceneTile(look: GlassLook?, label: String, chosen: Boolean, order: I
     val shape = ShapeDefaults.Large
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(84.dp).graphicsLayer {
+        modifier = modifier.graphicsLayer {
             scaleX = 0.8f + 0.2f * pop.value
             scaleY = 0.8f + 0.2f * pop.value
             alpha = pop.value.coerceIn(0f, 1f)
@@ -320,7 +331,7 @@ private fun SceneTile(look: GlassLook?, label: String, chosen: Boolean, order: I
             if (doodles) DoodleGround(doodleInk(look?.dark == true), cell = 26f)
             if (look == null) Icon(if (icon) AppIcons.Photo else AppIcons.Image, contentDescription = null, tint = accent, modifier = Modifier.size(28.dp))
         }
-        Text(label, style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center, maxLines = 2, modifier = Modifier.padding(top = 4.dp))
+        TileLabel(label, MaterialTheme.typography.labelMedium, MaterialTheme.colorScheme.onSurface, Modifier.padding(top = 4.dp))
     }
 }
 

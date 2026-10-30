@@ -138,20 +138,33 @@ fun NewMessageScreen(onBack: () -> Unit, onPick: (String) -> Unit) {
                 }
             }
             if (group && chosen.size >= 2) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                // Side by side when both names fit on one line in their half, else stacked full width: the
+                // names measured with TextMeasurer in the current font and language, as PersonActions in this app
+                // measures its labels (https://developer.android.com/develop/ui/compose/text/measure-text-layout);
+                // the names wrap between words, never cut.
+                androidx.compose.foundation.layout.BoxWithConstraints(
+                    Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
-                    listOf("Group (MMS)" to false, "One SMS each" to true).forEach { (label, value) ->
-                        FloatingPane(shape = CircleShape, accent = each == value, modifier = Modifier.weight(1f), onClick = { each = value }) {
+                    val modes = listOf("Group (MMS)" to false, "One SMS each" to true)
+                    val style = MaterialTheme.typography.labelLarge
+                    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+                    val density = androidx.compose.ui.platform.LocalDensity.current
+                    val widest = modes.maxOf { measurer.measure(it.first, style, softWrap = false, maxLines = 1).size.width }
+                    val sideBySide = with(density) { widest.toDp() } * 2 + 28.dp * 2 + 8.dp <= maxWidth
+                    val pill: @Composable (Pair<String, Boolean>, Modifier) -> Unit = { (label, value), modifier ->
+                        FloatingPane(shape = CircleShape, accent = each == value, modifier = modifier, onClick = { each = value }) {
                             Text(
                                 label,
-                                style = MaterialTheme.typography.labelLarge,
-                                maxLines = 1,
+                                style = style,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)
                             )
                         }
+                    }
+                    if (sideBySide) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        modes.forEach { pill(it, Modifier.weight(1f)) }
+                    } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        modes.forEach { pill(it, Modifier.fillMaxWidth()) }
                     }
                 }
             }

@@ -203,14 +203,12 @@ fun PersonPage(
                     // About them: the rest of the actions, Block last.
                     item {
                         val digits = !group && address.count(Char::isDigit) >= 3
-                        // Cards in two columns, each its icon over its name, the rows as tall as each other.
-                        Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.TopCenter) {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                            maxItemsInEachRow = 2,
-                            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
-                        ) {
+                        // Cards, each its icon over its name, two to a row at most; measured and balanced from the names,
+                        // the font and the width, the rows as tall as each other (BalancedFlow, MessageMenu.kt, from PersonActions).
+                        val cards = buildList {
+                            fun Row(icon: ImageVector, label: String, danger: Boolean = false, hint: String? = null, onClick: () -> Unit) {
+                                add(PageTile(icon, label, danger, hint, onClick))
+                            }
                             if (digits && NumberActions.canShowCalls(context)) Row(AppIcons.Recents, "Calls with them") { NumberActions.showCalls(context, address) }
                             onBackground?.let { open -> Row(AppIcons.Palette, "Background") { open() } }
                             onStarred?.let { open -> Row(AppIcons.Star, "Starred messages") { open() } }
@@ -245,6 +243,17 @@ fun PersonPage(
                                 } else confirmBlock = true
                             }
                         }
+                        Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.TopCenter) {
+                            BalancedFlow(
+                                labels = cards.map { it.label },
+                                style = MaterialTheme.typography.titleSmall,
+                                floor = 100.dp,
+                                gap = 10.dp,
+                                side = 12.dp,
+                                maxPerRow = 2,
+                                fill = true,
+                                modifier = Modifier.widthIn(max = 560.dp)
+                            ) { i, tileModifier -> PageTileView(cards[i], tileModifier) }
                         }
                     }
                     // The people of a group, each one a line: a swipe left, a long press or the button takes them
@@ -305,33 +314,35 @@ fun PersonPage(
     }
 }
 
-/** A line of glass for something about the person. */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+// One card of the page, listed before it is drawn so the names can be measured: the shape of PersonActionSpec in
+// ui/component/PersonActions.kt (the suite's model), feeding the flow of BalancedFlow in MessageMenu.kt.
+private class PageTile(val icon: ImageVector, val label: String, val danger: Boolean, val hint: String?, val onClick: () -> Unit)
+
+/** A card of glass for something about the person; it takes the modifier the flow gives it (weight, row height, least width). */
 @Composable
-private fun androidx.compose.foundation.layout.FlowRowScope.Row(icon: ImageVector, label: String, danger: Boolean = false, hint: String? = null, onClick: () -> Unit) {
+private fun PageTileView(tile: PageTile, modifier: Modifier) {
     val haptics = rememberHaptics()
-    val tint = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val tint = if (tile.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
-    ZoneSurface(shape = ShapeDefaults.ExtraLarge, modifier = Modifier.weight(1f).fillMaxRowHeight().heightIn(min = 100.dp), onClick = {
+    ZoneSurface(shape = ShapeDefaults.ExtraLarge, modifier = modifier.heightIn(min = 100.dp), onClick = {
         haptics.tick()
-        onClick()
+        tile.onClick()
     }) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 16.dp)
         ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(26.dp))
+            Icon(tile.icon, contentDescription = null, tint = tint, modifier = Modifier.size(26.dp))
             Spacer(Modifier.height(8.dp))
-            Text(
-                label,
-                style = MaterialTheme.typography.titleSmall,
-                color = if (danger) MaterialTheme.colorScheme.error else LocalContentColor.current,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                maxLines = 2
+            // Words wrap between words; a single word still too wide shrinks last.
+            TileLabel(
+                tile.label,
+                MaterialTheme.typography.titleSmall,
+                if (tile.danger) MaterialTheme.colorScheme.error else LocalContentColor.current
             )
             // Said under the action when it is not available here (a group by SMS has no server for it).
-            if (hint != null) Text(hint, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 1)
+            if (tile.hint != null) Text(tile.hint, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
     }
 }

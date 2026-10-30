@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -37,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,9 +56,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
 
 // Settings as tiles, the one look of every app (SMS's, 2026-10-28; Dialer's iconTint). Each app lists its
 // SettingsSection values, its tiles, and puts them in FloatingFrame with SettingsListDetail on a wide window
@@ -258,17 +263,38 @@ fun SettingsSectionTitle(title: String) {
 
 /**
  * The tiles of a section, in equal cells, 2 columns on a phone upright, 3 then 4 as the
- * room grows (a cell is at least 160 dp). The cells of Android's Quick Settings: AOSP SystemUI's TileLayout
- * (equal cells, the column count from the window's size class),
+ * room grows (a cell is at least 160 dp, and at least the widest word of the names plus the tile's
+ * padding, measured at the current font scale and language, so a 200 % font or a long German word
+ * makes fewer columns, down to one, instead of a cut name). The cells of Android's Quick Settings: AOSP
+ * SystemUI's TileLayout (equal cells, the column count from the window's size class),
  * https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/packages/SystemUI/src/com/android/systemui/qs/TileLayout.java
+ * The word is measured with TextMeasurer
+ * (https://developer.android.com/develop/ui/compose/text/measure-text-layout).
  * A last row that is not full is centred, so no side is left empty.
  */
 @Composable
 fun SettingsTileGrid(tiles: List<SettingsTile>, onExplain: (SettingsTile) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        val columns = (maxWidth / 160.dp).toInt().coerceIn(2, 4)
+        val style = MaterialTheme.typography.labelLarge
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val wordPx = remember(tiles.map { it.name }, style, density) {
+            tiles.maxOfOrNull { tile ->
+                tile.name.split(' ').filter { it.isNotEmpty() }
+                    .maxOfOrNull { measurer.measure(it, style, softWrap = false, maxLines = 1).size.width } ?: 0
+            } ?: 0
+        }
+        // The tile's own padding is 12 dp each side.
+        val wordNeed = with(density) { wordPx.toDp() } + 24.dp
+        val cellMin = maxOf(160.dp, wordNeed)
+        val fit = (maxWidth / cellMin).toInt()
+        // Two columns whenever the widest word fits in half the width, as before; fewer only when it does not.
+        val columns = (if (fit < 2 && (maxWidth - 12.dp) / 2 >= wordNeed) 2 else fit).coerceIn(1, 4)
         // The cell is a column's share of the width, whatever the row holds.
         val cell = (maxWidth - 12.dp * (columns - 1)) / columns
+        // One size for the names of the whole section, from the cell's text width (the tile's padding is 12 dp
+        // each side): rememberGroupLabelSize, the ladder of TextAutoSize.StepBased asked of the section at once.
+        val nameSize = rememberGroupLabelSize(tiles.map { it.name }, style, cell - 24.dp)
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             tiles.chunked(columns).forEach { row ->
                 // The tiles of a row are as tall as the tallest (a value on two lines).
@@ -279,8 +305,8 @@ fun SettingsTileGrid(tiles: List<SettingsTile>, onExplain: (SettingsTile) -> Uni
                     row.forEach { tile ->
                         val tileModifier = Modifier.width(cell).fillMaxHeight()
                         when (tile) {
-                            is SettingsSwitchTile -> SwitchTileView(tile, tileModifier) { onExplain(tile) }
-                            is SettingsActionTile -> ActionTileView(tile, tileModifier) { onExplain(tile) }
+                            is SettingsSwitchTile -> SwitchTileView(tile, nameSize, tileModifier) { onExplain(tile) }
+                            is SettingsActionTile -> ActionTileView(tile, nameSize, tileModifier) { onExplain(tile) }
                         }
                     }
                 }
@@ -298,11 +324,12 @@ fun SettingsTileGrid(tiles: List<SettingsTile>, onExplain: (SettingsTile) -> Uni
  * inner area, as Modules' glass note asks; TalkBack gets a switch with its full name and its state.
  */
 @Composable
-private fun SwitchTileView(tile: SettingsSwitchTile, modifier: Modifier = Modifier, onExplain: () -> Unit) {
+private fun SwitchTileView(tile: SettingsSwitchTile, nameSize: TextUnit, modifier: Modifier = Modifier, onExplain: () -> Unit) {
     val haptics = rememberHaptics()
     val on = tile.checked
     val state = if (on) "On" else "Off"
     TileFace(
+        nameSize = nameSize,
         icon = tile.icon,
         name = tile.name,
         state = state,
@@ -335,9 +362,10 @@ private fun SwitchTileView(tile: SettingsSwitchTile, modifier: Modifier = Modifi
  * name and the value as its state.
  */
 @Composable
-private fun ActionTileView(tile: SettingsActionTile, modifier: Modifier = Modifier, onExplain: () -> Unit) {
+private fun ActionTileView(tile: SettingsActionTile, nameSize: TextUnit, modifier: Modifier = Modifier, onExplain: () -> Unit) {
     val haptics = rememberHaptics()
     TileFace(
+        nameSize = nameSize,
         icon = tile.icon,
         iconTint = tile.iconTint,
         name = tile.name,
@@ -380,6 +408,7 @@ private fun TileFace(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     semantics: SemanticsPropertyReceiver.() -> Unit,
+    nameSize: TextUnit,
     iconTint: Color? = null
 ) {
     // SystemUI's own sizes (res/values/dimens.xml: qs_tile_height 80dp, qs_corner_radius 28dp): a tile is
@@ -409,12 +438,13 @@ private fun TileFace(
                 modifier = Modifier.size(24.dp),
                 tint = iconTint ?: if (on) LocalContentColor.current else quiet
             )
-            Text(
+            // The name wraps between words, whatever the language or font, at the one size the section's
+            // tiles share ([nameSize], rememberGroupLabelSize: the ladder of TextAutoSize.StepBased,
+            // https://developer.android.com/develop/ui/compose/text/autosize, asked of the whole section).
+            val nameStyle = MaterialTheme.typography.labelLarge
+            BasicText(
                 name,
-                style = MaterialTheme.typography.labelLarge,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+                style = nameStyle.copy(color = LocalContentColor.current, textAlign = TextAlign.Center, fontSize = nameSize),
                 modifier = Modifier.padding(top = 6.dp)
             )
             Text(

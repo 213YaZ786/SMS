@@ -18,6 +18,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -295,8 +296,10 @@ private fun PinnedFaceItem(c: Conversation, face: PinnedFace, selected: Boolean?
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .offset(x = 4.dp, y = (-2).dp)
-                        .size(20.dp)
+                        // A round of 20 dp that grows with its text into a pill: a minimum, never a size.
+                        .defaultMinSize(20.dp, 20.dp)
                         .background(MaterialTheme.colorScheme.primary, CircleShape)
+                        .padding(horizontal = 5.dp)
                 ) {
                     Text(
                         if (c.unread > 9) "9+" else c.unread.toString(),
