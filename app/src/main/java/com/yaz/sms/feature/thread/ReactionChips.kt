@@ -28,31 +28,35 @@ import com.yaz.sms.ui.component.FloatingPane
  * between items and rows, from the message's side) and MessagesReactionButton.kt (ReactionContent: the emoji at
  * 15 sp over a 20 sp line, the count after a 4 dp gap only above one, the count's colour stronger when the user's
  * own; the chip's 10 dp by 4 dp padding; clearAndSetSemantics for the spoken form; highlighted = the user reacted).
+ * The tap is MessagesReactionButton's onClick (a tap toggles the user's own reaction with that emoji, the timeline's
+ * onReactionClick); its long press (who reacted) is not ported, the long press stays free. Without [onToggle] (the
+ * conversation list's preview, inside a card that takes the tap) the chip lets the tap through to the card.
  * Not ported: its custom expand / "show more" layout (TimelineItemReactionsLayout), reactions here are few.
  * The chip is drawn in this app's glass (FloatingPane), accent when highlighted, in place of Element X's filled surface.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ReactionChips(groups: List<ReactionGroups.Group>, mine: Boolean, modifier: Modifier = Modifier) {
+fun ReactionChips(groups: List<ReactionGroups.Group>, mine: Boolean, modifier: Modifier = Modifier, onToggle: ((String) -> Unit)? = null) {
     if (groups.isEmpty()) return
     FlowRow(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(4.dp, if (mine) Alignment.End else Alignment.Start),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        groups.forEach { group -> ReactionChip(group) }
+        groups.forEach { group -> ReactionChip(group, onToggle) }
     }
 }
 
 @Composable
-private fun ReactionChip(group: ReactionGroups.Group) {
+private fun ReactionChip(group: ReactionGroups.Group, onToggle: ((String) -> Unit)?) {
     val spoken = buildString {
         append(group.displayKey)
         if (group.count > 1) append(", ").append(group.count)
         if (group.isHighlighted) append(", yours")
     }
-    FloatingPane(shape = CircleShape, accent = group.isHighlighted, modifier = Modifier.clearAndSetSemantics { contentDescription = spoken }) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
+    FloatingPane(shape = CircleShape, accent = group.isHighlighted, onClick = onToggle?.let { toggle -> { toggle(group.key) } }) {
+        // The spoken form sits on the content, so the pane's own click (a tap, for TalkBack too) is kept.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clearAndSetSemantics { contentDescription = spoken }.padding(horizontal = 10.dp, vertical = 4.dp)) {
             Text(group.displayKey, style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 20.sp))
             if (group.count > 1) {
                 Spacer(Modifier.width(4.dp))

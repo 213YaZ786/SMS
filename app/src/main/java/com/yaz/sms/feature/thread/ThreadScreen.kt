@@ -857,15 +857,14 @@ private fun ThreadContent(
             }
             // A group the user left can be read, not written to (Delta Chat's chat that can no longer send).
             // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
-            if (left) FloatingPane(shape = ShapeDefaults.ExtraLarge, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-                Text(
-                    "You left this group",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 15.dp)
-                )
-            } else Composer(
+            // It does nothing, so no zone: plain text, centred (the software rules' "a zone means a tap").
+            if (left) Text(
+                "You left this group",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 30.dp, vertical = 23.dp)
+            ) else Composer(
                 initial = draft,
                 mentionNames = remember(localNames) { localNames.keys.toList() },
                 quote = quote,
@@ -1117,8 +1116,8 @@ private fun UnreadDivider(count: Int) {
  * https://github.com/signalapp/Signal-Android app/src/main/java/org/thoughtcrime/securesms/conversation/v2/ConversationFragment.kt
  * (the text bound to the topmost visible message at each scroll, shown while the scroll state is not idle, hidden
  * a moment after it is idle again: SCROLL_HEADER_CLOSE_DELAY, here 1.5 s; the same text as the in-flow date headers
- * of ConversationItemDecorations). The in-flow days of this app are plain text, so this is plain text on a soft
- * background; it takes no touch.
+ * of ConversationItemDecorations). The in-flow days of this app are plain text, so this is plain text with a soft
+ * shadow, no zone; it takes no touch.
  */
 @Composable
 private fun FloatingDay(label: String, visible: Boolean, modifier: Modifier = Modifier) {
@@ -1130,11 +1129,17 @@ private fun FloatingDay(label: String, visible: Boolean, modifier: Modifier = Mo
     ) {
         Text(
             label,
-            style = MaterialTheme.typography.labelMedium,
+            // Plain text, no zone (it does nothing): a soft shadow keeps it readable over the bubbles
+            // https://developer.android.com/develop/ui/compose/text/style-text#add-shadow
+            style = MaterialTheme.typography.labelMedium.copy(
+                shadow = androidx.compose.ui.graphics.Shadow(
+                    color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.35f),
+                    offset = androidx.compose.ui.geometry.Offset(0f, 2f),
+                    blurRadius = 6f
+                )
+            ),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f), CircleShape)
-                .padding(horizontal = 14.dp, vertical = 6.dp)
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
         )
     }
 }
@@ -1801,7 +1806,10 @@ private fun Bubble(
         val chatKeys = rich?.reactions.orEmpty().filter { poll == null || com.yaz.sms.core.sms.Polls.choiceOf(it) < 0 }
         val reactionGroups = com.yaz.sms.core.sms.ReactionGroups.ofCounts(chatKeys, rich?.counts.orEmpty(), rich?.myReactions.orEmpty()) +
             com.yaz.sms.core.sms.ReactionGroups.ofList(smsReactions, smsMine)
-        ReactionChips(reactionGroups, mine, Modifier.padding(top = 2.dp))
+        ReactionChips(reactionGroups, mine, Modifier.padding(top = 2.dp), onToggle = { emoji ->
+            haptics.tick()
+            react(emoji)
+        })
         // Pinned for both sides, or changed after it was sent.
         if (rich?.pinned == true || rich?.edited == true) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp, start = 8.dp, end = 8.dp)) {

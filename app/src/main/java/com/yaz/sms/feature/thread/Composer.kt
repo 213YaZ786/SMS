@@ -247,13 +247,13 @@ fun Composer(
         // Shown once the message is more than one SMS, or nearly so.
         length?.let { (parts, _, left) ->
             if (parts > 1 || left < 20) {
-                FloatingPane(shape = CircleShape) {
-                    Text(
-                        if (parts > 1) "$parts SMS, $left left" else "$left left",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
-                }
+                // It does nothing, so no zone: plain text on the page.
+                Text(
+                    if (parts > 1) "$parts SMS, $left left" else "$left left",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
             }
         }
         // The message being answered or changed, until sent or let go.

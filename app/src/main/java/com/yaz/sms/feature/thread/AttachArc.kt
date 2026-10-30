@@ -128,8 +128,8 @@ private fun Tile(drop: Drop, order: Int, onClick: () -> Unit) {
                 Icon(drop.icon, contentDescription = drop.label, tint = MaterialTheme.colorScheme.primary)
             }
         }
-        // The name on a small pane of its own, readable over any message.
-        FloatingPane(shape = CircleShape, modifier = Modifier.padding(top = 4.dp)) {
+        // The name on a small pane of its own, readable over any message; a pane is a tap, so it does what its icon does.
+        FloatingPane(shape = CircleShape, onClick = onClick, modifier = Modifier.padding(top = 4.dp)) {
             Text(drop.label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
         }
     }
