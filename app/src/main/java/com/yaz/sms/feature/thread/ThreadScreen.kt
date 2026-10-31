@@ -4,6 +4,7 @@ import com.yaz.sms.ui.glass.glassZone
 
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.CornerRadius
@@ -525,12 +526,21 @@ private fun ThreadContent(
     // 1.5 s after it stops; never at rest at the newest message.
     val listMoving = listState.isScrollInProgress
     val awayFromNewest by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 } }
+    // Telegram's updateMessagesVisiblePart
+    // (https://github.com/DrKLO/Telegram/blob/master/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java):
+    // the floating date reads the topmost cell below clipTop, the line under the header where it sits (a view whose
+    // bottom <= clipTop is skipped). The list is in reverse: an item's offset counts from the bottom of the content,
+    // so its top in the list's own coordinates is viewportEndOffset - offset - size (LazyListLayoutInfo,
+    // androidx LazyListMeasure.kt / LazyListMeasuredItem.kt: placed at mainAxisLayoutSize - offset - size), and
+    // clipTop is afterContentPadding, the list's top padding (padding top + 8 dp).
     val dayOnTop by remember(rows, scheduled, waiting, people) {
         derivedStateOf {
             val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
             val zone = ZoneId.systemDefault()
             var label = ""
-            for (item in listState.layoutInfo.visibleItemsInfo.asReversed()) {
+            val info = listState.layoutInfo
+            for (item in info.visibleItemsInfo.asReversed()) {
+                if (info.viewportEndOffset - item.offset <= info.afterContentPadding) continue
                 val row = rows.getOrNull(rows.size - 1 - (item.index - before)) ?: continue
                 label = when (row) {
                     is Row.Day -> row.label
@@ -547,6 +557,34 @@ private fun ThreadContent(
         else {
             delay(1500)
             dayShown = false
+        }
+    }
+    // The floating day is on screen, its exit included: the in-flow heading it replaces stays hidden until it is gone,
+    // so the same word is never drawn twice. Read in the rows' layer block only, never in composition.
+    var dayHeld by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { dayShown && awayFromNewest }.collectLatest { floats ->
+            if (floats) dayHeld = true
+            else {
+                delay(400)
+                dayHeld = false
+            }
+        }
+    }
+    // Telegram's minDateChild (updateMessagesVisiblePart, ChatActivity.java): among the day headings whose bottom is
+    // below clipTop, the topmost (smallest bottom). Its top, in the list's coordinates, drives the hiding of the
+    // heading and the push of the floating day; read from layer blocks only (no recomposition per frame).
+    val dayLine by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            var line: DayLine? = null
+            // Ascending index runs from the bottom up: the last heading kept is the topmost.
+            for (item in info.visibleItemsInfo) {
+                val top = info.viewportEndOffset - item.offset - item.size
+                if (top + item.size <= info.afterContentPadding) continue
+                if ((item.key as? String)?.startsWith("day/") == true) line = DayLine(item.key, top)
+            }
+            line
         }
     }
     // A message added at the bottom while reading there comes into sight, not under the field. Several
@@ -975,7 +1013,24 @@ private fun ThreadContent(
                         row.label,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp),
+                        modifier = Modifier
+                            // Telegram's updateMessagesVisiblePart (ChatActivity.java): a date cell whose bottom is above
+                            // clipTop is alpha 0, under the header; the topmost one below it, once its top reaches clipTop,
+                            // is alpha 0 too while the floating date stands in its place; else alpha 1. Read in the
+                            // layer block, so a scroll frame redraws these few rows and recomposes nothing.
+                            .graphicsLayer {
+                                val info = listState.layoutInfo
+                                val item = info.visibleItemsInfo.firstOrNull { it.key == row.key }
+                                alpha = if (item == null) 1f else {
+                                    val top = info.viewportEndOffset - item.offset - item.size
+                                    when {
+                                        top + item.size <= info.afterContentPadding -> 0f
+                                        dayHeld && dayLine?.key == row.key && top <= info.afterContentPadding -> 0f
+                                        else -> 1f
+                                    }
+                                }
+                            }
+                            .fillMaxWidth().padding(top = 14.dp, bottom = 4.dp),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                     // A message deleted, here or for everyone, fades away as the others close up.
@@ -1083,7 +1138,21 @@ private fun ThreadContent(
         }
         // The day floating under the header (and under the search bar) while the list moves.
         Box(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding() + 8.dp), contentAlignment = Alignment.TopCenter) {
-            FloatingDay(dayOnTop, dayShown && awayFromNewest)
+            FloatingDay(
+                label = { dayOnTop },
+                visible = { dayShown && awayFromNewest },
+                // Telegram's floatingDateViewOffset (updateMessagesVisiblePart, ChatActivity.java): the next heading
+                // pushes the floating date up. Telegram's offset = minDateChild.getY() + its height - clipTop is
+                // taken in (h, 2h) with h the floating date's height, its cells being as tall as it is; ours are
+                // taller, so the heading's top stands for it: offset = top + h - clipTop, translation = offset - 2h,
+                // zero once the heading's top is a full h below clipTop and when it has reached clipTop.
+                modifier = Modifier.graphicsLayer {
+                    val line = dayLine
+                    val gap = if (line == null) 0 else line.top - listState.layoutInfo.afterContentPadding
+                    val h = size.height
+                    translationY = if (line != null && gap > 0 && gap < h) (gap - h).toFloat() else 0f
+                }
+            )
         }
     }
 }
@@ -1122,9 +1191,9 @@ private fun UnreadDivider(count: Int) {
  * shadow, no zone; it takes no touch.
  */
 @Composable
-private fun FloatingDay(label: String, visible: Boolean, modifier: Modifier = Modifier) {
+private fun FloatingDay(label: () -> String, visible: () -> Boolean, modifier: Modifier = Modifier) {
     androidx.compose.animation.AnimatedVisibility(
-        visible = visible && label.isNotEmpty(),
+        visible = visible() && label().isNotEmpty(),
         enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
         exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 },
         modifier = modifier
@@ -1134,10 +1203,17 @@ private fun FloatingDay(label: String, visible: Boolean, modifier: Modifier = Mo
         // https://developer.android.com/develop/ui/compose/text/style-text#add-shadow)
         val halo = MaterialTheme.typography.labelMedium.copy(shadow = haloShadow())
         HaloStack(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) { m ->
-            Text(label, m, style = halo, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(label(), m, style = halo, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
+
+/**
+ * The topmost day heading below the floating day's line: its key and its top in the list's coordinates. Telegram's
+ * minDateChild and its getY() (https://github.com/DrKLO/Telegram/blob/master/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java,
+ * updateMessagesVisiblePart).
+ */
+private data class DayLine(val key: Any, val top: Int)
 
 /** A line of the conversation: a day's heading or a message. */
 private sealed class Row(val key: String) {
