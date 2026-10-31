@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,24 +34,26 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.yaz.sms.ui.component.AUTOMATED_RESULT_THRESHOLD_MILLIS
 import com.yaz.sms.ui.component.BoldButton
-import com.yaz.sms.ui.component.ZoneSurface
 
 /** What SMS needs before it can take messages, in the order it is asked. */
-internal enum class SetupStep(val title: String, val message: String, val action: String) {
+internal enum class SetupStep(val title: String, val message: String, val action: String, val refuse: String) {
     ROLE(
         "Make SMS your messaging app",
         "To send and receive your messages with it.",
-        "Choose SMS"
+        "Choose SMS",
+        "Not now"
     ),
     NOTIFICATIONS(
         "Allow notifications",
         "To see new messages and answer them.",
-        "Allow"
+        "Allow",
+        "Don't allow"
     ),
     BUBBLES(
         "New messages in bubbles",
         "A conversation floats over any app as a bubble, to answer without leaving what you do. Android asks you to allow it once.",
-        "Allow bubbles"
+        "Allow bubbles",
+        "Not now"
     )
 }
 
@@ -75,6 +76,10 @@ internal class Setup(
     val roleBlocked: Boolean,
     /** Notifications were asked and refused. */
     val notificationsRefused: Boolean,
+    /** The step the card on the main screen shows: [step] without the ones the user refused. */
+    val cardStep: SetupStep? = step,
+    /** "Not now" or "Don't allow" on a step: remembered for good, the card moves on at once. */
+    val refuse: (SetupStep) -> Unit = {},
 ) {
     /** The label of [step]'s button: Android's page once it no longer asks. */
     fun action(step: SetupStep): String = when {
@@ -124,8 +129,14 @@ internal fun rememberSetup(): Setup {
         }
         checks++
     }
-    val step = remember(checks) { nextStep(context) }
-    return Setup(step, run = { wanted ->
+    // Read here so that every card on screen follows a refusal made on another at once.
+    val refusals = refusalCount.intValue
+    val step = remember(checks) { nextStep(context, skipRefused = false) }
+    val cardStep = remember(checks, refusals) { nextStep(context, skipRefused = true) }
+    return Setup(step, cardStep = cardStep, refuse = { refusedStep ->
+        refuse(context, refusedStep)
+        checks++
+    }, run = { wanted ->
         when (wanted) {
             SetupStep.ROLE -> if (roleBlocked) openDefaultApps(context) else askRole(true)
             SetupStep.NOTIFICATIONS ->
@@ -146,62 +157,70 @@ internal fun rememberSetup(): Setup {
     }, askRole = { askRole(false) }, roleBlocked = roleBlocked, notificationsRefused = refused)
 }
 
-/** The step a "Not now" sets aside for good (only an optional one). */
-internal fun skip(context: Context, step: SetupStep) {
-    if (step == SetupStep.BUBBLES) context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).edit().putBoolean(BUBBLES_ASKED, true).apply()
+/** Steps refused so far: read by every card on screen, so that all follow a refusal at once. */
+private val refusalCount = mutableIntStateOf(0)
+
+/**
+ * The step a refusing button sets aside for good, one key per step. Element X's "Not now" on its notification
+ * opt-in, NotNowClicked, stores the refusal so the opt-in never shows again (element-hq/element-x-android, AGPL-3.0,
+ * https://github.com/element-hq/element-x-android/blob/develop/features/ftue/impl/src/main/kotlin/io/element/android/features/ftue/impl/notifications/NotificationsOptInPresenter.kt);
+ * stored as SharedPreferences.Editor.putBoolean, as this file did for the bubbles step.
+ */
+private fun refuse(context: Context, step: SetupStep) {
+    val edit = context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).edit().putBoolean(REFUSED + step.name, true)
+    // The bubbles step keeps its own key, which the first launch page reads too.
+    if (step == SetupStep.BUBBLES) edit.putBoolean(BUBBLES_ASKED, true)
+    edit.apply()
+    refusalCount.intValue++
 }
+
+private fun refused(context: Context, step: SetupStep): Boolean =
+    context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).getBoolean(REFUSED + step.name, false)
 
 /**
  * The step still missing, shown on the main screen until SMS can take
  * messages: when the first launch page was skipped, or something was turned
- * off in Android since.
+ * off in Android since. Laid straight on the page (a zone means a tap), with a button to refuse the step: Element X's
+ * opt-in view lays its text and its "Not now" and confirm buttons the same way (NotificationsOptInView.kt, same repo).
  */
 @Composable
 fun SetupZone(modifier: Modifier = Modifier) {
     val setup = rememberSetup()
-    val context = LocalContext.current
-    var dismissed by remember { mutableStateOf(false) }
-    val step = setup.step ?: return
-    if (dismissed && step == SetupStep.BUBBLES) return
+    val step = setup.cardStep ?: return
 
-    ZoneSurface(
-        // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
-        shape = ShapeDefaults.ExtraLarge,
-        modifier = modifier.widthIn(max = 520.dp).fillMaxWidth().padding(horizontal = 16.dp)
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = modifier.widthIn(max = 520.dp).fillMaxWidth().padding(horizontal = 16.dp).padding(horizontal = 24.dp, vertical = 22.dp)
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 22.dp)
-        ) {
-            Text(step.title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-            Text(
-                step.message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            setup.warning(step)?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
-            }
-            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (step == SetupStep.BUBBLES) {
-                    BoldButton(filled = false, onClick = { skip(context, step); dismissed = true }) { Text("Not now") }
-                }
-                BoldButton(filled = true, onClick = { setup.run(step) }) { Text(setup.action(step)) }
-            }
+        // Every title in the accent (the user, 2026-10-31), as Modules' SettingsSectionTitle.
+        Text(step.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
+        Text(
+            step.message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        setup.warning(step)?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+        }
+        Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BoldButton(filled = false, onClick = { setup.refuse(step) }) { Text(step.refuse) }
+            BoldButton(filled = true, onClick = { setup.run(step) }) { Text(setup.action(step)) }
         }
     }
 }
 
-private fun nextStep(context: Context): SetupStep? {
+private fun nextStep(context: Context, skipRefused: Boolean): SetupStep? {
+    fun open(step: SetupStep) = !(skipRefused && refused(context, step))
     val roles = context.getSystemService(RoleManager::class.java)
-    if (roles.isRoleAvailable(RoleManager.ROLE_SMS) && !roles.isRoleHeld(RoleManager.ROLE_SMS)) return SetupStep.ROLE
+    if (roles.isRoleAvailable(RoleManager.ROLE_SMS) && !roles.isRoleHeld(RoleManager.ROLE_SMS) && open(SetupStep.ROLE)) return SetupStep.ROLE
     val notifications = context.getSystemService(NotificationManager::class.java)
-    if (!notifications.areNotificationsEnabled()) return SetupStep.NOTIFICATIONS
+    if (!notifications.areNotificationsEnabled() && open(SetupStep.NOTIFICATIONS)) return SetupStep.NOTIFICATIONS
     // Android lets an app's messages bubble only once the user allows it.
     if (notifications.bubblePreference != NotificationManager.BUBBLE_PREFERENCE_ALL &&
-        !context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).getBoolean(BUBBLES_ASKED, false)
+        !context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).getBoolean(BUBBLES_ASKED, false) &&
+        open(SetupStep.BUBBLES)
     ) return SetupStep.BUBBLES
     return null
 }
@@ -209,6 +228,7 @@ private fun nextStep(context: Context): SetupStep? {
 private const val SETUP = "setup"
 private const val BUBBLES_ASKED = "bubbles_asked"
 private const val NOTIFICATIONS_REFUSED = "notifications_refused"
+private const val REFUSED = "refused_"
 
 /**
  * Android's default apps page, where the messaging app is chosen when the role is no longer asked: Settings'

@@ -21,7 +21,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,7 +41,6 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.yaz.sms.core.update.Updates
 import com.yaz.sms.ui.component.BoldButton
 import com.yaz.sms.ui.component.LoadingMark
-import com.yaz.sms.ui.component.ZoneSurface
 import com.yaz.sms.ui.icon.AppIcons
 
 /**
@@ -85,7 +83,8 @@ fun WelcomeScreen(onStart: () -> Unit) {
         // The app's own mark, large and ringing, as on the other apps' first page.
         LoadingMark(size = 160.dp)
         Spacer(Modifier.height(20.dp))
-        Text("Welcome to SMS", style = MaterialTheme.typography.displaySmall, textAlign = TextAlign.Center)
+        // Every title in the accent (the user, 2026-10-31), as Modules' SettingsSectionTitle.
+        Text("Welcome to SMS", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         Text(
             "A messaging app with no account, no tracking and no ads.",
@@ -201,52 +200,33 @@ private fun WelcomeZone(
     warning: String? = null
 ) {
     val haptics = com.yaz.sms.ui.component.rememberHaptics()
-    // A zone means a tap (the user, 2026-10-28): with nothing to tap, no action and no switch, it is plain text on
-    // the page, icon, title and message.
-    if ((done || action == null) && toggle == null && extra == null && warning == null) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(horizontal = 22.dp, vertical = 8.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (done) AppIcons.CheckCircle else icon,
-                    contentDescription = if (done) "Done" else null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 12.dp).weight(1f))
+    // A zone means a tap (the user, 2026-10-28): the text and its buttons or switch lie straight on the page, as
+    // Element X's NotificationsOptInView lays its text and buttons (element-hq/element-x-android, AGPL-3.0:
+    // https://github.com/element-hq/element-x-android/blob/develop/features/ftue/impl/src/main/kotlin/io/element/android/features/ftue/impl/notifications/NotificationsOptInView.kt).
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(horizontal = 22.dp, vertical = 8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                if (done && toggle != false) AppIcons.CheckCircle else icon,
+                contentDescription = if (done) "Done" else null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 12.dp).weight(1f))
+            toggle?.let { on ->
+                com.yaz.sms.ui.component.GlassSwitch(checked = on, onCheckedChange = {
+                    haptics.tick()
+                    onToggle(it)
+                })
             }
-            Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        return
-    }
-    // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
-    ZoneSurface(shape = ShapeDefaults.ExtraLarge, modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth()) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (done && toggle != false) AppIcons.CheckCircle else icon,
-                    contentDescription = if (done) "Done" else null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 12.dp).weight(1f))
-                toggle?.let { on ->
-                    com.yaz.sms.ui.component.GlassSwitch(checked = on, onCheckedChange = {
-                        haptics.tick()
-                        onToggle(it)
-                    })
-                }
-            }
-            Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            extra?.invoke()
-            warning?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
-            if (!done && action != null) {
-                Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End) {
-                    BoldButton(onClick = onAction) { Text(action) }
-                }
+        Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        extra?.invoke()
+        warning?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
+        if (!done && action != null) {
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End) {
+                BoldButton(onClick = onAction) { Text(action) }
             }
         }
     }
