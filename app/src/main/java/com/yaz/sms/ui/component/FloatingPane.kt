@@ -36,11 +36,19 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.LayoutDirection
 import kotlin.math.roundToInt
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.semantics.heading
@@ -114,7 +122,7 @@ fun FloatingPane(
  * The screen's name does nothing, so it has no pane: plain text on the page,
  * centred between the two actions (the user, 2026-10-28: "text must be
  * centered"; iOS 26's inline title, centred without a background). What
- * scrolls under it shows through, see [FloatingFrame]. A [center] slot
+ * scrolls under it fades out first, see [FloatingFrame]. A [center] slot
  * (clickable pills) is centred the same way.
  */
 @Composable
@@ -204,12 +212,11 @@ fun FloatingAction(icon: ImageVector, label: String, onClick: () -> Unit, tint: 
  * over it in glass: the content is recorded so the panes bend it. [content]
  * gets the padding that keeps its first and last lines clear of the panes
  * and of the bottom by [bottom] when scrolled to either end. [overlay]
- * floats over the content too, bending it. The content is drawn whole up to the
- * window's top edge and scrolls under the header, which bends it; only [content]'s
- * padding offsets its first line, as Material 3's Scaffold gives its content the top
- * bar's height
- * (https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Scaffold.kt);
- * never a mask or clip over it (the user, 2026-10-31: no dead zone at the top).
+ * floats over the content too, bending it. What the content has scrolled under
+ * the header (the status bar and [top]) fades to transparent, as iOS 26's soft
+ * scroll edge, so text never runs under the title: nothing fades at rest, the
+ * fade grows with the scroll over the header's height (ScrollView's fading edge
+ * strength); the glass panes still bend it whole.
  * Every list inside bounces at its ends, see [ProvideBounce].
  *
  * With a [largeTitle] (off by default) the header gains a large centred title under the
@@ -227,7 +234,9 @@ fun FloatingAction(icon: ImageVector, label: String, onClick: () -> Unit, tint: 
  * done the Compose way: Modifier.scrollable on the header drives the content's own ScrollableState
  * (https://github.com/androidx/androidx/blob/androidx-main/compose/foundation/foundation/src/commonMain/kotlin/androidx/compose/foundation/gestures/Scrollable.kt).
  * [reverseLayout] is the content list's own (a thread laid out from the bottom), so a drag goes the same way
- * as on the list (ScrollableDefaults.reverseDirection). Floating pieces over the content (the [overlay], a
+ * as on the list (ScrollableDefaults.reverseDirection). [softEdge] off draws the content whole under the header,
+ * for a list that must show every line up to the window's top (SMS's conversation), as
+ * View.setVerticalFadingEdgeEnabled(false) (https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/view/View.java). Floating pieces over the content (the [overlay], a
  * [FloatingDock] inside it) take the same drag from [LocalFrameScroll]. Without [scroll] nothing changes.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -239,6 +248,7 @@ fun FloatingFrame(
     largeTitle: LargeTitle? = null,
     scroll: ScrollableState? = null,
     reverseLayout: Boolean = false,
+    softEdge: Boolean = true,
     content: @Composable (PaddingValues) -> Unit
 ) {
     val density = LocalDensity.current
@@ -250,6 +260,26 @@ fun FloatingFrame(
     // The header now: the part above the large title, plus the large title as far as it is open.
     val headerNow: () -> Dp = {
         headerState.value + if (collapse == null) 0.dp else with(density) { collapse.heightPx().toDp() }
+    }
+    // How far the content has scrolled from its top, in px; read only when drawing.
+    val scrolled = remember { mutableFloatStateOf(0f) }
+    // Taken from Material 3's ExitUntilCollapsedScrollBehavior nestedScrollConnection (onPostScroll
+    // reading what the content consumed), keeping only the sum:
+    // https://android.googlesource.com/platform/frameworks/support/+/refs/heads/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/AppBar.kt
+    val scrolledConnection = remember(scrolled) {
+        object : NestedScrollConnection {
+            // consumed is what the content itself scrolled (a fling's frames arrive here too, as
+            // SideEffect scrolls): up is negative. This node sits inside the large title's, so
+            // its post scroll sees the content's consumption only, not the title's collapse.
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                scrolled.floatValue = (scrolled.floatValue - consumed.y).coerceAtLeast(0f)
+                return Offset.Zero
+            }
+        }
+    }
+    val edgeStrength: () -> Float = {
+        val fade = with(density) { headerNow().toPx() }
+        if (fade <= 0f) 0f else (scrolled.floatValue / fade).coerceIn(0f, 1f)
     }
     // A drag on the header or on a floating piece drives the content's own state, as a drag on the
     // content does (see the doc above). Scrollable.kt's ScrollableDefaults.reverseDirection and flingBehavior.
@@ -266,12 +296,15 @@ fun FloatingFrame(
         Modifier.fillMaxSize()
             // Material 3's exitUntilCollapsed: the scroll first collapses the large title, and opens
             // it again only once the content is back at its top. On the frame, not the content, so a
-            // drag on the header does it too.
+            // drag on the header does it too and drives the soft top edge below.
             .then(if (collapse != null) Modifier.nestedScroll(collapse.behavior.nestedScrollConnection) else Modifier)
+            .nestedScroll(scrolledConnection)
     ) {
         val frame = this
+        // The fade is outside glassSource: the backdrop records the content whole.
         Box(
             Modifier.fillMaxSize()
+                .then(if (softEdge && headerState.value > 0.dp) Modifier.softTopEdge(headerNow, edgeStrength) else Modifier)
                 .then(if (look != null) Modifier.glassSource(backdrop, look) else Modifier)
         ) {
             ProvideBounce {
@@ -433,6 +466,42 @@ private class HeaderPadding(private val top: () -> Dp, private val bottom: Dp) :
     override fun calculateLeftPadding(layoutDirection: LayoutDirection): Dp = 0.dp
     override fun calculateRightPadding(layoutDirection: LayoutDirection): Dp = 0.dp
 }
+
+/**
+ * What has scrolled under the first [height] of this element fades to nothing at the
+ * very top and is whole again at [height]: a gradient drawn with BlendMode.DstIn
+ * over an offscreen layer. Android's own recipe, FadedEdgeBox:
+ * https://github.com/android/snippets/blob/main/compose/snippets/src/main/java/com/example/compose/snippets/graphics/GraphicsModifiersSnippets.kt
+ * (region android_compose_graphics_faded_edge_example), with the gradient
+ * bounded to [height] instead of the whole element ([height] is read when drawing,
+ * so a header that collapses redraws without recomposing).
+ *
+ * The fade grows with the scroll as ScrollView.getTopFadingEdgeStrength does: 0 at rest, the
+ * scroll offset over the fade length while under it, then 1
+ * (https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/widget/ScrollView.java).
+ * [strength], 0 to 1, is read when drawing; at 0 nothing is erased, so a glow a page draws from
+ * its top (HeroGlow) stays whole at rest.
+ */
+private fun Modifier.softTopEdge(height: () -> Dp, strength: () -> Float): Modifier =
+    this
+        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+        .drawWithContent {
+            drawContent()
+            val s = strength()
+            if (s <= 0f) return@drawWithContent
+            // Fading under the whole title row, whole again over the last 16 dp of the header,
+            // where the first row of the content starts at rest.
+            val end = height().toPx()
+            drawRect(
+                brush = Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 1f - s),
+                    1f to Color.Black,
+                    startY = (end - 16.dp.toPx()).coerceAtLeast(0f),
+                    endY = end
+                ),
+                blendMode = BlendMode.DstIn
+            )
+        }
 
 /** The round actions at the top of a screen. */
 val TopActionSize = 48.dp

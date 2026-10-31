@@ -728,6 +728,8 @@ private fun ThreadContent(
         // The list is laid out from the bottom: a drag on the header scrolls it the way a drag on it does.
         scroll = listState,
         reverseLayout = true,
+        // The bubbles pass whole under the round buttons to the top of the screen (the user, 2026-10-31), as iOS's Messages.
+        softEdge = false,
         top = {
             // Back, the person's face and name, and the calls one tap away on the right.
           Column(horizontalAlignment = Alignment.CenterHorizontally) {
