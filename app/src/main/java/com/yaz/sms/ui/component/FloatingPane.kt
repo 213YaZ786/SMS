@@ -468,12 +468,12 @@ private class HeaderPadding(private val top: () -> Dp, private val bottom: Dp) :
 }
 
 /**
- * What has scrolled under the first [height] of this element fades to nothing at the
- * very top and is whole again at [height]: a gradient drawn with BlendMode.DstIn
+ * What has scrolled under the first [height] of this element stays faded down to [height] and is
+ * whole again 16 dp below it: a gradient drawn with BlendMode.DstIn
  * over an offscreen layer. Android's own recipe, FadedEdgeBox:
  * https://github.com/android/snippets/blob/main/compose/snippets/src/main/java/com/example/compose/snippets/graphics/GraphicsModifiersSnippets.kt
  * (region android_compose_graphics_faded_edge_example), with the gradient
- * bounded to [height] instead of the whole element ([height] is read when drawing,
+ * placed at [height] instead of spanning the whole element ([height] is read when drawing,
  * so a header that collapses redraws without recomposing).
  *
  * The fade grows with the scroll as ScrollView.getTopFadingEdgeStrength does: 0 at rest, the
@@ -489,15 +489,16 @@ private fun Modifier.softTopEdge(height: () -> Dp, strength: () -> Float): Modif
             drawContent()
             val s = strength()
             if (s <= 0f) return@drawWithContent
-            // Fading under the whole title row, whole again over the last 16 dp of the header,
-            // where the first row of the content starts at rest.
+            // Faded down to the header's bottom, so every round button is covered whole (the row
+            // has 8 dp of padding below them), whole again 16 dp below it (the user, 2026-10-31:
+            // it stopped halfway down the buttons).
             val end = height().toPx()
             drawRect(
                 brush = Brush.verticalGradient(
                     0f to Color.Black.copy(alpha = 1f - s),
                     1f to Color.Black,
-                    startY = (end - 16.dp.toPx()).coerceAtLeast(0f),
-                    endY = end
+                    startY = end,
+                    endY = end + 16.dp.toPx()
                 ),
                 blendMode = BlendMode.DstIn
             )
