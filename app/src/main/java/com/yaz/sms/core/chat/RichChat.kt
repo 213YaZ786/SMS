@@ -117,6 +117,15 @@ data class RichRef(
 )
 
 /**
+ * What a chat message answers (chatmail core's MessageQuote,
+ * https://github.com/chatmail/core/blob/main/deltachat-jsonrpc/src/api/types/message.rs): the quoted words, who
+ * wrote them when the engine says, and the quoted message's row ("sms/12", "mms/3") when the chat holds it.
+ */
+data class ChatQuote(val text: String, val author: String?, val uid: String?)
+
+private val NO_QUOTE = ChatQuote("", null, null)
+
+/**
  * The rich chat between SMS users, over chatmail: end-to-end encrypted,
  * read receipts, reactions, full quality pictures. Found by phone number:
  * an unseen data SMS carries the invite and a nonce, the nonce comes back
@@ -174,6 +183,30 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
     /** The chat's own id of a message of the store, when it went over the chat. */
     fun chatIdOf(mms: Boolean, id: Long): Int? = byRow[mms to id]
+
+    /** The quotes already read from the engine, by chat message id; [NO_QUOTE] for a message that quotes nothing. */
+    private val quotes = java.util.concurrent.ConcurrentHashMap<Int, ChatQuote>()
+
+    /**
+     * The message a chat message answers, read only: the engine's `quote` field of get_message
+     * (chatmail core, deltachat-jsonrpc/src/api/types/message.rs, MessageQuote: kind JustText { text } or
+     * WithMessage { text, messageId, authorDisplayName, ... }, https://github.com/chatmail/core/blob/main/deltachat-jsonrpc/src/api/types/message.rs).
+     * Null when it quotes nothing or the engine does not answer yet (asked again later). [ChatQuote.uid] is the
+     * quoted message's row in Android's store when the engine knows which message it was and the chat holds it.
+     */
+    suspend fun quoteOf(msgId: Int): ChatQuote? {
+        quotes[msgId]?.let { return it.takeIf { q -> q !== NO_QUOTE } }
+        val message = runCatching { engine.call("get_message", account, msgId).jsonObject }.getOrNull() ?: return null
+        val quote = message["quote"] as? JsonObject
+        val text = quote?.get("text")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        if (quote == null || text == null) {
+            quotes[msgId] = NO_QUOTE
+            return null
+        }
+        val uid = quote["messageId"]?.jsonPrimitive?.intOrNull?.let { _refs.value[it] }?.let { (if (it.mms) "mms/" else "sms/") + it.id }
+        val author = quote["overrideSenderName"]?.jsonPrimitive?.contentOrNull ?: quote["authorDisplayName"]?.jsonPrimitive?.contentOrNull
+        return ChatQuote(text, author?.takeIf { it.isNotBlank() }, uid).also { quotes[msgId] = it }
+    }
 
     /** How long messages last in each chat, in seconds, as last heard. */
     private val timers = java.util.concurrent.ConcurrentHashMap<Int, Int>()

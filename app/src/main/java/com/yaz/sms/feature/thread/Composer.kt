@@ -38,6 +38,7 @@ import androidx.compose.material3.ShapeDefaults
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
@@ -79,6 +80,8 @@ fun Composer(
     quote: String?,
     onClearQuote: () -> Unit,
     modifier: Modifier,
+    /** Who wrote the quoted message: null when the user did (shown as "you"). */
+    quoteFrom: String? = null,
     restore: String? = null,
     onRestored: () -> Unit = {},
     onSchedule: ((String, Int) -> Unit)? = null,
@@ -259,28 +262,53 @@ fun Composer(
         // The message being answered or changed, until sent or let go.
         androidx.compose.animation.AnimatedVisibility(visible = quote != null || editing != null) {
             var shown by remember { mutableStateOf("") }
-            (editing ?: quote)?.let { shown = it }
+            var shownFrom by remember { mutableStateOf<String?>(null) }
+            (editing ?: quote)?.let {
+                shown = it
+                shownFrom = if (editing != null) null else quoteFrom
+            }
+            val changing = editing != null
+            // Element X's ReplyToModeView: the sender's name, the words under it (two lines, one at a large font), and a
+            // close button that alone clears it; the pane itself does nothing (Signal's QuoteView in the input panel has its
+            // dismiss button the same way).
+            // https://github.com/element-hq/element-x-android/blob/develop/libraries/textcomposer/impl/src/main/kotlin/io/element/android/libraries/textcomposer/ComposerModeView.kt
+            // https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/components/QuoteView.java
             // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
-            FloatingPane(shape = ShapeDefaults.ExtraLarge, onClick = {
-                haptics.tick()
-                if (editing != null) {
-                    text = before
-                    onCancelEdit()
-                } else {
-                    onClearQuote()
-                }
-            }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    Icon(if (editing != null) AppIcons.Create else AppIcons.Reply, contentDescription = if (editing != null) "Editing" else null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                    Text(
-                        shown,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp)
-                    )
-                    Icon(AppIcons.Close, contentDescription = "Remove", modifier = Modifier.size(18.dp))
+            FloatingPane(shape = ShapeDefaults.ExtraLarge, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                val dense = androidx.compose.ui.platform.LocalDensity.current.let { it.density * it.fontScale >= 3.5f }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 14.dp, end = 4.dp)) {
+                    Icon(if (changing) AppIcons.Create else AppIcons.Reply, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    Column(Modifier.weight(1f).padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 8.dp)) {
+                        Text(
+                            if (changing) "Editing" else "Replying to ${shownFrom ?: "you"}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        Text(
+                            shown,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = if (dense) 1 else 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                    // A transparent round tap target of 48 dp inside the glass.
+                    Box(
+                        Modifier.size(48.dp).clip(CircleShape).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (changing) "Cancel editing" else "Cancel reply") {
+                            haptics.tick()
+                            if (changing) {
+                                text = before
+                                onCancelEdit()
+                            } else {
+                                onClearQuote()
+                            }
+                        },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(AppIcons.Close, contentDescription = if (changing) "Cancel editing" else "Cancel reply", modifier = Modifier.size(20.dp))
+                    }
                 }
             }
         }
@@ -340,9 +368,16 @@ fun Composer(
         }
         // The members offered while an @ is typed, as pills on the start side of the row that carries Send later's
         // clock at its end, over the bar (MentionLine).
+        val laterReady = onSchedule != null && editing == null && take == null && text.isNotBlank() && attachments.isEmpty()
+        // Send later: the clock's tap, and Send held (Signal's SendButton long press opens the scheduled send).
+        fun sendLater() {
+            val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+            onSchedule?.invoke(text, sub)
+            text = ""
+        }
         MentionLine(
             names = mentionMatches,
-            laterReady = onSchedule != null && editing == null && take == null && text.isNotBlank() && attachments.isEmpty(),
+            laterReady = laterReady,
             onMention = { who ->
                 val (t, c) = com.yaz.sms.core.chat.Mentions.insert(text, sel.end, who)
                 text = t
@@ -350,9 +385,7 @@ fun Composer(
             },
             onLater = {
                 haptics.tick()
-                val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
-                onSchedule?.invoke(text, sub)
-                text = ""
+                sendLater()
             },
             styles = styleButtons
         )
@@ -471,7 +504,11 @@ fun Composer(
                     }
                 }
               Box {
-                Box(Modifier.padding(start = 18.dp, end = if (text.isNotEmpty()) 44.dp else 18.dp, top = 15.dp, bottom = 15.dp)) {
+                // Signal's quick camera button beside the field, shown while nothing is written or waiting
+                // (conversation_input_panel.xml: quick_camera_toggle).
+                // https://github.com/signalapp/Signal-Android/blob/main/app/src/main/res/layout/conversation_input_panel.xml
+                val quickCamera = text.isEmpty() && attachments.isEmpty() && editing == null
+                Box(Modifier.padding(start = 18.dp, end = if (text.isNotEmpty() || quickCamera) 44.dp else 18.dp, top = 15.dp, bottom = 15.dp)) {
                     val hint = if (locating) "Finding where you are…" else if (lost) "Not found: is location on?" else if (attachments.isNotEmpty()) "Add a message, or send" else if (armed != null) "Your message, with its effect" else "Message"
                     if (text.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val faded = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
@@ -499,6 +536,17 @@ fun Composer(
                         // https://developer.android.com/develop/ui/compose/accessibility/key-steps (content descriptions).
                         modifier = Modifier.fillMaxWidth().widthIn(min = 40.dp).semantics { contentDescription = hint }
                     )
+                }
+                // The camera: what the + arc's Camera tile does.
+                if (quickCamera) Box(
+                    Modifier.align(Alignment.BottomEnd).padding(end = 6.dp, bottom = 6.dp).size(40.dp).clip(CircleShape).clickable(onClickLabel = "Camera") {
+                        haptics.tick()
+                        arcOpen = false
+                        pickDrop.value?.invoke(Drop.CAMERA)
+                    },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(AppIcons.PhotoCamera, contentDescription = "Camera", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 // Aa: the styles, shown or put away.
                 if (text.isNotEmpty()) Box(
@@ -602,13 +650,25 @@ fun Composer(
                         }
                     }
                 }
-            } else Modifier.pointerInput(text, attachments, canSend, editing, take) {
+            } else Modifier.pointerInput(text, attachments, canSend, editing, take, laterReady) {
                 detectTapGestures(
                     onTap = { send() },
-                    // Held: nothing, not even a send on letting go.
-                    onLongPress = { }
+                    // Held: Send later when it is offered (the same as the clock), else nothing, not even a send on letting go.
+                    // https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/components/SendButton.kt
+                    onLongPress = {
+                        if (laterReady) {
+                            haptics.firm()
+                            sendLater()
+                        }
+                    }
                 )
-            }) {
+            }.then(if (laterReady) Modifier.semantics {
+                onLongClick("Send later") {
+                    haptics.firm()
+                    sendLater()
+                    true
+                }
+            } else Modifier)) {
             // While recording, the lock waits above the mic; slid up to, it frees the hand.
             if (take != null && take?.locked == false) {
                 FloatingPane(shape = ShapeDefaults.ExtraLarge, modifier = Modifier

@@ -23,6 +23,7 @@ import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.yaz.sms.core.sms.SwipeAction
 import com.yaz.sms.data.sms.Conversation
+import com.yaz.sms.feature.thread.Delivery
 import com.yaz.sms.ui.theme.AppTheme
 import org.junit.Rule
 import org.junit.Test
@@ -77,20 +78,21 @@ class ConversationCardScreenshotTest {
     }
 
     private fun talk(
-        id: Long, snippet: String, unread: Int = 0, fromMe: Boolean = false, address: String = "+33612345678"
-    ) = Conversation(id, address, snippet, 1_600_000_000_000L + id * 86_400_000L, unread, fromMe, failed = false)
+        id: Long, snippet: String, unread: Int = 0, fromMe: Boolean = false, address: String = "+33612345678", failed: Boolean = false
+    ) = Conversation(id, address, snippet, 1_600_000_000_000L + id * 86_400_000L, unread, fromMe, failed = failed)
 
     // As CardRow lays the cards of the list: a row as tall as its card, the card filling it.
     @Composable
     private fun Card(
-        c: Conversation, name: String?, note: String? = null, pinned: Boolean = false, encrypted: Boolean = false
+        c: Conversation, name: String?, note: String? = null, pinned: Boolean = false, encrypted: Boolean = false,
+        delivery: Delivery? = null, silenced: Boolean = false
     ) {
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             ConversationLine(
                 c, name = name, holdMedia = false, photo = null, look = null, pinned = pinned,
                 onOpen = {}, onPeek = {}, encrypted = encrypted,
                 left = SwipeAction.NONE, right = SwipeAction.NONE, archived = false,
-                note = note, onSwipe = {},
+                note = note, onSwipe = {}, delivery = delivery, silenced = silenced,
                 modifier = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().fillMaxHeight()
             )
         }
@@ -117,6 +119,12 @@ class ConversationCardScreenshotTest {
             Card(talk(5, "On my way", fromMe = true), "Bob")
             // A number alone, no name.
             Card(talk(6, "Your code is 482913", unread = 2, address = "+33799887766"), null)
+            // The user's own message, delivered: the two ticks before the time.
+            Card(talk(7, "Dinner is booked", fromMe = true), "Leila", delivery = Delivery.Delivered)
+            // The user's own message that did not leave: the error mark before the time.
+            Card(talk(8, "Are you there?", fromMe = true, failed = true), "Karim", delivery = Delivery.Failed)
+            // A silenced conversation: the bell after the name.
+            Card(talk(9, "Meeting moved to Friday"), "Team Atlas", silenced = true)
         }
     }
 }

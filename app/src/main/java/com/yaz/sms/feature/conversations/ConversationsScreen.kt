@@ -78,6 +78,7 @@ import com.yaz.sms.data.settings.TrashStore
 import com.yaz.sms.data.sms.Conversation
 import com.yaz.sms.data.sms.Messages
 import com.yaz.sms.feature.main.TabFrame
+import com.yaz.sms.feature.thread.Delivery
 import com.yaz.sms.ui.component.ContactAvatar
 import com.yaz.sms.ui.component.EmptyZone
 import com.yaz.sms.ui.component.FloatingPane
@@ -145,6 +146,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { spamStore.filter(spamData) }
     }
     val chatLinks by chat.links.collectAsState()
+    // The chat's read marks, for the delivery tick of the user's own newest message.
+    val chatRefs by chat.refs.collectAsState()
     val kept = remember { HashMap<Long, Pair<List<Any>, Boolean>>() }
     val spamThreads: Set<Long> = remember(all, index, chatLinks, settings.spamProtection, spamFilter) {
         if (!settings.spamProtection) emptySet() else buildSet {
@@ -173,12 +176,35 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // A trashed conversation tapped: it is restored to be read.
     var restoring by remember { mutableStateOf<Conversation?>(null) }
     val rememberedHaptics = rememberHaptics()
-    val shown = remember(all, filter, settings.pinned, settings.archived, trashed, query, index, spamThreads) {
-        val q = query.trim().lowercase()
-        Lists.shown(all, filter, settings.pinned, settings.archived, trashed = trashed, spam = spamThreads).filter { c ->
-            q.isEmpty() || nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
+    // The words of the messages themselves, as AOSP Messaging's SearchActivity finds them (Messages.search, the
+    // provider's text search), asked off the main thread once the typing has paused for 300 ms. Kept with the
+    // query it answers, so a stale answer never lights a conversation for the next letters.
+    val bodies by androidx.compose.runtime.produceState(Pair("", emptyMap<Long, com.yaz.sms.data.sms.Found>()), query, all) {
+        val q = query.trim()
+        if (q.isEmpty()) {
+            value = Pair("", emptyMap())
+        } else {
+            kotlinx.coroutines.delay(300)
+            value = Pair(q, messages.search(q).associateBy { it.threadId })
         }
     }
+    // Names, numbers and the newest message first, then the conversations only an older message matches (with the
+    // words found, which stand under the name in place of the last message).
+    val searched = remember(all, filter, settings.pinned, settings.archived, trashed, query, index, spamThreads, bodies) {
+        val q = query.trim().lowercase()
+        val listed = Lists.shown(all, filter, settings.pinned, settings.archived, trashed = trashed, spam = spamThreads)
+        if (q.isEmpty()) Pair(listed, emptyMap<Long, com.yaz.sms.data.sms.Found>())
+        else {
+            val (named, rest) = listed.partition { c ->
+                nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
+            }
+            val inside = if (bodies.first == query.trim()) bodies.second else emptyMap()
+            val older = rest.filter { it.threadId in inside }
+            Pair(named + older, older.associate { it.threadId to inside.getValue(it.threadId) })
+        }
+    }
+    val shown = searched.first
+    val olderFound = searched.second
     val code = remember(live) { Lists.latestCode(live, System.currentTimeMillis()) }
     // Conversations the store no longer holds leave the Trash's list.
     androidx.compose.runtime.LaunchedEffect(all) {
@@ -245,12 +271,21 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // Conversations over the encrypted chat carry a lock in the list.
     val links by chat.links.collectAsState()
     fun encrypted(c: Conversation): Boolean = if (c.group) chat.groupReady(c.addresses) else chat.linkFor(c.address) != null
+    val asking: com.yaz.sms.core.sms.OpenRequests = koinInject()
     // A tap and a long press, the same on a row and on a pinned avatar.
     val openConversation: (Conversation) -> Unit = { c ->
         val taking = picked
         // A trashed conversation is restored to be read (Google Messages).
         if (taking == null && filter == Filter.TRASH) restoring = c
-        else if (taking == null) onOpenThread(c.threadId, c.addresses.joinToString(","))
+        else if (taking == null) {
+            // A conversation found by an older message opens on it (SearchActivity hands ComposeMessageActivity
+            // "select_id"; here the thread scrolls to the uid and lights it, as for SHOW_MESSAGE).
+            olderFound[c.threadId]?.let { hit ->
+                asking.showIn.value = c.threadId
+                asking.showMessage.value = hit.uid
+            }
+            onOpenThread(c.threadId, c.addresses.joinToString(","))
+        }
         else picked = (if (c.threadId in taking) taking - c.threadId else taking + c.threadId).ifEmpty { null }
     }
     val peekConversation: (Conversation) -> Unit = { c ->
@@ -302,7 +337,12 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 }
             },
             selected = picked?.contains(c.threadId),
-            open = c.threadId == openThread
+            open = c.threadId == openThread,
+            // Silence from the conversation's menu: its end time kept in Settings, a bell while it lasts.
+            silenced = (settings.silenced[c.threadId] ?: 0L) > System.currentTimeMillis(),
+            delivery = remember(c, chatRefs) { deliveryOf(c, chat) },
+            found = olderFound[c.threadId]?.body,
+            target = query.trim()
         )
     }
 
@@ -512,6 +552,9 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
             !loaded -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { LoadingMark(size = 72.dp) }
+            // The words of the messages are still being looked for: no "Nothing found" before they are.
+            shown.isEmpty() && query.isNotBlank() && bodies.first != query.trim() ->
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { LoadingMark(size = 72.dp) }
             shown.isEmpty() -> EmptyZone(
                 title = when {
                     query.isNotBlank() -> "Nothing found"
@@ -805,6 +848,13 @@ internal fun ConversationLine(
     open: Boolean = false,
     /** A group's people, for the cluster of their faces. */
     members: List<PinnedFace> = emptyList(),
+    /** Where the user's own newest message stands, drawn before the time (Signal's DeliveryStatusView); null when it is not theirs. */
+    delivery: Delivery? = null,
+    /** The conversation is silenced: a bell after the name (AOSP Messaging's mNotificationBellView). */
+    silenced: Boolean = false,
+    /** The words of an older message the search found here, shown in place of the last message, [target] in bold. */
+    found: String? = null,
+    target: String = "",
     /** The card's outer size: a column's width by default, a grid cell's in the grid. */
     modifier: Modifier = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth()
 ) {
@@ -949,6 +999,11 @@ internal fun ConversationLine(
                     // conversation_list_item_date constrained top and bottom to the name,
                     // https://github.com/signalapp/Signal-Android/blob/main/app/src/main/res/layout/conversation_list_item_view.xml).
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        // The name, then the bell right after it (AOSP Messaging's mNotificationBellView, shown for a
+                        // conversation whose notifications are off, ConversationListItemView.java,
+                        // https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/ui/conversationlist/ConversationListItemView.java).
+                        // The bell is measured first, so a long name is cut before it, never the bell.
+                        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             title,
                             // The name starts at the face's side whatever its script (Dialer's CallLine, Compose's
@@ -962,9 +1017,34 @@ internal fun ConversationLine(
                             // A number is cut in its middle, so its last digits, the ones that tell it apart, stay
                             // (Compose's TextOverflow.MiddleEllipsis, single line).
                             overflow = if (name.isNullOrBlank()) TextOverflow.MiddleEllipsis else TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f, fill = false)
                         )
+                        if (silenced) {
+                            Spacer(Modifier.width(6.dp))
+                            Icon(AppIcons.NotificationsOff, contentDescription = "Silenced", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                        }
+                        }
                         Spacer(Modifier.width(8.dp))
+                        // The user's own newest message: its tick (or the error mark) before the time, the icons and
+                        // tints of the thread's MessageFooter; the words are for TalkBack.
+                        if (delivery != null) {
+                            Icon(
+                                when (delivery) {
+                                    Delivery.Sending -> AppIcons.Schedule
+                                    Delivery.Sent -> AppIcons.Done
+                                    Delivery.Delivered, Delivery.Read -> AppIcons.DoneAll
+                                    Delivery.Failed -> AppIcons.Error
+                                },
+                                contentDescription = delivery.word,
+                                tint = when (delivery) {
+                                    Delivery.Failed -> MaterialTheme.colorScheme.error
+                                    Delivery.Read -> MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                        }
                         Text(
                             note ?: timeLabel(context, c.date),
                             style = MaterialTheme.typography.labelMedium,
@@ -982,7 +1062,14 @@ internal fun ConversationLine(
                     // LastMessageBubble), at the top of the row, its centre on that first line's centre. A subject or a
                     // media lead above the text keeps the rule: the badge meets the block's first line.
                     Row(verticalAlignment = Alignment.Top) {
-                        LastMessageBubble(
+                        if (found != null) Text(
+                            remember(found, target) { foundSnippet(found, target) },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).heightIn(min = 20.dp)
+                        ) else LastMessageBubble(
                             c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia,
                             time = note ?: timeLabel(context, c.date),
                             modifier = Modifier.weight(1f)
@@ -1057,6 +1144,48 @@ internal fun UnreadBadge(count: Int, modifier: Modifier = Modifier) {
 }
 
 internal fun unreadLabel(count: Int): String = if (count > 9) "9+" else count.toString()
+
+/**
+ * Where the user's own newest message stands, for the mark before the time; null when the newest message is not
+ * theirs, or is a draft. Read as the thread's own bubble does (ThreadScreen: the chat's read mark, then failed,
+ * leaving, delivered, else sent), from what readConversations kept of the same row.
+ */
+internal fun deliveryOf(c: Conversation, chat: com.yaz.sms.core.chat.RichChat): Delivery? = when {
+    !c.fromMe || c.draft != null || c.lastId == 0L -> null
+    chat.refOf(c.lastMms, c.lastId)?.seen == true -> Delivery.Read
+    c.failed -> Delivery.Failed
+    c.sending -> Delivery.Sending
+    c.delivered -> Delivery.Delivered
+    else -> Delivery.Sent
+}
+
+/**
+ * The words of a message that the search found, cut around the first match with an ellipsis where the text goes on,
+ * every match in bold. Ported from AOSP Messaging's SearchActivity.TextViewSnippet (setText, onLayout:
+ * pattern "\b" + the quoted target, case insensitive; the snippet starts at the first match; each match gets a
+ * bold StyleSpan; https://android.googlesource.com/platform/packages/apps/Mms/+/refs/heads/main/src/com/android/mms/ui/SearchActivity.java).
+ * Changed for the card: the window is a fixed lead before the match instead of one grown to the width of the view
+ * (the card's own two lines cut the end), and each word of the query is lit, as the provider's search matches words.
+ * The text is first cleared of the chat's markup, effects and reaction wording, as the card's last message is.
+ */
+internal fun foundSnippet(body: String, target: String): androidx.compose.ui.text.AnnotatedString {
+    val text = com.yaz.sms.core.sms.Markup.plain(com.yaz.sms.core.sms.Effects.plain(com.yaz.sms.core.sms.SmsReactions.plain(body))).replace('\n', ' ')
+    val words = target.split(' ', '\t').filter { it.isNotEmpty() }
+    if (words.isEmpty()) return androidx.compose.ui.text.AnnotatedString(text)
+    val pattern = Regex(words.joinToString("|") { (if (it.first().isLetterOrDigit()) "\\b" else "") + Regex.escape(it) }, RegexOption.IGNORE_CASE)
+    val first = pattern.find(text)?.range?.first ?: 0
+    val from = if (first > LEAD) first - LEAD else 0
+    val shown = (if (from > 0) "…" else "") + text.substring(from)
+    return androidx.compose.ui.text.buildAnnotatedString {
+        append(shown)
+        pattern.findAll(shown).forEach { m ->
+            addStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold), m.range.first, m.range.last + 1)
+        }
+    }
+}
+
+/** How much of the message stands before the first match on the card. */
+private const val LEAD = 24
 
 /**
  * The conversation's last message straight in the card, no bubble (Signal's conversation_list_item_view.xml: the

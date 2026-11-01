@@ -62,7 +62,40 @@ internal fun MessageBody(
     tiles: List<MmsPart> = emptyList(),
     mine: Boolean = false,
     /** A picture message's subject, already cleansed (MmsSubject): bold at the head of the words, above them. */
-    subject: String? = null
+    subject: String? = null,
+    /**
+     * The block that shows the message this one answers (QuoteBlock), at the top of the bubble: the content
+     * under it takes its width, as Element X's EqualWidthColumn does for the reply above an event.
+     */
+    quote: (@Composable () -> Unit)? = null
+) {
+    if (quote == null) {
+        BodyContent(words, plain, blurred, poll, visual, kinds, held, footer, onMore, interactive, tiles, mine, subject, textTop = 10.dp)
+    } else {
+        EqualWidthColumn {
+            quote()
+            BodyContent(words, plain, blurred, poll, visual, kinds, held, footer, onMore, interactive, tiles, mine, subject, textTop = 6.dp)
+        }
+    }
+}
+
+/** The bubble's content as [MessageBody] lays it out; [textTop] is the room above words with nothing over them. */
+@Composable
+private fun BodyContent(
+    words: AnnotatedString,
+    plain: String,
+    blurred: Boolean,
+    poll: (@Composable () -> Unit)?,
+    visual: List<MmsPart>,
+    kinds: List<MediaCheck.Kind?>,
+    held: Boolean,
+    footer: @Composable (mismatched: Boolean, onMedia: Boolean) -> Unit,
+    onMore: (() -> Unit)?,
+    interactive: Boolean,
+    tiles: List<MmsPart>,
+    mine: Boolean,
+    subject: String?,
+    textTop: Dp
 ) {
     val caption = words.isNotEmpty()
     val head = subject?.takeIf { it.isNotBlank() }
@@ -103,13 +136,13 @@ internal fun MessageBody(
         head != null ->
             WithFooter(if (!caption || mixed) FooterAt.Below else FooterAt.Aligned, { footer(it, false) }, words = plain) { onLayout ->
                 Column {
-                    SubjectLine(head, 10.dp, bottom = if (caption) 0.dp else 6.dp)
+                    SubjectLine(head, textTop, bottom = if (caption) 0.dp else 6.dp)
                     if (caption) Words(words, blurred, 2.dp, onLayout)
                 }
             }
         else ->
             WithFooter(if (mixed) FooterAt.Below else FooterAt.Aligned, { footer(it, false) }, words = plain) { onLayout ->
-                Words(words, blurred, 10.dp, onLayout)
+                Words(words, blurred, textTop, onLayout)
             }
     }
 }

@@ -45,6 +45,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -248,7 +249,9 @@ fun SelectTextDialog(text: String, onDismiss: () -> Unit) {
 
 /**
  * Back to the newest messages, when reading further up: a round pane of
- * glass with an arrow down, and how many came in meanwhile.
+ * glass with an arrow down, and how many unseen incoming messages lie below. As Signal's ConversationScrollToView
+ * (https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/conversation/ConversationScrollToView.kt):
+ * a round button with the unread count on its corner.
  */
 @Composable
 fun LatestButton(newCount: Int, onClick: () -> Unit) {
@@ -270,6 +273,32 @@ fun LatestButton(newCount: Int, onClick: () -> Unit) {
             Text(if (newCount > 99) "99+" else "$newCount", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary)
         }
     }
+}
+
+/**
+ * The colour of a group member's name: one of a few tones picked from the member's key, the same each time.
+ * Signal gives each member a name colour from a fixed set (Colorizer.getIncomingGroupSenderColor, NameColor,
+ * https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/conversation/colors/Colorizer.kt).
+ * The set here comes from the theme: the primary, tertiary and secondary roles and the primary and tertiary turned
+ * round the colour wheel (Android's Color.colorToHSV and HSVToColor, which keep each one's saturation and value, so they
+ * read on the glass by day and by night as the roles do).
+ */
+@Composable
+internal fun senderTone(key: String): androidx.compose.ui.graphics.Color {
+    val scheme = MaterialTheme.colorScheme
+    val tones = remember(scheme.primary, scheme.secondary, scheme.tertiary) {
+        fun turned(c: androidx.compose.ui.graphics.Color, degrees: Float): androidx.compose.ui.graphics.Color {
+            val hsv = FloatArray(3)
+            android.graphics.Color.colorToHSV(c.toArgb(), hsv)
+            hsv[0] = (hsv[0] + degrees) % 360f
+            return androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(hsv))
+        }
+        listOf(
+            scheme.primary, scheme.tertiary, scheme.secondary,
+            turned(scheme.primary, 120f), turned(scheme.primary, 240f), turned(scheme.tertiary, 180f)
+        )
+    }
+    return tones[Math.floorMod(key.hashCode(), tones.size)]
 }
 
 /** How each effect is offered: its sign and its name. */

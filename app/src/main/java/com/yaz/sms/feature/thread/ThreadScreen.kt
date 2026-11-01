@@ -354,6 +354,7 @@ private fun ThreadContent(
     var listBottom by remember { mutableStateOf(Float.NaN) }
     // A message swiped to answer it: shown over the field, sent quoted.
     var quote by remember { mutableStateOf<String?>(null) }
+    var quoteFrom by remember { mutableStateOf<String?>(null) }
     // One of the user's own chat messages being changed: its chat id and text.
     var editing by remember { mutableStateOf<Pair<Int, String>?>(null) }
     // How long messages last in the encrypted chat, in seconds; 0 for always.
@@ -486,6 +487,19 @@ private fun ThreadContent(
         thread?.let { opened.put(it, from to rows) }
     }
     val clusters = remember(rows, group) { clustersOf(rows, group) }
+    // The names of the SIMs when more than one is active, by subscription id: the same lookup as the message's Details
+    // (MessageDetails.kt, SubscriptionManager.activeSubscriptionInfoList displayName); AOSP Messaging's
+    // ConversationMessageView.simNameVisible shows a SIM's name only for a multi-SIM phone, on the last message of a
+    // cluster (!getCanClusterWithNextMessage).
+    val simNames = remember(shown) {
+        runCatching {
+            context.getSystemService(android.telephony.SubscriptionManager::class.java)
+                ?.activeSubscriptionInfoList?.takeIf { it.size > 1 }
+                ?.associate { it.subscriptionId to it.displayName.toString() }
+        }.getOrNull().orEmpty()
+    }
+    // The messages of the rows, oldest first: where a quote finds the message it answers.
+    val bubbleMessages = remember(rows) { rows.filterIsInstance<Row.Bubble>().map { it.message } }
     // The divider: the oldest of the messages unread at opening that the rows show (a reaction folded under its
     // message has no row), and how many of them there are.
     val unreadMark = remember(rows, unreadUids) {
@@ -591,6 +605,34 @@ private fun ThreadContent(
             line
         }
     }
+    // The messages that have been in front of the user: those on screen (between the header and the field) once the
+    // conversation has settled; one that comes in view is read, as Signal marks messages read as they are shown.
+    var seen by remember(thread) { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(thread) {
+        androidx.compose.runtime.snapshotFlow {
+            if (!unreadSettled) emptyList<String>()
+            else {
+                val info = listState.layoutInfo
+                info.visibleItemsInfo.filter { item ->
+                    val top = info.viewportEndOffset - item.offset - item.size
+                    top + item.size > info.afterContentPadding && top < info.viewportEndOffset - info.beforeContentPadding
+                }.mapNotNull { (it.key as? String)?.takeIf { k -> k.startsWith("m/") }?.removePrefix("m/") }
+            }
+        }.collect { onScreen -> if (!seen.containsAll(onScreen)) seen = seen + onScreen }
+    }
+    // The incoming messages below the view that were not seen: unread when the conversation opened, or come in since.
+    // Signal's count is the thread's unread messages (ConversationViewModel.scrollButtonStateStore, unreadCount); the
+    // list is in reverse, so "below" is a smaller item index than the first visible one.
+    val rowIndex = remember(rows) { rows.withIndex().associate { (i, r) -> r.key to i } }
+    val unseenBelow by remember(rowIndex, waiting, people) {
+        derivedStateOf {
+            val first = listState.firstVisibleItemIndex
+            val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
+            (unreadUids + fresh).count { uid ->
+                uid !in seen && rowIndex["m/$uid"]?.let { r -> before + rows.size - 1 - r < first } == true
+            }
+        }
+    }
     // A message added at the bottom while reading there comes into sight, not under the field. Several
     // added at once (Send again ×N) push the row in sight up by as many: they count in "reading there".
     var waitingBefore by remember { mutableStateOf(0) }
@@ -693,6 +735,37 @@ private fun ThreadContent(
         if (lit != null) {
             delay(1800)
             lit = null
+        }
+    }
+    // A tap on a bubble's quote: the thread scrolls to the message it answers and lights it with the same wash
+    // (lit). Element X's inReplyToClick goes to the replied event (TimelineItemEventRow.kt); Signal's quote tap
+    // jumps and pulses it (ConversationFragment onQuoteClicked). An SMS quote has only its excerpt: the newest
+    // earlier message that starts with it. Further back than the page, the thread is read further first.
+    var quoteJump by remember { mutableStateOf<QuoteJump?>(null) }
+    LaunchedEffect(quoteJump) {
+        val jump = quoteJump ?: return@LaunchedEffect
+        try {
+            fun find(): Int {
+                val all = rows.filterIsInstance<Row.Bubble>().map { it.message }
+                val target = jump.uid?.let { u -> all.firstOrNull { it.uid == u } }
+                    ?: all.firstOrNull { it.uid == jump.from }?.let { QuoteForm.originalOf(all, it, jump.excerpt) }
+                return if (target == null) -1 else rows.indexOfFirst { it.key == "m/${target.uid}" }
+            }
+            var row = find()
+            if (row < 0 && window < 5000 && list.size >= window) {
+                val from = list.size
+                window = 5000
+                kotlinx.coroutines.withTimeoutOrNull(5000) {
+                    androidx.compose.runtime.snapshotFlow { rowsOfList === list && list.size > from }.first { it }
+                }
+                row = find()
+            }
+            if (row < 0) return@LaunchedEffect
+            val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
+            runCatching { listState.animateScrollToItem(before + rows.size - 1 - row) }
+            lit = rows[row].key.removePrefix("m/")
+        } finally {
+            if (quoteJump === jump) quoteJump = null
         }
     }
     // A request for another conversation (still pending while this one leaves) is not this screen's to clear.
@@ -864,10 +937,24 @@ private fun ThreadContent(
           // Reading further up: the way back to the newest, and how many came in meanwhile.
           // It floats over the conversation, above the composer, as AOSP Messaging's notice
           // does: appearing or going, it never moves the messages.
-          val away by remember { derivedStateOf { listState.firstVisibleItemIndex > 1 } }
-          var seenAt by remember { mutableStateOf(0L) }
-          LaunchedEffect(away) { if (away) seenAt = list.maxOfOrNull { it.date } ?: 0L }
-          val newCount = if (away) list.count { it.box == MessageBox.RECEIVED && it.date > seenAt } else 0
+          // Shown once the newest message is more than a screen away, and counting the incoming messages below the view
+          // that were not seen, as Signal's scroll-to-bottom button (ConversationFragment.ScrollListener
+          // isScrolledPastButtonThreshold shows it, ConversationScrollButtonState.unreadCount counts), see unseenBelow.
+          val away by remember {
+              derivedStateOf {
+                  val info = listState.layoutInfo
+                  val visible = info.visibleItemsInfo
+                  if (visible.isEmpty()) false
+                  else {
+                      // The distance from the newest message (item 0, the list is in reverse): the items above the first
+                      // visible one at the visible items' average height, plus how far into it the list is.
+                      val average = visible.sumOf { it.size } / visible.size
+                      val scrolled = listState.firstVisibleItemIndex.toLong() * average + listState.firstVisibleItemScrollOffset
+                      scrolled > info.viewportSize.height - info.beforeContentPadding - info.afterContentPadding
+                  }
+              }
+          }
+          val newCount = if (away) unseenBelow else 0
           androidx.compose.animation.AnimatedVisibility(
               visible = away,
               enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = 0.6f),
@@ -912,6 +999,7 @@ private fun ThreadContent(
                 initial = draft,
                 mentionNames = remember(localNames) { localNames.keys.toList() },
                 quote = quote,
+                quoteFrom = quoteFrom,
                 onClearQuote = { quote = null },
                 modifier = Modifier,
                 restore = restore,
@@ -1067,7 +1155,30 @@ private fun ThreadContent(
                       // Automatic: the way of the last reaction received here); a group takes it as it takes any text.
                       // Quik's sendReaction (https://github.com/quik-sms/quik/pull/846) sends to the one address of a
                       // conversation; here the people of the group get it in a picture message, as a group's other texts.
-                      val reactWords = remember(row.message.body) { com.yaz.sms.core.sms.Effects.read(row.message.body).first }
+                      // Without the quote an SMS reply carries («excerpt» and a line break): the reaction is about the words.
+                      val reactWords = remember(row.message.body) { com.yaz.sms.core.sms.Effects.read(row.message.body).first.let { QuoteForm.split(it)?.rest ?: it } }
+                      // The message this one answers: the «excerpt» line of an SMS or MMS, or the chat's quote field. Who wrote
+                      // it and where it is come from the thread's own messages (an SMS names neither).
+                      val smsQuote = remember(row.message.body, rich == null) {
+                          if (rich == null) QuoteForm.split(com.yaz.sms.core.sms.Effects.read(row.message.body).first) else null
+                      }
+                      val chatMsgId = chat.chatIdOf(row.message.mms, row.message.id).also { refs.size }
+                      val chatQuote by androidx.compose.runtime.produceState<com.yaz.sms.core.chat.ChatQuote?>(null, chatMsgId, chatReady) {
+                          value = chatMsgId?.let { chat.quoteOf(it) }
+                      }
+                      val shownQuote = remember(smsQuote, chatQuote, bubbleMessages, index) {
+                          val (excerpt, uid, author) = when {
+                              smsQuote != null -> Triple(smsQuote.excerpt, null, null)
+                              chatQuote != null -> chatQuote!!.let { Triple(it.text, it.uid, it.author) }
+                              else -> return@remember null
+                          }
+                          val origin = uid?.let { u -> bubbleMessages.firstOrNull { it.uid == u } }
+                              ?: QuoteForm.originalOf(bubbleMessages, row.message, excerpt)
+                          val name = origin?.let { o ->
+                              if (o.box != MessageBox.RECEIVED) "You" else index.find(T9.clean(o.address))?.name ?: Numbers.format(context, o.address)
+                          }
+                          QuoteShown(name ?: author, excerpt, origin?.uid)
+                      }
                       val reactMedia = if (reactWords.isNotBlank()) null else row.message.parts.firstNotNullOfOrNull { p ->
                           when {
                               p.contentType.startsWith("image/", ignoreCase = true) -> "image"
@@ -1099,6 +1210,12 @@ private fun ThreadContent(
                         onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },
                         onPollShown = { scope.launch { chat.recount(row.message.mms, row.message.id) } },
                         sender = if (group && row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null,
+                        // A group's member: a colour of their own for the name, their face beside the run's last bubble.
+                        senderKey = if (group && row.message.box == MessageBox.RECEIVED) T9.clean(row.message.address).ifEmpty { row.message.address.trim().lowercase() } else null,
+                        face = if (group && row.message.box == MessageBox.RECEIVED) ({
+                            val who = index.find(T9.clean(row.message.address))
+                            com.yaz.sms.feature.conversations.FaceAvatar(who?.name?.takeIf { it.isNotBlank() }, who?.photo, who?.look, emptyList(), GroupFaceSize)
+                        }) else null,
                         onRetry = {
                             if (!row.message.mms) {
                                 scope.launch(Dispatchers.IO) { SmsSender.retry(context, row.message.id, row.message.address, row.message.body, row.message.subId) }
@@ -1116,7 +1233,7 @@ private fun ThreadContent(
                                 chat.prune()
                             }
                         },
-                        onQuote = { quote = row.message.body.ifBlank { com.yaz.sms.core.mms.mediaWord(row.message.parts.firstOrNull()?.contentType) } },
+                        onQuote = { quoteFrom = if (row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null; quote = QuoteForm.quotable(row.message) },
                         onEdit = { id -> editing = id to row.message.body },
                         onDeleteForAll = { id -> scope.launch { if (!chat.deleteForAll(id)) haptics.reject() } },
                         onPin = { id, on -> scope.launch { chat.pin(id, on) } },
@@ -1132,7 +1249,10 @@ private fun ThreadContent(
                         },
                         sentEffect = sentEffects[com.yaz.sms.core.sms.Effects.plain(row.message.body)]?.takeIf { (_, at) -> row.message.box != MessageBox.RECEIVED && row.message.date >= at - 10_000 }?.first,
                         onReplay = { e, words -> playing = Triple(e, words, null) },
-                        onSendAgain = if (!left && people.isNotEmpty()) ({ count -> sendAgain(row.message, reactWords, count) }) else null
+                        onSendAgain = if (!left && people.isNotEmpty()) ({ count -> sendAgain(row.message, reactWords, count) }) else null,
+                        simName = if (rich == null && row.message.subId >= 0) simNames[row.message.subId]?.takeIf { it.isNotBlank() } else null,
+                        quote = shownQuote,
+                        onQuoteJump = { shownQuote?.let { haptics.tick(); quoteJump = QuoteJump(row.message.uid, it.excerpt, it.uid) } }
                     )
                       }
                     }
@@ -1219,12 +1339,24 @@ private fun FloatingDay(label: () -> String, visible: () -> Boolean, modifier: M
  */
 private data class DayLine(val key: Any, val top: Int)
 
+/**
+ * A tap on a quote: the message that quoted ([from]), the words quoted, and the message found for them when known.
+ * The request of Signal's ConversationFragment.onQuoteClicked (https://github.com/signalapp/Signal-Android,
+ * app/src/main/java/org/thoughtcrime/securesms/conversation/v2/ConversationFragment.kt) and Element X's inReplyToClick
+ * (features/messages/impl/.../timeline/components/TimelineItemEventRow.kt): go to the replied message.
+ */
+private data class QuoteJump(val from: String, val excerpt: String, val uid: String?)
+
 /** A line of the conversation: a day's heading or a message. */
 private sealed class Row(val key: String) {
     class Day(val label: String, day: String) : Row("day/$day")
     // An SMS and a picture message may hold the same number: the kind is part of the key.
     class Bubble(val message: Message, val smsReactions: List<String> = emptyList(), val smsMine: List<String> = emptyList()) : Row("m/${message.uid}")
 }
+
+/** A group member's face beside their bubbles, the room it keeps (face and gap): the header's round face, smaller. */
+private val GroupFaceSize = 28.dp
+private val GroupFaceSlot = GroupFaceSize + 8.dp
 
 /** The conversations opened lately, as they were shown: reopened, one shows at once. */
 private val opened = android.util.LruCache<Long, Pair<List<Message>, List<Row>>>(12)
@@ -1401,7 +1533,16 @@ private fun Bubble(
     onReplay: (com.yaz.sms.core.sms.Effects.Effect, String) -> Unit = { _, _ -> },
     onPollShown: () -> Unit = {},
     /** "Send again" with a count: null where the conversation cannot send (a group the user left). */
-    onSendAgain: ((Int) -> Unit)? = null
+    onSendAgain: ((Int) -> Unit)? = null,
+    /** The message this one answers, found by the caller (an SMS «excerpt» line or the chat's quote), and the way to it. */
+    quote: QuoteShown? = null,
+    onQuoteJump: () -> Unit = {},
+    /** A group member's key (their number): the colour of their name. Null outside a group or for the user's own. */
+    senderKey: String? = null,
+    /** A group member's round face, drawn beside the last bubble of their run; the bubbles of the run are indented to keep room for it. */
+    face: (@Composable () -> Unit)? = null,
+    /** The name of the SIM this message went through, when the phone has more than one active (null otherwise). */
+    simName: String? = null
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
@@ -1411,11 +1552,14 @@ private fun Bubble(
     var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val mine = m.box != MessageBox.RECEIVED
     // The words without an effect's mark, and the effect: carried, sent from here, or brought by the words.
-    val (said, carried) = remember(m.body) { com.yaz.sms.core.sms.Effects.read(m.body) }
+    val (saidWhole, carried) = remember(m.body) { com.yaz.sms.core.sms.Effects.read(m.body) }
+    // A reply sent as SMS or MMS carries «excerpt» and a line break before its words: the block shows the excerpt
+    // (the caller found who wrote it and where it is), the bubble the words alone. Over the chat the quote is a field.
+    val said = remember(saidWhole, rich == null) { if (rich == null) QuoteForm.split(saidWhole)?.rest ?: saidWhole else saidWhole }
     val bubbleEffect = (carried ?: sentEffect)?.takeIf { !it.screen }
     var replays by remember { mutableStateOf(0) }
     // Only one to three emoji: big, without a bubble, moving once (then on a tap).
-    val big = remember(said, m.parts.isEmpty()) { if (m.parts.isEmpty()) com.yaz.sms.core.sms.BigEmoji.read(said) else null }
+    val big = remember(said, m.parts.isEmpty(), quote == null) { if (m.parts.isEmpty() && quote == null) com.yaz.sms.core.sms.BigEmoji.read(said) else null }
     // A poll, over the encrypted chat where votes travel as reactions.
     val poll = remember(said, rich != null) { if (rich != null && m.parts.isEmpty()) com.yaz.sms.core.sms.Polls.read(said) else null }
     LaunchedEffect(poll != null) { if (poll != null) onPollShown() }
@@ -1534,13 +1678,18 @@ private fun Bubble(
     // The corners follow the message's place in its run of messages of one sender (Signal's V2ConversationItemShape).
     val shape = remember(cluster, mine) { Clusters.corners(cluster, mine) }
     val clock = remember(m.date) { clockOf(context, m.date) }
-    val delivery = if (!mine) null else when {
+    val deliveryNow = if (!mine) null else when {
         rich?.seen == true -> Delivery.Read
         m.box == MessageBox.FAILED -> Delivery.Failed
         m.box == MessageBox.SENDING -> Delivery.Sending
         m.delivered -> Delivery.Delivered
         else -> Delivery.Sent
     }
+    // The ticks only on the last bubble of the user's run, as Signal's presentDeliveryStatus (setNone unless
+    // shape.isEndingShape, https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/conversation/v2/items/V2ConversationItemTextOnlyViewHolder.kt)
+    // and Element X (the sent icon on the last outgoing event only); a message still leaving or not sent keeps its mark
+    // wherever it stands, the user must see it. The time stays on every bubble.
+    val delivery = deliveryNow?.takeIf { cluster.isEnding || it == Delivery.Sending || it == Delivery.Failed }
     val footer = @Composable { mismatched: Boolean, onMedia: Boolean ->
         if (translated != null && !showOriginal && !onMedia) {
             // iOS 26 Messages' "Translated" mark before the time; no zone, the switch back is in the long press menu.
@@ -1574,10 +1723,14 @@ private fun Bubble(
                     drawCircle(ringColor.copy(alpha = 0.5f * (1f - t)), radius = 24.dp.toPx() + t * 90.dp.toPx(), center = androidx.compose.ui.geometry.Offset(24.dp.toPx(), size.height - 20.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
                 }
             }
+            // Room for the member's face at the start of every bubble of their run (Signal keeps the photo's place
+            // INVISIBLE on the bubbles that do not end the run, V2ConversationItemTextOnlyViewHolder.presentSenderPhoto).
+            .padding(start = if (face != null) GroupFaceSlot else 0.dp)
     ) {
-        // A group's sender is named once, over the first of their run of messages (Signal shows the name at the start of a cluster).
+        // A group's sender is named once, over the first of their run of messages (Signal shows the name at the start of a cluster),
+        // in a colour picked from their number (Signal's Colorizer.getIncomingGroupSenderColor).
         sender?.takeIf { cluster.isStarting }?.let {
-            Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 12.dp, bottom = 2.dp))
+            Text(it, style = MaterialTheme.typography.labelMedium, color = if (senderKey != null) senderTone(senderKey) else MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 12.dp, bottom = 2.dp))
         }
         // Announced by the network, not here yet: a tap fetches it, as AOSP
         // Messaging's download action on a waiting picture message.
@@ -1729,6 +1882,9 @@ private fun Bubble(
                         scaleY = s
                     }
             )
+            // The member's face at the start of the run's last bubble, level with its bottom (Signal's presentSenderPhoto:
+            // shown when shape.isEndingShape), in the room the column keeps for it.
+            if (face != null && cluster.isEnding) Box(Modifier.align(Alignment.BottomStart).offset(x = -GroupFaceSlot)) { face() }
             val held = Modifier
                     .then(if (poll != null) Modifier.fillMaxWidth() else Modifier)
                     // At least 80 dp wide, as Element X's MIN_BUBBLE_WIDTH.
@@ -1785,7 +1941,13 @@ private fun Bubble(
                         haptics.firm()
                         menuOpen = true
                     },
-                    tiles = tiles, mine = mine, subject = m.subject
+                    tiles = tiles, mine = mine, subject = m.subject,
+                    quote = if (quote != null && poll == null) ({
+                        QuoteBlock(quote, mine, onClick = onQuoteJump, onLongClick = {
+                            haptics.firm()
+                            menuOpen = true
+                        })
+                    }) else null
                 )
             }
         }
@@ -1858,7 +2020,8 @@ private fun Bubble(
                         poll = null,
                         visual = visual, kinds = visualKinds, held = holdMedia && !mine, footer = footer,
                         onMore = null, interactive = false,
-                        tiles = tiles, mine = mine, subject = m.subject
+                        tiles = tiles, mine = mine, subject = m.subject,
+                        quote = if (quote != null && poll == null) ({ QuoteBlock(quote, mine, onClick = null, onLongClick = null) }) else null
                     )
                 }
             }
@@ -1895,6 +2058,18 @@ private fun Bubble(
             haptics.tick()
             react(emoji)
         })
+        // The SIM's name under the last bubble of a run, small, outside the bubble: AOSP Messaging's simNameVisible
+        // (ConversationMessageView.java, https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/ui/conversation/ConversationMessageView.java).
+        if (simName != null && cluster.isEnding && hasBubble) {
+            Text(
+                simName,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp, start = 12.dp, end = 12.dp)
+            )
+        }
         // Pinned for both sides, or changed after it was sent.
         if (rich?.pinned == true || rich?.edited == true) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp, start = 8.dp, end = 8.dp)) {

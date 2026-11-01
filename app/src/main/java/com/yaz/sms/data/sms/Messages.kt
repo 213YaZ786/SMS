@@ -81,10 +81,26 @@ data class Conversation(
      * file's own readConversations (MmsStore.parts for the newest message of each conversation).
      */
     val parts: List<MmsPart> = emptyList(),
-    val caption: String = ""
+    val caption: String = "",
+    /**
+     * The newest message's row (its table: [lastMms]) and where it stands, for the list's delivery mark when it is
+     * the user's own (Signal's DeliveryStatusView, AOSP Messaging's failed icon). 0 for a conversation of a draft alone.
+     */
+    val lastId: Long = 0L,
+    val lastMms: Boolean = false,
+    /** The user's newest message is still leaving (outbox or queued). */
+    val sending: Boolean = false,
+    /** The network said it reached the phone it was sent to. */
+    val delivered: Boolean = false
 ) {
     val group: Boolean get() = addresses.size > 1
 }
+
+/**
+ * A message found by the text search: its conversation, its uid ("sms/7", "mms/45") and the words it holds.
+ * One per conversation, as the provider's search groups its answer.
+ */
+data class Found(val threadId: Long, val uid: String, val body: String)
 
 /**
  * The messages on the phone, read from Android's own store, which this app
@@ -177,6 +193,9 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
         }
         val parts = MmsStore.parts(context, last.filterNot { it.sms }.map { it.id })
         val subjects = MmsStore.subjects(context, last.filterNot { it.sms }.map { it.id })
+        // Whether the newest message the user sent reached the phone it went to: one read for all the conversations.
+        val deliveredSms = deliveredSms(last.filter { it.sms && it.box == Telephony.Sms.MESSAGE_TYPE_SENT }.map { it.id })
+        val deliveredMms = deliveredMms(last.filter { !it.sms && it.box == Telephony.Mms.MESSAGE_BOX_SENT }.map { it.id })
         last.map { m ->
             val addresses = people[m.thread] ?: listOf(m.address)
             if (m.sms) Conversation(
@@ -189,7 +208,10 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                 failed = m.box == Telephony.Sms.MESSAGE_TYPE_FAILED,
                 addresses = addresses,
                 draft = drafts[m.thread]?.first,
-                sent = sentCounts[m.thread] ?: 0
+                sent = sentCounts[m.thread] ?: 0,
+                lastId = m.id,
+                sending = m.box == Telephony.Sms.MESSAGE_TYPE_OUTBOX || m.box == Telephony.Sms.MESSAGE_TYPE_QUEUED,
+                delivered = m.id in deliveredSms
             ) else {
                 val (text, media) = parts[m.id] ?: ("" to emptyList())
                 Conversation(
@@ -206,7 +228,13 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     sent = sentCounts[m.thread] ?: 0,
                     subject = if (m.id in waiting) null else subjects[m.id],
                     parts = if (m.id in waiting) emptyList() else media,
-                    caption = if (m.id in waiting) "" else text
+                    caption = if (m.id in waiting) "" else text,
+                    lastId = m.id,
+                    lastMms = true,
+                    // As rowsWhere's boxes: anything but inbox, sent and failed is still leaving.
+                    sending = m.box != Telephony.Mms.MESSAGE_BOX_INBOX && m.box != Telephony.Mms.MESSAGE_BOX_SENT &&
+                        m.box != Telephony.Mms.MESSAGE_BOX_FAILED && m.box != Telephony.Mms.MESSAGE_BOX_DRAFTS,
+                    delivered = m.id in deliveredMms
                 )
             }
         }.let { listed ->
@@ -223,6 +251,69 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             }
         }.sortedByDescending { it.date }
     }.getOrDefault(emptyList())
+
+    /**
+     * Of the sent SMS [ids], those the network reported delivered (status complete): the reading of rowsWhere
+     * (Telephony.Sms.STATUS) for many rows in one query per few hundred, for the list's newest messages.
+     */
+    private fun deliveredSms(ids: Collection<Long>): Set<Long> {
+        val out = HashSet<Long>()
+        ids.distinct().chunked(BATCH).forEach { chunk ->
+            runCatching {
+                context.contentResolver.query(
+                    Telephony.Sms.CONTENT_URI, arrayOf(Telephony.Sms._ID),
+                    "${Telephony.Sms._ID} IN (${chunk.joinToString(",") { "?" }}) AND ${Telephony.Sms.STATUS} = ${Telephony.Sms.STATUS_COMPLETE}",
+                    chunk.map { it.toString() }.toTypedArray(), null
+                )?.use { c -> while (c.moveToNext()) out += c.getLong(0) }
+            }
+        }
+        return out
+    }
+
+    /**
+     * Of the sent picture messages [ids], those every recipient reported delivered: rowsWhere's reading (a message
+     * that asked for a report, its Message-ID, then MmsDelivery) for the list's newest messages, in one query.
+     */
+    private fun deliveredMms(ids: Collection<Long>): Set<Long> {
+        val reportable = HashMap<Long, String>()
+        ids.distinct().chunked(BATCH).forEach { chunk ->
+            runCatching {
+                context.contentResolver.query(
+                    Telephony.Mms.CONTENT_URI, arrayOf(Telephony.Mms._ID, Telephony.Mms.MESSAGE_ID),
+                    "${Telephony.Mms._ID} IN (${chunk.joinToString(",") { "?" }}) AND ${Telephony.Mms.DELIVERY_REPORT} = ${PduHeaders.VALUE_YES}",
+                    chunk.map { it.toString() }.toTypedArray(), null
+                )?.use { c -> while (c.moveToNext()) c.getString(1)?.takeIf { it.isNotBlank() }?.let { reportable[c.getLong(0)] = it } }
+            }
+        }
+        return runCatching { MmsDelivery.delivered(context, reportable) }.getOrDefault(emptySet())
+    }
+
+    /**
+     * The messages holding [pattern], one per conversation: Android's own text search, the provider's
+     * `content://mms-sms/search?pattern=` that AOSP Messaging's SearchActivity queries
+     * (https://android.googlesource.com/platform/packages/apps/Mms/+/refs/heads/main/src/com/android/mms/ui/SearchActivity.java,
+     * Telephony.MmsSms.SEARCH_URI) and TelephonyProvider's MmsSmsProvider answers from its full text `words` table
+     * (URI_SEARCH, getTextSearchQuery, https://android.googlesource.com/platform/packages/providers/TelephonyProvider/+/refs/heads/main/src/com/android/providers/telephony/MmsSmsProvider.java):
+     * the words of a message beginning with the pattern, SMS and picture messages' texts together, grouped by
+     * conversation. Columns by their place in getTextSearchQuery: message row, thread, address, body, date. The
+     * provider does not say which table the row is of; an SMS keeps its date in milliseconds, a picture message in
+     * seconds (as rowsWhere reads them), which tells them apart. Nothing is given to the provider but the pattern
+     * (it refuses a selection). Messages sent over the encrypted chat are rows of the same store, so they are found too.
+     */
+    suspend fun search(pattern: String): List<Found> = withContext(Dispatchers.IO) {
+        if (!canRead() || pattern.isBlank()) return@withContext emptyList()
+        runCatching {
+            val uri = Uri.parse("content://mms-sms/search").buildUpon().appendQueryParameter("pattern", pattern.trim()).build()
+            val out = ArrayList<Found>()
+            context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                while (c.moveToNext()) {
+                    val sms = c.getLong(4) >= SMS_MILLIS
+                    out += Found(c.getLong(1), (if (sms) "sms/" else "mms/") + c.getLong(0), c.getString(3).orEmpty())
+                }
+            }
+            out
+        }.getOrDefault(emptyList())
+    }
 
     /** Who is in each conversation, from Android's threads: one number, or a group's. */
     private fun recipients(): Map<Long, List<String>> = runCatching {
@@ -423,6 +514,9 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
 
         /** Ids asked at once by [byUid], under SQLite's limit of 999 variables. */
         private const val BATCH = 400
+
+        /** Dates from here are milliseconds (an SMS), under it seconds (a picture message): 1973 in milliseconds. */
+        private const val SMS_MILLIS = 100_000_000_000L
 
         fun boxOf(type: Int): Box = when (type) {
             Telephony.Sms.MESSAGE_TYPE_INBOX -> Box.RECEIVED
