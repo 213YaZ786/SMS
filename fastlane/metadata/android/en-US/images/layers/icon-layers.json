@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "ground": {"day": "system_accent1_700", "night": "system_accent1_700"},
+  "layers": [
+    {"png": "sms_body.png", "sha256": "c36b03588451fedf3cd00b5bc942176352b797b3d4dcaa870555e197007ee8fb", "day": "system_accent1_500", "night": "system_accent1_500"},
+    {"png": "sms_shine.png", "sha256": "82cc331647daa3efc2b7320e7f812e4cbdb643d638974f1e2429996b3ec46912"},
+    {"png": "sms_dots.png", "sha256": "9b8adbd08fa0602ea90cd2b4dd31a904831b737d131fe01346f77af4ce9cc109"}
+  ]
+}

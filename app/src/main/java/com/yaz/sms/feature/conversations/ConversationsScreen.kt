@@ -779,7 +779,7 @@ private fun Filters(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ConversationLine(
+internal fun ConversationLine(
     c: Conversation,
     name: String?,
     /** The newest message's media wait for a tap (a stranger's, Settings asking so): nothing is read or decoded. */
@@ -926,10 +926,11 @@ private fun ConversationLine(
             // the face, then a column that takes all the width left. First line the name (or the number) and the
             // time (or the Trash's note), second line the last message and the unread count. The lock and the
             // pin sit on the face's bottom corners.
-            // The face stands at the name's height (Signal: the avatar's top on the name's top), the whole row
-            // centred in a grid cell made taller by a neighbour's thumbnail.
+            // The face is centred on the name and message block (Google Messages and iOS Messages centre the
+            // avatar on the two lines; Signal anchors it to the name's top, the user asked for centred), the whole
+            // row centred in a grid cell made taller by a neighbour's thumbnail.
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
-            Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = 6.dp, end = 14.dp, top = 10.dp, bottom = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp, end = 14.dp, top = 10.dp, bottom = 10.dp)) {
                 Box(Modifier.padding(start = 6.dp)) {
                     // Taken in the multi select: the check stands where the face was.
                     if (selected == true) Box(
@@ -944,8 +945,10 @@ private fun ConversationLine(
                 }
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     // The name takes what the time leaves and is cut with an ellipsis; the time is never cut and
-                    // never wraps. Baselines aligned as the two sizes differ.
-                    Row(verticalAlignment = Alignment.Bottom) {
+                    // never wraps. The time is centred on the name's line (Signal's conversation_list_item_view.xml:
+                    // conversation_list_item_date constrained top and bottom to the name,
+                    // https://github.com/signalapp/Signal-Android/blob/main/app/src/main/res/layout/conversation_list_item_view.xml).
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             title,
                             // The name starts at the face's side whatever its script (Dialer's CallLine, Compose's
@@ -959,7 +962,7 @@ private fun ConversationLine(
                             // A number is cut in its middle, so its last digits, the ones that tell it apart, stay
                             // (Compose's TextOverflow.MiddleEllipsis, single line).
                             overflow = if (name.isNullOrBlank()) TextOverflow.MiddleEllipsis else TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).alignByBaseline()
+                            modifier = Modifier.weight(1f)
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
@@ -967,16 +970,18 @@ private fun ConversationLine(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
-                            softWrap = false,
-                            modifier = Modifier.alignByBaseline()
+                            softWrap = false
                         )
                     }
-                    // The last message straight in the card; its end stops before the unread count, which sits in
-                    // the card's bottom end corner (below), as Signal's conversation_list_item_view.xml: the unread
-                    // indicator constrained to the parent's end, the summary ending at its start and anchored to the
-                    // bottom (https://github.com/signalapp/Signal-Android/blob/main/app/src/main/res/layout/conversation_list_item_view.xml).
-                    // An invisible copy of the badge keeps its room.
-                    Row(verticalAlignment = Alignment.Bottom) {
+                    // The last message straight in the card; its end stops before the unread count, which sits at
+                    // the end of the message's first line, right under the time (Signal's
+                    // conversation_list_item_view.xml: conversation_list_item_status_container at the parent's end,
+                    // below the date, level with the summary's first line,
+                    // https://github.com/signalapp/Signal-Android/blob/main/app/src/main/res/layout/conversation_list_item_view.xml).
+                    // The rule: the badge stands in a box as tall as one line of the message's style (bodyMedium, as
+                    // LastMessageBubble), at the top of the row, its centre on that first line's centre. A subject or a
+                    // media lead above the text keeps the rule: the badge meets the block's first line.
+                    Row(verticalAlignment = Alignment.Top) {
                         LastMessageBubble(
                             c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia,
                             time = note ?: timeLabel(context, c.date),
@@ -984,13 +989,14 @@ private fun ConversationLine(
                         )
                         if (unread) {
                             Spacer(Modifier.width(8.dp))
-                            UnreadBadge(c.unread, reserve = true)
+                            val line = with(androidx.compose.ui.platform.LocalDensity.current) {
+                                MaterialTheme.typography.bodyMedium.lineHeight.toDp()
+                            }
+                            Box(Modifier.height(line), contentAlignment = Alignment.Center) { UnreadBadge(c.unread) }
                         }
                     }
                 }
             }
-            // Always in the card's bottom end corner, whatever the height of the last message.
-            if (unread) UnreadBadge(c.unread, modifier = Modifier.align(Alignment.BottomEnd).padding(end = 14.dp, bottom = 10.dp))
             }
         }
     }
@@ -1029,22 +1035,21 @@ internal fun conversationTitle(name: String?, formatted: String): String =
 /**
  * Signal's unread indicator (conversation_list_item_view.xml): wrap_content, minWidth 18 dp, a round of the
  * accent behind white text, so it grows with the font and "9+" is never clipped. TalkBack reads it as "3 unread".
- * [reserve] draws nothing and only keeps its room.
  */
 @Composable
-private fun UnreadBadge(count: Int, modifier: Modifier = Modifier, reserve: Boolean = false) {
+internal fun UnreadBadge(count: Int, modifier: Modifier = Modifier) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
             .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
-            .then(if (reserve) Modifier else Modifier.background(MaterialTheme.colorScheme.primary, CircleShape))
+            .background(MaterialTheme.colorScheme.primary, CircleShape)
             .padding(horizontal = 5.dp, vertical = 1.dp)
-            .clearAndSetSemantics { if (!reserve) contentDescription = "$count unread" }
+            .clearAndSetSemantics { contentDescription = "$count unread" }
     ) {
         Text(
             unreadLabel(count),
             style = MaterialTheme.typography.labelSmall,
-            color = if (reserve) androidx.compose.ui.graphics.Color.Transparent else MaterialTheme.colorScheme.onPrimary,
+            color = MaterialTheme.colorScheme.onPrimary,
             maxLines = 1,
             softWrap = false
         )
