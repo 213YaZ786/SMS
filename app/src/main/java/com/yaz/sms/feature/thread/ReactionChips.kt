@@ -1,7 +1,6 @@
 package com.yaz.sms.feature.thread
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -26,7 +25,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yaz.sms.core.sms.ReactionGroups
-import com.yaz.sms.ui.glass.LocalGlass
 
 /**
  * The reactions of a message as Signal's pills: at most three, the busiest first; past three, the first two and one
@@ -39,9 +37,11 @@ import com.yaz.sms.ui.glass.LocalGlass
  * - app/src/main/res/layout/reactions_pill.xml: 26 dp high, 7 dp inside, 1 dp margin each side, emoji 17 dp, 4 dp gap,
  *   count 12 sp sans-serif-medium.
  * - app/src/main/res/drawable/reaction_pill_background.xml and reaction_pill_background_selected.xml: fully round,
- *   a 1 dp stroke in the page's background colour (the cut-out against the bubble).
- * Changed for this app: the fill is the quiet glass tint (or surfaceVariant without glass), the user's own is marked
- * by a thin accent outline in place of Signal's fill; the pill is at least 26 dp so the 200 % font does not cut it.
+ *   a solid opaque fill (the user's own another opaque fill).
+ * Changed for this app: no outline at all (Signal's 1 dp stroke read as a frame over our wallpapers and glass, the
+ * user, 2026-11-01); the same opaque fill with glass or Material: surfaceContainerHigh, and secondaryContainer with
+ * onSecondaryContainer for the count when the pill is the user's own (onSurfaceVariant otherwise); the pill is at
+ * least 26 dp so the 200 % font does not cut it.
  * A tap on an emoji's pill toggles it (onToggle, as before from Element X's MessagesReactionButton); the "+N" pill
  * toggles nothing. Without [onToggle] (the conversation list's preview, inside a card that takes the tap) the pill
  * lets the tap through.
@@ -79,8 +79,7 @@ private fun ReactionPill(pill: Pill, onToggle: ((String) -> Unit)?) {
         } else append("+").append(pill.count)
         if (pill.mine) append(", yours")
     }
-    val fill = LocalGlass.current?.zoneTint ?: MaterialTheme.colorScheme.surfaceVariant
-    val outline = if (pill.mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background
+    val fill = if (pill.mine) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
     val tap = if (group != null && onToggle != null) ({ onToggle(group.key) }) else null
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -88,7 +87,6 @@ private fun ReactionPill(pill: Pill, onToggle: ((String) -> Unit)?) {
             .padding(horizontal = 1.dp)
             .clip(CircleShape)
             .background(fill)
-            .border(1.dp, outline, CircleShape)
             .let { if (tap != null) it.clickable(role = Role.Button, onClick = tap) else it }
             .heightIn(min = 26.dp)
             .padding(horizontal = 7.dp)
@@ -102,7 +100,7 @@ private fun ReactionPill(pill: Pill, onToggle: ((String) -> Unit)?) {
             Text(
                 if (group == null) "+${pill.count}" else pill.count.toString(),
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium),
-                color = if (pill.mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (pill.mine) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
