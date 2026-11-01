@@ -101,7 +101,7 @@ import com.yaz.sms.ui.theme.TEXT_SCALES
 import com.yaz.sms.ui.theme.textScaleLabel
 import org.koin.androidx.compose.koinViewModel
 
-private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY, UNDO, SWIPE_LEFT, SWIPE_RIGHT, OWN_NUMBER, REACTION_FORMAT }
+private enum class OpenDialog { NONE, THEME, TEXT_SIZE, UPDATES, RELAY, UNDO, VANISH, SWIPE_LEFT, SWIPE_RIGHT, OWN_NUMBER, REACTION_FORMAT }
 
 /** The groups of settings: one page after another on a phone, a list and the chosen one's page on a wide window. */
 private val CHAT = SettingsSection("chat", "Encrypted chat", AppIcons.Lock)
@@ -228,6 +228,14 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
     // What opens a choice, a page or a link: tiles of the same grid, the value as the second line.
     val actions: Map<SettingsSection, List<SettingsActionTile>> = mapOf(
         CHAT to listOfNotNull(
+            // Signal's "Default timer for new chats" row (app-settings PrivacySettingsScreen.kt DefaultTimerRow,
+            // https://github.com/signalapp/Signal-Android); hidden with the encrypted chat off, as Relays.
+            if (settings.richChat) SettingsActionTile(
+                id = "vanish", name = "Vanishing messages", title = "Vanishing messages", icon = AppIcons.Timer,
+                value = if (settings.vanishDefault == 0) "Off" else com.yaz.sms.feature.thread.vanishLabel(settings.vanishDefault),
+                summary = "For new encrypted chats you start. Each chat can change it.",
+                onClick = { dialog = OpenDialog.VANISH }
+            ) else null,
             if (settings.richChat) SettingsActionTile(
                 id = "relays", name = "Relays", title = "Relays", icon = AppIcons.Dns,
                 value = relays.firstOrNull() ?: settings.relay.ifBlank { "Automatic" },
@@ -299,6 +307,15 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             )
         ),
         ABOUT to listOf(
+            // Dialer's Guide tile (YAZ/Dialer/app/src/main/java/com/yaz/dialer/feature/settings/SettingsScreen.kt).
+            SettingsActionTile(
+                id = "guide", name = "Guide", title = "Guide", icon = AppIcons.Play,
+                value = "Show again", summary = "See the welcome pages again",
+                onClick = {
+                    viewModel.replayGuide()
+                    onBack()
+                }
+            ),
             SettingsActionTile(
                 id = "updates", name = "Updates", title = "Updates", icon = AppIcons.Update,
                 value = updatesLabel(settings.updates), summary = updatesLabel(settings.updates),
@@ -434,6 +451,14 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             options = listOf(0, 2, 4, 6, 10).map { it to if (it == 0) "Off" else "$it seconds" },
             selected = settings.undoSeconds,
             onPick = viewModel::setUndoSeconds,
+            onDismiss = { dialog = OpenDialog.NONE }
+        )
+        // The thread's own choice list, reused for the default of new chats (Signal's DefaultTimerRow dialog).
+        OpenDialog.VANISH -> com.yaz.sms.feature.thread.VanishDialog(
+            settings.vanishDefault,
+            title = "Vanishing messages",
+            text = "New encrypted chats you start: messages vanish on both phones this long after they are read.",
+            onPick = viewModel::setVanishDefault,
             onDismiss = { dialog = OpenDialog.NONE }
         )
         OpenDialog.SWIPE_LEFT -> ChoiceDialog(

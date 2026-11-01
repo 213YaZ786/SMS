@@ -286,6 +286,8 @@ private fun Main(wide: Boolean, open: OpenThread?, onClose: () -> Unit, onOpenSe
     val store: SettingsStore = koinInject()
     var showWelcome by rememberSaveable { mutableStateOf(!store.current.welcomeSeen) }
     val settings by store.settings.collectAsState()
+    // Settings > Guide asks for the welcome pages again, then the show (as Dialer's DialerApp).
+    LaunchedEffect(settings.welcomeSeen) { if (!settings.welcomeSeen) showWelcome = true }
     // The update installs when the user leaves the app, never during a call, a sending or a voice message.
     val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     if (!showWelcome && !BuildConfig.DEBUG) {

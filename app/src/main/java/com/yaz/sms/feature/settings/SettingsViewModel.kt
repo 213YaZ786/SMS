@@ -28,10 +28,16 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     fun setRichChat(on: Boolean) = store.update { it.copy(richChat = on) }
     fun setRelay(relay: String) = store.update { it.copy(relay = relay) }
     fun setUndoSeconds(seconds: Int) = store.update { it.copy(undoSeconds = seconds) }
+    // The same setter as setUndoSeconds, for Signal-Android's default timer for new chats
+    // (https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/keyvalue/SettingsValues.kt, universalExpireTimer).
+    fun setVanishDefault(seconds: Int) = store.update { it.copy(vanishDefault = seconds) }
     fun setSwipeLeft(name: String) = store.update { it.copy(swipeLeft = name) }
     fun setSwipeRight(name: String) = store.update { it.copy(swipeRight = name) }
     fun setCheckLinks(on: Boolean) = store.update { it.copy(checkLinks = on) }
     fun setTranscribeVoice(on: Boolean) = store.update { it.copy(transcribeVoice = on) }
+    // Settings > Guide: the welcome pages again. Taken from Dialer's replayGuide
+    // (https://github.com/213YaZ786/Dialer/blob/main/app/src/main/java/com/yaz/dialer/feature/settings/SettingsViewModel.kt).
+    fun replayGuide() = store.update { it.copy(welcomeSeen = false) }
     fun setShareCard(on: Boolean) = store.update { it.copy(shareCard = on) }
     // The same setter as the ones above; the engine takes it through RichChat.applyReadReceipts.
     // Delta Chat Android: ChatsPreferenceFragment.ReadReceiptToggleListener.

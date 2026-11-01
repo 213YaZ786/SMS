@@ -36,6 +36,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.animation.EnterTransition
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onLongClick
@@ -232,7 +234,19 @@ fun Composer(
         val out = java.io.File(dir, "${System.currentTimeMillis()}.jpg")
         val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".mms", out)
         shot = uri
-        camera.launch(uri)
+        // startActivity throws ActivityNotFoundException when no app handles ACTION_IMAGE_CAPTURE; said, never silent.
+        // https://developer.android.com/media/camera/camera-intents
+        try {
+            camera.launch(uri)
+        } catch (e: android.content.ActivityNotFoundException) {
+            android.util.Log.w("Composer", "camera: " + e.javaClass.simpleName)
+            haptics.reject()
+            android.widget.Toast.makeText(context, "No camera app opened", android.widget.Toast.LENGTH_SHORT).show()
+        } catch (e: SecurityException) {
+            android.util.Log.w("Composer", "camera: " + e.javaClass.simpleName)
+            haptics.reject()
+            android.widget.Toast.makeText(context, "The camera app refused", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
     val askCamera = com.yaz.sms.ui.component.rememberPermissionAsk(
         arrayOf(Manifest.permission.CAMERA),
@@ -357,7 +371,10 @@ fun Composer(
         // What the + offers, above the bar, on the + side: round buttons of glass.
         androidx.compose.animation.AnimatedVisibility(
             visible = arcOpen && take == null,
-            enter = fadeIn(),
+            // No fade on the parent: while it fades, its layer is offscreen and clips what the tiles draw
+            // above its bounds (their pop overshoots); each Tile fades and pops itself.
+            // https://developer.android.com/develop/ui/compose/graphics/draw/modifiers#compositing-strategy
+            enter = EnterTransition.None,
             exit = fadeOut() + androidx.compose.animation.shrinkVertically(),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -389,6 +406,8 @@ fun Composer(
             },
             styles = styleButtons
         )
+        // The mic grows while it records; the recording pane and the lock follow this one value.
+        val micScale = rememberMicScale(take != null && take?.locked == false)
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
             val recording = take
             if (recording != null && recording.locked) {
@@ -435,7 +454,9 @@ fun Composer(
                 }
             }
             if (recording != null) {
-                Column(Modifier.weight(1f)) {
+                // The grown mic (52 dp, up to 1.5x) takes half its growth on each side: the pane narrows at the
+                // same pace (end padding = (scale - 1) * 26 dp), so they never touch. Never negative: the spring undershoots.
+                Column(Modifier.weight(1f).padding(end = (26.dp * (micScale - 1f)).coerceAtLeast(0.dp))) {
                     if (!recording.locked) Text(
                         "‹ Slide to cancel",
                         style = MaterialTheme.typography.labelMedium,
@@ -538,25 +559,25 @@ fun Composer(
                     )
                 }
                 // The camera: what the + arc's Camera tile does.
-                if (quickCamera) Box(
-                    Modifier.align(Alignment.BottomEnd).padding(end = 6.dp, bottom = 6.dp).size(40.dp).clip(CircleShape).clickable(onClickLabel = "Camera") {
-                        haptics.tick()
-                        arcOpen = false
-                        pickDrop.value?.invoke(Drop.CAMERA)
-                    },
-                    contentAlignment = Alignment.Center
+                if (quickCamera) PressedIconTap(
+                    icon = AppIcons.PhotoCamera,
+                    label = "Camera",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 6.dp, bottom = 6.dp)
                 ) {
-                    Icon(AppIcons.PhotoCamera, contentDescription = "Camera", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    haptics.tick()
+                    arcOpen = false
+                    pickDrop.value?.invoke(Drop.CAMERA)
                 }
                 // Aa: the styles, shown or put away.
-                if (text.isNotEmpty()) Box(
-                    Modifier.align(Alignment.BottomEnd).padding(end = 6.dp, bottom = 6.dp).size(40.dp).clip(CircleShape).clickable(onClickLabel = "Text styles") {
-                        haptics.tick()
-                        formatting = !formatting
-                    },
-                    contentAlignment = Alignment.Center
+                if (text.isNotEmpty()) PressedIconTap(
+                    icon = AppIcons.TextFormat,
+                    label = "Text styles",
+                    tint = if (formatting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 6.dp, bottom = 6.dp)
                 ) {
-                    Icon(AppIcons.TextFormat, contentDescription = "Text styles", tint = if (formatting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    haptics.tick()
+                    formatting = !formatting
                 }
               }
               }
@@ -568,7 +589,6 @@ fun Composer(
             }
             // With nothing written, Send is a microphone: held, it records.
             val micMode = !canSend && editing == null && (take == null || take?.locked == false)
-            val micScale = rememberMicScale(take != null && take?.locked == false)
             val density = androidx.compose.ui.platform.LocalDensity.current
             val cancelAt = with(density) { 110.dp.toPx() }
             val lockAt = with(density) { 90.dp.toPx() }
@@ -671,12 +691,21 @@ fun Composer(
             } else Modifier)) {
             // While recording, the lock waits above the mic; slid up to, it frees the hand.
             if (take != null && take?.locked == false) {
+                // Signal's lock_drop_target: a pill 40 x 64 dp, the lock at its top, a chevron up under it, both in the
+                // secondary tint (signal_icon_tint_secondary).
+                // https://github.com/signalapp/Signal-Android/blob/main/app/src/main/res/layout/microphone_recorder_view.xml
+                // Its middle sits at the mic's middle plus the mic's grown half height (26 dp * scale), a gap of
+                // 12 dp and the pill's half height (32 dp) above it; it rises with the finger.
                 FloatingPane(shape = ShapeDefaults.ExtraLarge, modifier = Modifier
                     .align(Alignment.Center)
-                    .graphicsLayer { translationY = -88.dp.toPx() + rise * 0.6f }
-                    .size(36.dp, 56.dp)) {
-                    Box(Modifier.size(36.dp, 56.dp), contentAlignment = Alignment.TopCenter) {
-                        Icon(AppIcons.Lock, contentDescription = "Slide up to lock", modifier = Modifier.padding(top = 8.dp).size(18.dp))
+                    .graphicsLayer { translationY = -(26.dp * micScale + 12.dp + 32.dp).toPx() + rise * 0.6f }
+                    .size(40.dp, 64.dp)) {
+                    Column(
+                        Modifier.size(40.dp, 64.dp).semantics { contentDescription = "Slide up to lock" },
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp).size(24.dp))
+                        Icon(AppIcons.KeyboardArrowUp, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp).size(18.dp))
                     }
                 }
             }
@@ -707,6 +736,47 @@ fun Composer(
             }
             }
         }
+    }
+}
+
+/**
+ * A tap target of 40 dp inside the field's glass: transparent, no ripple, no shape; the icon itself shows the press
+ * by dimming and shrinking (alpha 0.4, scale 0.88), as a highlighted UIButton dims its icon in iOS.
+ * Pressed state: https://developer.android.com/develop/ui/compose/touch-input/user-interactions/handling-interactions
+ * (interactionSource.collectIsPressedAsState); the spring as RoundAction (ui/component/RoundAction.kt).
+ */
+@Composable
+private fun PressedIconTap(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: androidx.compose.ui.graphics.Color,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val dim by animateFloatAsState(if (pressed) 0.4f else 1f, spring(dampingRatio = 0.45f, stiffness = 700f), label = "dim")
+    val sink by animateFloatAsState(if (pressed) 0.88f else 1f, spring(dampingRatio = 0.45f, stiffness = 700f), label = "sink")
+    Box(
+        modifier.size(40.dp).clickable(
+            interactionSource = source,
+            indication = null,
+            role = androidx.compose.ui.semantics.Role.Button,
+            onClickLabel = label,
+            onClick = onClick
+        ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = tint,
+            modifier = Modifier.graphicsLayer {
+                alpha = dim.coerceIn(0f, 1f)
+                scaleX = sink
+                scaleY = sink
+            }
+        )
     }
 }
 
