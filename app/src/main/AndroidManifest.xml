@@ -54,6 +54,8 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Messages sent later survive a reboot (the user said yes, 2026-10-16). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Language's translation service, a signature permission of our apps (Language's manifest). -->
+    <uses-permission android:name="com.yaz.language.permission.TRANSLATE" />
     <!-- The encrypted chat's invite, for the Contacts app when two phones touch: apps signed with the same key only. -->
     <permission
         android:name="${applicationId}.permission.INVITE"
@@ -74,12 +76,11 @@
         <!-- Our Keyboard app, to know it is the current keyboard (its signature compared). -->
         <package android:name="com.yaz.keyboard" />
         <package android:name="com.yaz.keyboard.debug" />
-        <!-- Our Voice app, which writes voice messages out (its signature compared). -->
-        <package android:name="com.yaz.voice" />
-        <package android:name="com.yaz.voice.debug" />
-        <!-- Translator, whose service the message menu's Translate binds (signature checked in core/translate/Translator);
-             as Keyboard's manifest, https://github.com/213YaZ786/Keyboard/blob/main/app/src/main/AndroidManifest.xml -->
-        <package android:name="dev.davidv.translator" />
+        <!-- Our Language app: it writes voice messages out and its service is what the message menu's Translate binds
+             (signature checked in core/voice/Transcriber and core/translate/Translator);
+             https://developer.android.com/training/package-visibility/declaring -->
+        <package android:name="com.yaz.language" />
+        <package android:name="com.yaz.language.debug" />
         <intent>
             <action android:name="com.dialer.app.action.SHOW_NUMBER" />
             <data android:scheme="tel" />

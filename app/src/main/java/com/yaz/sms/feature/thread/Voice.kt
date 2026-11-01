@@ -231,8 +231,8 @@ private fun VoiceFrame(inBubble: Boolean, mine: Boolean, content: @Composable ()
 
 /**
  * The words of a voice message under it, heard on the phone the first
- * time it is shown, by the Voice app; three lines, the rest on a tap.
- * Without Voice on the phone, nothing shows.
+ * time it is shown, by the Language app; three lines, the rest on a tap.
+ * Without Language on the phone, nothing shows.
  */
 @Composable
 private fun Transcript(part: MmsPart) {

@@ -37,7 +37,7 @@ A messaging app for Android. No account, no tracking, no ads.
 - Short answers offered for the last message.
 - Senders you don't know kept apart, sorted as Transactions and
   Promotions; codes still notify.
-- Voice messages written out under them by the Voice app, on the phone
+- Voice messages written out under them by the Language app, on the phone
   (Android 13 or newer, Voice installed).
 - Light and dark themes in your wallpaper's colours.
 

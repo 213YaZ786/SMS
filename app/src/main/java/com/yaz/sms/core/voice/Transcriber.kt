@@ -33,7 +33,7 @@ import java.io.File
 import java.util.Locale
 
 /**
- * Voice messages written out by the Voice app, the phone's speech recognition: SMS keeps no engine and no model.
+ * Voice messages written out by the Language app, the phone's speech recognition: SMS keeps no engine and no model.
  * The message is decoded to 16 kHz mono 16-bit PCM (AudioDecode), written into a pipe and handed to Voice's
  * recognition service through SpeechRecognizer with RecognizerIntent.EXTRA_AUDIO_SOURCE (Android 13), the session
  * lasting as long as the sound (EXTRA_SEGMENTED_SESSION = EXTRA_AUDIO_SOURCE, RecognizerIntent's reference
@@ -90,13 +90,13 @@ class Transcriber(private val context: Context, scope: CoroutineScope) {
         }
 
     /**
-     * The package of the Voice app, or null: it must be one of ours (the debug package in a debug build only,
+     * The package of the Language app, or null: it must be one of ours (the debug package in a debug build only,
      * Sisters.packages) and signed as this app, compared as the phone kit's Sisters.isOurs does
      * (PackageManager.checkSignatures,
      * https://developer.android.com/reference/android/content/pm/PackageManager#checkSignatures(java.lang.String,%20java.lang.String)).
      * Sisters.isOurs lists Dialer, SMS and Contacts only, so the comparison is made here.
      */
-    private fun voicePackage(): String? = Sisters.packages("voice").firstOrNull { pkg ->
+    private fun voicePackage(): String? = Sisters.packages("language").firstOrNull { pkg ->
         runCatching { context.packageManager.checkSignatures(context.packageName, pkg) == PackageManager.SIGNATURE_MATCH }
             .getOrDefault(false)
     }
@@ -227,8 +227,8 @@ class Transcriber(private val context: Context, scope: CoroutineScope) {
     }
 
     private companion object {
-        /** Voice's recognition service (its manifest), the same in its debug build. */
-        const val SERVICE = "com.yaz.voice.recognition.VoiceRecognitionService"
+        /** Language's recognition service (its manifest), the same in its debug build. */
+        const val SERVICE = "com.yaz.language.recognition.VoiceRecognitionService"
 
         /** A voice message of ten minutes at most (AudioDecode) is written out in well under this. */
         const val TIMEOUT_MS = 20 * 60_000L

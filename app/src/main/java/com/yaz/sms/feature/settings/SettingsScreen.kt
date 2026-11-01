@@ -138,7 +138,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
     val relays by androidx.compose.runtime.produceState(emptyList<String>(), chatStatus, changes) { value = chat.relays() }
     // Only where the country keeps ranges for sales.
     val country = remember { SalesCalls.country(context) }
-    // Shown only where the Voice app is on the phone (a button whose target app is missing hides).
+    // Shown only where the Language app is on the phone (a button whose target app is missing hides).
     val transcriber: com.yaz.sms.core.voice.Transcriber = org.koin.compose.koinInject()
 
     val tiles: Map<SettingsSection, List<SettingsSwitchTile>> = mapOf(
@@ -187,7 +187,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             ),
             if (transcriber.available) SettingsSwitchTile(
                 id = "voice", name = "Transcribe voice", title = "Transcribe voice messages", icon = AppIcons.Mic,
-                summary = "By the Voice app, on the phone.",
+                summary = "By Language, on the phone.",
                 checked = settings.transcribeVoice, onChange = viewModel::setTranscribeVoice
             ) else null,
             SettingsSwitchTile(
