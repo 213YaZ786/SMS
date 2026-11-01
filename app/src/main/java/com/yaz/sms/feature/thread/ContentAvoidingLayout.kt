@@ -28,6 +28,13 @@ import kotlin.math.roundToInt
  * libraries/ui-common/src/main/kotlin/io/element/android/libraries/ui/common/layout/ContentAvoidingLayout.kt):
  * the measuring and placing are the same; the test mode column is left out (the screenshot tests draw
  * the real layout), and the measure of the last line is fixed for right-to-left, see [measureLastLine].
+ *
+ * Changed from Element X (the user, 2026-11-01): Element X places the overlay bottom-aligned
+ * (`layoutHeight - overlayHeight`); here, when the overlay shares the content's last line, its vertical
+ * centre sits on that line's centre (the line's extent from Compose's TextLayoutResult.getLineTop and
+ * getLineBottom, https://developer.android.com/reference/kotlin/androidx/compose/ui/text/TextLayoutResult),
+ * so the text, the time and the delivery mark read on one level. The layout grows if the overlay then
+ * falls below the content. On a row of its own, or when the content gives no line, the placement is Element X's.
  */
 @Composable
 internal fun ContentAvoidingLayout(
@@ -59,6 +66,7 @@ internal fun ContentAvoidingLayout(
         var layoutHeight = contentPlaceable.height
 
         val data = scope.data.value
+        var own = false
 
         // Free space: the content's width less the part of it the overlay cannot cover.
         val freeSpace = max(contentPlaceable.width - data.nonOverlappingContentWidth, 0)
@@ -66,6 +74,7 @@ internal fun ContentAvoidingLayout(
         when {
             // Content and overlay together are wider than the room: the overlay takes a row of its own.
             !data.canOverlay() || !shrinkContent && data.nonOverlappingContentWidth + overlayPlaceable.width > constraints.maxWidth -> {
+                own = true
                 layoutHeight += overlayPlaceable.height + overlayOffset.y.roundToPx()
             }
             // The content is narrower than the room: the overlay may go to its right.
@@ -82,22 +91,33 @@ internal fun ContentAvoidingLayout(
         layoutWidth = max(layoutWidth, constraints.minWidth)
         layoutHeight = max(layoutHeight, constraints.minHeight)
 
+        // On the last line: the overlay's centre on the line's centre; the layout grows if it falls below.
+        val lineCentre = if (own || data.lastLineCentreFromBottom < 0) null else contentPlaceable.height - data.lastLineCentreFromBottom
+        val overlayY = if (lineCentre != null) {
+            max(lineCentre - overlayPlaceable.height / 2, 0).also { layoutHeight = max(layoutHeight, it + overlayPlaceable.height) }
+        } else {
+            layoutHeight - overlayPlaceable.height + overlayOffset.y.roundToPx()
+        }
+
         layout(layoutWidth, layoutHeight) {
             contentPlaceable.placeRelative(0, 0)
-            overlayPlaceable.placeRelative(layoutWidth - overlayPlaceable.width, layoutHeight - overlayPlaceable.height + overlayOffset.y.roundToPx())
+            overlayPlaceable.placeRelative(layoutWidth - overlayPlaceable.width, overlayY)
         }
     }
 }
 
 /**
  * What the content tells the layout, in pixels, as Element X's ContentAvoidingLayoutData:
- * its full size, and the size of the part the overlay cannot cover.
+ * its full size, and the size of the part the overlay cannot cover; and, this app's addition, where the
+ * last line's centre is: [lastLineCentreFromBottom], in pixels up from the content's bottom edge (from the
+ * bottom, so a subject above the words needs no offset), -1 when unknown.
  */
 internal data class ContentAvoidingLayoutData(
     val contentWidth: Int = 0,
     val contentHeight: Int = 0,
     val nonOverlappingContentWidth: Int = contentWidth,
-    val nonOverlappingContentHeight: Int = contentHeight
+    val nonOverlappingContentHeight: Int = contentHeight,
+    val lastLineCentreFromBottom: Int = -1
 ) {
     fun canOverlay(): Boolean = contentWidth != Int.MAX_VALUE
 
@@ -133,18 +153,22 @@ private class ContentAvoidingLayoutScopeInstance(
  *   last line against the overlay's side: nothing may overlay it, as Signal puts the time under
  *   such text (V2FooterPositionDelegate, https://github.com/signalapp/Signal-Android).
  *
- * [extraStart] and [extraEnd] are the padding the Text sits in, outside its own layout.
+ * [extraStart] and [extraEnd] are the padding the Text sits in, outside its own layout; [extraBottom] the
+ * padding under it, the Text being the content's last child (the last line's centre is reported from the
+ * content's bottom, so the Text's top padding and any child above it need not be known).
  */
 @Composable
 internal fun measureLastLine(
     onContentLayoutChange: (ContentAvoidingLayoutData) -> Unit,
     extraStart: Dp = 0.dp,
-    extraEnd: Dp = 0.dp
+    extraEnd: Dp = 0.dp,
+    extraBottom: Dp = 0.dp
 ): (TextLayoutResult) -> Unit {
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
     val start = with(density) { extraStart.roundToPx() }
     val end = with(density) { extraEnd.roundToPx() }
+    val bottom = with(density) { extraBottom.roundToPx() }
     return { text: TextLayoutResult ->
         val last = text.lineCount - 1
         val paragraph = runCatching { text.getParagraphDirection(0) }.getOrNull()
@@ -166,7 +190,8 @@ internal fun measureLastLine(
                     contentWidth = text.size.width + start + end,
                     contentHeight = text.size.height,
                     nonOverlappingContentWidth = lineWidth + start,
-                    nonOverlappingContentHeight = text.getLineBottom(last).roundToInt()
+                    nonOverlappingContentHeight = text.getLineBottom(last).roundToInt(),
+                    lastLineCentreFromBottom = (text.size.height - (text.getLineTop(last) + text.getLineBottom(last)) / 2f).roundToInt() + bottom
                 )
             )
         }

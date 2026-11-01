@@ -121,8 +121,8 @@ internal fun MessageFooter(
     val ink = if (onMedia) Color.White else LocalContentColor.current.copy(alpha = 0.66f)
     val gap = 10.dp
     val edge = 12.dp
-    // The bottom keeps the footer's line level with the last line of words, whose own bottom padding is 6 dp.
-    val pad = if (!mismatched) PaddingValues(start = gap, end = edge, bottom = 8.dp) else PaddingValues(start = edge, end = gap, bottom = 8.dp)
+    // No lift: ContentAvoidingLayout centres this row on the last line of words.
+    val pad = if (!mismatched) PaddingValues(start = gap, end = edge) else PaddingValues(start = edge, end = gap)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = if (onMedia) {
@@ -210,7 +210,7 @@ internal fun WithFooter(
         }
         FooterAt.Below -> Column(modifier) {
             content {}
-            Box(Modifier.align(Alignment.End)) { footer(false) }
+            Box(Modifier.align(Alignment.End).padding(bottom = 8.dp)) { footer(false) }
         }
     }
 }

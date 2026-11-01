@@ -133,12 +133,12 @@ private fun SubjectLine(subject: String, top: Dp, bottom: Dp) {
 /**
  * The words of a message. An edit changes them in a soft blur, not at a stroke; the last line is
  * measured for the footer (Element X's ContentAvoidingLayout.measureLastTextLine, as fixed in
- * [measureLastLine]). Padded 16 dp at the sides, the bottom short so the footer's line sits level
- * with the last line of words.
+ * [measureLastLine]). Padded 16 dp at the sides, [top] above and 10 dp under: a one-line bubble
+ * has its text centred, and the footer centres on the last line whatever the top.
  */
 @Composable
 private fun Words(text: AnnotatedString, blurred: Boolean, top: Dp, onLayout: (ContentAvoidingLayoutData) -> Unit) {
-    val measure = measureLastLine(onLayout, extraStart = 16.dp, extraEnd = 16.dp)
+    val measure = measureLastLine(onLayout, extraStart = 16.dp, extraEnd = 16.dp, extraBottom = 10.dp)
     AnimatedContent(
         text,
         transitionSpec = {
@@ -151,7 +151,7 @@ private fun Words(text: AnnotatedString, blurred: Boolean, top: Dp, onLayout: (C
             shown,
             style = MaterialTheme.typography.bodyLarge,
             onTextLayout = measure,
-            modifier = Modifier.blur(if (blurred) 14.dp else blur).padding(start = 16.dp, end = 16.dp, top = top, bottom = 6.dp)
+            modifier = Modifier.blur(if (blurred) 14.dp else blur).padding(start = 16.dp, end = 16.dp, top = top, bottom = 10.dp)
         )
     }
 }
