@@ -39,6 +39,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.InputTransformation
+import androidx.compose.foundation.text.input.OutputTransformation
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
@@ -86,6 +92,9 @@ fun Composer(
     quoteFrom: String? = null,
     restore: String? = null,
     onRestored: () -> Unit = {},
+    /** The saved draft, read late from the database: taken only while the field is still empty. */
+    lateDraft: String? = null,
+    onLateDraftTaken: () -> Unit = {},
     onSchedule: ((String, Int) -> Unit)? = null,
     /** Held, Send offers the effects (and sending later): the text and SIM go there. */
     /** Sends with an effect chosen from the + before the words were written. */
@@ -110,7 +119,14 @@ fun Composer(
 ) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
-    var text by rememberSaveable { mutableStateOf(initial) }
+    // The field's one source of truth: text, selection and the keyboard's composition live in a TextFieldState,
+    // so a word being composed survives every recomposition (state-based BasicTextField, saved like the old
+    // rememberSaveable text). https://developer.android.com/develop/ui/compose/text/user-input
+    // https://developer.android.com/develop/ui/compose/text/migrate-state-based
+    val state = rememberTextFieldState(initial)
+    val text = state.text.toString()
+    // Where the cursor is, or what is selected: a style wraps it.
+    val sel = state.selection
     // The draft kept when the user goes, as AOSP Messaging keeps it on pause
     // (ConversationFragment.onPause -> saveDraft); never a message being edited.
     if (onDraft != null) {
@@ -127,22 +143,27 @@ fun Composer(
             }
         }
     }
-    // Where the cursor is, or what is selected: a style wraps it.
-    var sel by remember { mutableStateOf(androidx.compose.ui.text.TextRange(initial.length)) }
     var formatting by remember { mutableStateOf(false) }
     // A message taken back before it went comes back into the field.
     androidx.compose.runtime.LaunchedEffect(restore) {
         if (restore != null) {
-            text = restore
+            state.setTextAndPlaceCursorAtEnd(restore)
             onRestored()
+        }
+    }
+    // A draft read late never overwrites what has been typed meanwhile; the cursor lands at its end.
+    androidx.compose.runtime.LaunchedEffect(lateDraft) {
+        if (lateDraft != null) {
+            if (state.text.isEmpty() && editing == null) state.setTextAndPlaceCursorAtEnd(lateDraft)
+            onLateDraftTaken()
         }
     }
     // One of the user's own messages being changed: its text in the field until sent or let go.
     var before by remember { mutableStateOf("") }
     androidx.compose.runtime.LaunchedEffect(editing) {
         if (editing != null) {
-            before = text
-            text = editing
+            before = state.text.toString()
+            state.setTextAndPlaceCursorAtEnd(editing)
         }
     }
     val sims = remember { activeSims(context) }
@@ -192,7 +213,8 @@ fun Composer(
             } else {
                 haptics.done()
                 val link = com.yaz.sms.core.sms.HereNow.link(here)
-                text = if (text.isBlank()) "📍 $link" else text.trimEnd() + "\n📍 " + link
+                val now = state.text.toString()
+                state.setTextAndPlaceCursorAtEnd(if (now.isBlank()) "📍 $link" else now.trimEnd() + "\n📍 " + link)
             }
         }
     }
@@ -313,7 +335,7 @@ fun Composer(
                         Modifier.size(48.dp).clip(CircleShape).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (changing) "Cancel editing" else "Cancel reply") {
                             haptics.tick()
                             if (changing) {
-                                text = before
+                                state.setTextAndPlaceCursorAtEnd(before)
                                 onCancelEdit()
                             } else {
                                 onClearQuote()
@@ -347,8 +369,10 @@ fun Composer(
                 FloatingPane(shape = CircleShape, onClick = {
                     haptics.tick()
                     val (t, r) = com.yaz.sms.core.sms.Markup.wrap(text, sel.min, sel.max, style)
-                    text = t
-                    sel = androidx.compose.ui.text.TextRange(r.first, r.last)
+                    state.edit {
+                        replace(0, this.length, t)
+                        selection = androidx.compose.ui.text.TextRange(r.first, r.last)
+                    }
                 }, modifier = Modifier.size(40.dp)) {
                     Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
                         Icon(icon, contentDescription = style.name.lowercase(), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
@@ -390,15 +414,17 @@ fun Composer(
         fun sendLater() {
             val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
             onSchedule?.invoke(text, sub)
-            text = ""
+            state.clearText()
         }
         MentionLine(
             names = mentionMatches,
             laterReady = laterReady,
             onMention = { who ->
                 val (t, c) = com.yaz.sms.core.chat.Mentions.insert(text, sel.end, who)
-                text = t
-                sel = androidx.compose.ui.text.TextRange(c)
+                state.edit {
+                    replace(0, this.length, t)
+                    selection = androidx.compose.ui.text.TextRange(c)
+                }
             },
             onLater = {
                 haptics.tick()
@@ -534,24 +560,37 @@ fun Composer(
                     if (text.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val faded = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     val mentionInk = MaterialTheme.colorScheme.primary
-                    BasicTextField(
-                        value = androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(sel.start.coerceIn(0, text.length), sel.end.coerceIn(0, text.length))),
-                        onValueChange = {
-                            // Part of a mention taken away: all of it goes, the @ stays (Signal's MentionDeleter).
-                            val cut = if (mentionNames.isEmpty()) null else com.yaz.sms.core.chat.Mentions.afterEdit(text, it.text, mentionNames)
+                    // State-based BasicTextField: the keyboard's composition is kept by the state, never rebuilt.
+                    // https://developer.android.com/develop/ui/compose/text/migrate-state-based
+                    // Part of a mention taken away: all of it goes, the @ stays (Signal's MentionDeleter), as an
+                    // InputTransformation (the migration guide: onValueChange filters become InputTransformation).
+                    val mentionDeleter = remember(mentionNames) {
+                        if (mentionNames.isEmpty()) null else InputTransformation {
+                            val cut = com.yaz.sms.core.chat.Mentions.afterEdit(originalText.toString(), asCharSequence().toString(), mentionNames)
                             if (cut != null) {
-                                text = cut.first
-                                sel = androidx.compose.ui.text.TextRange(cut.second)
-                            } else {
-                                text = it.text
-                                sel = it.selection
+                                val whole = onWholeCharacters(cut.first, cut.second)
+                                replace(0, this.length, whole)
+                                selection = androidx.compose.ui.text.TextRange(cut.second)
                             }
-                        },
-                        // The styles show as they are written, their marks faint; the members named stand out.
-                        visualTransformation = { raw -> androidx.compose.ui.text.input.TransformedText(markupHint(raw.text, faded, mentionInk, mentionNames), androidx.compose.ui.text.input.OffsetMapping.Identity) },
+                        }
+                    }
+                    // The styles show as they are written, their marks faint; the members named stand out: display
+                    // only, as an OutputTransformation (the guide: visualTransformation becomes OutputTransformation;
+                    // spans only, so offsets stay the identity).
+                    val markupOutput = remember(faded, mentionInk, mentionNames) {
+                        OutputTransformation {
+                            markupHint(asCharSequence().toString(), faded, mentionInk, mentionNames).spanStyles.forEach {
+                                addStyle(it.item, it.start, it.end)
+                            }
+                        }
+                    }
+                    BasicTextField(
+                        state = state,
+                        inputTransformation = mentionDeleter,
+                        outputTransformation = markupOutput,
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        maxLines = 6,
+                        lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 6),
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                         // The field named by its hint for TalkBack and tests: a text field's label in its semantics,
                         // https://developer.android.com/develop/ui/compose/accessibility/key-steps (content descriptions).
@@ -603,7 +642,7 @@ fun Composer(
                 if (editing != null) {
                     haptics.done()
                     onEdit(text)
-                    text = before
+                    state.setTextAndPlaceCursorAtEnd(before)
                     return
                 }
                 val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
@@ -612,14 +651,14 @@ fun Composer(
                 if (effect != null && onSendEffect != null) {
                     haptics.done()
                     onSendEffect(text, sub, effect, attachments)
-                    text = ""
+                    state.clearText()
                     attachments = emptyList()
                     armed = null
                     return
                 }
                 if (onSend(text, sub, attachments)) {
                     haptics.done()
-                    text = ""
+                    state.clearText()
                     attachments = emptyList()
                 } else {
                     haptics.reject()
@@ -792,6 +831,21 @@ private fun contactCard(context: android.content.Context, picked: android.net.Ur
         if (c.moveToFirst()) android.net.Uri.withAppendedPath(android.provider.ContactsContract.Contacts.CONTENT_VCARD_URI, c.getString(0)) else null
     }
 }.getOrNull()
+
+/**
+ * [text] where a mention was cut at [at] (just after the kept @): what follows must start on a whole character,
+ * so the half of a surrogate pair or the combining marks and joiners that belonged to the cut part go too.
+ * Signal's MentionDeleter replaces the whole span range with the @ alone
+ * (https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/components/mention/MentionDeleter.java);
+ * the boundary test is Android's BreakIterator (https://developer.android.com/reference/java/text/BreakIterator).
+ */
+private fun onWholeCharacters(text: String, at: Int): String {
+    if (at !in 0 until text.length) return text
+    val boundaries = java.text.BreakIterator.getCharacterInstance().apply { setText(text) }
+    var end = at
+    while (end < text.length && (text[end].isLowSurrogate() || !boundaries.isBoundary(end))) end++
+    return if (end == at) text else text.removeRange(at, end)
+}
 
 /** The text being written with its styles shown and their marks faint, the marks kept in place. */
 private fun markupHint(

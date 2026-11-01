@@ -369,6 +369,9 @@ private fun ThreadContent(
         allWaiting.filter { (thread != null && it.thread == thread) || it.people.toSet() == set }
     }
     var restore by remember { mutableStateOf<String?>(null) }
+    // The saved draft read from the database arrives late: the field takes it only while still empty,
+    // so what the user has already typed is never overwritten (Composer's lateDraft).
+    var lateDraft by remember { mutableStateOf<String?>(null) }
     // A send refused after the delay gives its text back, even if the screen was away meanwhile.
     val returnedAll by sends.returned.collectAsState()
     LaunchedEffect(returnedAll, people) {
@@ -379,7 +382,7 @@ private fun ThreadContent(
     LaunchedEffect(thread) {
         if (draft.isEmpty()) {
             val t = thread ?: return@LaunchedEffect
-            withContext(Dispatchers.IO) { com.yaz.sms.data.sms.Drafts.of(context, t) }?.let { restore = it }
+            withContext(Dispatchers.IO) { com.yaz.sms.data.sms.Drafts.of(context, t) }?.let { lateDraft = it }
         }
     }
     // A message held back to go at a chosen time.
@@ -1004,6 +1007,8 @@ private fun ThreadContent(
                 modifier = Modifier,
                 restore = restore,
                 onRestored = { restore = null },
+                lateDraft = lateDraft,
+                onLateDraftTaken = { lateDraft = null },
                 onSchedule = { text, sub -> scheduling = text to sub },
                 editing = editing?.second,
                 onCancelEdit = { editing = null },
