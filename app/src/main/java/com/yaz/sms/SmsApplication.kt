@@ -34,7 +34,7 @@ class SmsApplication : Application() {
         // just taken, files opened in another app) does not pile up over the years.
         Thread {
             val dayAgo = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
-            listOf("shared", "camera", "outgoing").forEach { dir ->
+            listOf("shared", "shared-in", "keyboard-in", "camera", "outgoing").forEach { dir ->
                 java.io.File(cacheDir, dir).walkBottomUp().filter { it.lastModified() < dayAgo && it.name != dir }.forEach { it.delete() }
             }
         }.apply { isDaemon = true }.start()

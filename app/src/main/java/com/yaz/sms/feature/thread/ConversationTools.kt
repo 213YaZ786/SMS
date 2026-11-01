@@ -146,6 +146,7 @@ fun SilenceDialog(until: Long?, onPick: (Long?) -> Unit, onDismiss: () -> Unit) 
 @Composable
 fun SearchBar(query: String, onQuery: (String) -> Unit, found: Int, at: Int, onOlder: () -> Unit, onNewer: () -> Unit, onClose: () -> Unit) {
     val focus = remember { FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
     FloatingPane(shape = CircleShape, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -161,6 +162,10 @@ fun SearchBar(query: String, onQuery: (String) -> Unit, found: Int, at: Int, onO
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    // The Search key: the matches already follow the typing, so it only puts the keyboard away, as
+                    // Google Messages' search does (Compose's KeyboardActions + LocalSoftwareKeyboardController,
+                    // https://developer.android.com/develop/ui/compose/text/user-input#keyboard-actions).
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { keyboard?.hide() }),
                     modifier = Modifier.fillMaxWidth().focusRequester(focus)
                 )
             }

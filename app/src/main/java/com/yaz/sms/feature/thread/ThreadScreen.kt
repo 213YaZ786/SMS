@@ -1,6 +1,7 @@
 package com.yaz.sms.feature.thread
 
 import com.yaz.sms.ui.glass.glassZone
+import com.yaz.sms.core.common.takeWhole
 
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
@@ -301,6 +302,7 @@ private fun ThreadContent(
     val linked = remember(links, to) { if (group || to.isBlank()) null else chat.linkFor(to) }
     // A group goes over the encrypted chat when each of its members does.
     val encrypted = remember(links, people) { linked != null || (group && chat.groupReady(people)) }
+    val broadcastThreads by com.yaz.sms.data.settings.BroadcastStore.of(context).threads.collectAsState()
     LaunchedEffect(encrypted, chatChanges, shown) { if (encrypted && shown) chat.markSeen(people) }
     // Live location (Delta Chat Android's location streaming): ours, while shared, and what the others share.
     val locator: com.yaz.sms.core.chat.LiveLocator = koinInject()
@@ -1029,6 +1031,10 @@ private fun ThreadContent(
                     openRequests.sharedTo.value = null
                 },
                 effectsCarried = encrypted,
+                // The SMS counter: only for a plain SMS, as Google Messages. A number alone, or a group marked "One SMS
+                // each" (BroadcastStore, read by PendingSends.send), goes as SMS; the encrypted chat and a group MMS do not.
+                plainSms = !encrypted && people.none { '@' in it } &&
+                    (!group || (thread != null && thread in broadcastThreads)),
                 onPoll = if (encrypted) ({ pollOpen = true }) else null,
                 onLive = if (encrypted) ({ seconds -> scope.launch { if (locator.share(people, seconds)) haptics.done() else haptics.reject() } }) else null,
                 onSend = { typed, sub, attachments ->
@@ -2163,8 +2169,12 @@ internal fun GroupNameDialog(current: String, onDone: (String) -> Unit, onDismis
         text = {
             androidx.compose.material3.OutlinedTextField(
                 value = name,
-                onValueChange = { name = it.take(80) },
+                // Cut on a whole grapheme (Signal's BreakIteratorCompat, core/common/Graphemes.kt); a name is capitalised
+                // by word, as AOSP Contacts' name fields are (KeyboardCapitalization.Words,
+                // https://developer.android.com/reference/kotlin/androidx/compose/ui/text/input/KeyboardCapitalization).
+                onValueChange = { name = it.takeWhole(80) },
                 singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Words),
                 placeholder = { Text("Family, Friday team…") }
             )
         },

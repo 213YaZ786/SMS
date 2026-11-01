@@ -38,6 +38,11 @@ import androidx.compose.material3.ShapeDefaults
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.animation.EnterTransition
+import androidx.compose.foundation.content.MediaType
+import androidx.compose.foundation.content.ReceiveContentListener
+import androidx.compose.foundation.content.consume
+import androidx.compose.foundation.content.contentReceiver
+import androidx.compose.foundation.content.hasMediaType
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.OutputTransformation
@@ -82,6 +87,8 @@ import kotlinx.coroutines.launch
  * a pane of glass that grows with it, the SIM it goes from when there are
  * two, how many SMS it makes once it is long, and Send on its own pane.
  */
+// contentReceiver is marked experimental, as in Android's recipe (@OptIn(ExperimentalFoundationApi::class)).
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun Composer(
     initial: String,
@@ -115,6 +122,8 @@ fun Composer(
     onIncomingTaken: () -> Unit = {},
     /** The other members of a group: typing @ offers them (Signal's mentions picker); empty for one person. */
     mentionNames: List<String> = emptyList(),
+    /** The SMS counter only means something for a plain SMS: off for a group MMS and for the encrypted chat. */
+    plainSms: Boolean = true,
     onSend: (String, Int, List<Attachment>) -> Boolean
 ) {
     val context = LocalContext.current
@@ -278,7 +287,9 @@ fun Composer(
     ) { takePhoto() }
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { take?.finish(keep = false) } }
     val veil by animateFloatAsState(if (arcOpen) 0.35f else 1f, label = "veil")
-    val length = remember(text, attachments) { if (text.isBlank() || attachments.isNotEmpty()) null else SmsMessage.calculateLength(text, false) }
+    // Google Messages counts only a plain SMS (one SMS is 160 characters; an MMS or a chat message has no such limit):
+    // nothing is counted over a group MMS or the encrypted chat.
+    val length = remember(text, attachments, plainSms) { if (!plainSms || text.isBlank() || attachments.isNotEmpty()) null else SmsMessage.calculateLength(text, false) }
     val canSend = text.isNotBlank() || attachments.isNotEmpty()
     val lift by animateFloatAsState(if (canSend) 1f else 0.86f, spring(dampingRatio = 0.5f, stiffness = 600f), label = "send")
 
@@ -584,6 +595,33 @@ fun Composer(
                             }
                         }
                     }
+                    // A GIF, sticker or picture from the keyboard becomes an attachment, by the same path as the +
+                    // menu's picks (add(): the cap of 5). Android's recipe: a ReceiveContentListener remembered, kept
+                    // when the content is an image, each ClipData.Item's Uri taken and the item marked consumed
+                    // (https://developer.android.com/develop/ui/compose/touch-input/copy-and-paste, snippet
+                    // https://github.com/android/snippets/blob/main/compose/snippets/src/main/java/com/example/compose/snippets/touchinput/CopyAndPaste.kt),
+                    // then Modifier.contentReceiver on the BasicTextField(state). The keyboard's read grant lasts only
+                    // while this listener runs, so the bytes are copied into the app's cache here (keepFromKeyboard).
+                    val receiveImages = remember {
+                        ReceiveContentListener { content ->
+                            if (content.hasMediaType(MediaType.Image)) {
+                                content.consume { item ->
+                                    val uri = item.uri
+                                    if (uri != null) {
+                                        if (attachments.size >= 5) {
+                                            haptics.reject()
+                                        } else {
+                                            val claimed = context.contentResolver.getType(uri)
+                                                ?: content.clipMetadata.clipDescription.filterMimeTypes("image/*")?.firstOrNull()
+                                            val kept = claimed?.let { keepFromKeyboard(context, uri, it) }
+                                            if (kept != null) add(listOf(kept)) else haptics.reject()
+                                        }
+                                    }
+                                    uri != null
+                                }
+                            } else content
+                        }
+                    }
                     BasicTextField(
                         state = state,
                         inputTransformation = mentionDeleter,
@@ -592,9 +630,12 @@ fun Composer(
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 6),
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                        // The field named by its hint for TalkBack and tests: a text field's label in its semantics,
-                        // https://developer.android.com/develop/ui/compose/accessibility/key-steps (content descriptions).
-                        modifier = Modifier.fillMaxWidth().widthIn(min = 40.dp).semantics { contentDescription = hint }
+                        // The field named by its hint for TalkBack and tests while it is empty; a contentDescription
+                        // replaces what TalkBack reads of a text field, so once something is typed it is dropped and
+                        // TalkBack reads the text (https://developer.android.com/develop/ui/compose/accessibility/key-steps).
+                        modifier = Modifier.fillMaxWidth().widthIn(min = 40.dp)
+                            .then(if (text.isEmpty()) Modifier.semantics { contentDescription = hint } else Modifier)
+                            .contentReceiver(receiveImages)
                     )
                 }
                 // The camera: what the + arc's Camera tile does.
@@ -818,6 +859,44 @@ private fun PressedIconTap(
         )
     }
 }
+
+/**
+ * A picture, GIF or sticker the keyboard offers, copied into this app's cache while its read grant lasts (the
+ * keyboard's InputContentInfo grant ends with the listener), then sent under the type its bytes prove. The same
+ * guards and copy as a picture shared in from another app (MainActivity's share-in code, after AOSP Messaging's
+ * ShareIntentActivity, which refuses file:// and takes content:// only): content of another app only, never one of
+ * our own providers (https://developer.android.com/privacy-and-security/risks/content-resolver), the real type by
+ * MediaCheck.typeFor, and the picture itself is decoded only by the isolated DecoderService when shown. The grant:
+ * https://developer.android.com/develop/ui/views/touch-and-input/image-keyboard. Null when it cannot be kept.
+ */
+private fun keepFromKeyboard(context: android.content.Context, uri: android.net.Uri, claimed: String): Attachment? = runCatching {
+    if (uri.scheme != android.content.ContentResolver.SCHEME_CONTENT) return@runCatching null
+    val owner = context.packageManager.resolveContentProvider(uri.authority ?: return@runCatching null, 0)?.packageName
+    if (owner == null || owner == context.packageName) return@runCatching null
+    val dir = java.io.File(context.cacheDir, "keyboard-in").apply { mkdirs() }
+    val file = java.io.File(dir, "kb-${System.nanoTime()}")
+    var kept = 0L
+    val copied = context.contentResolver.openInputStream(uri)?.use { input ->
+        file.outputStream().use { out ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                kept += n
+                // Copied on the main thread inside the grant: a keyboard's GIF is small, more than this is dropped.
+                if (kept > 16L * 1024 * 1024) return@use false
+                out.write(buffer, 0, n)
+            }
+            true
+        }
+    } ?: false
+    if (!copied) {
+        file.delete()
+        return@runCatching null
+    }
+    val copy = android.net.Uri.fromFile(file)
+    Attachment(copy, com.yaz.sms.core.security.MediaCheck.typeFor(context, copy, claimed))
+}.getOrNull()
 
 /** The SIMs in use, when the phone may be asked; one or none otherwise. */
 private fun activeSims(context: android.content.Context): List<SubscriptionInfo> {

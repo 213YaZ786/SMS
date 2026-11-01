@@ -9,6 +9,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
 /**
  * A reaction of the user sent as the iPhone's words has to read back as that reaction, here and on the phone it goes to. The
@@ -19,7 +21,12 @@ import org.junit.Test
  * it knows. The format choice follows Quik's pull request #846 (https://github.com/quik-sms/quik/pull/846,
  * resolveFormat: Automatic mirrors the last reaction received in the thread, Google's when none; Google Messages;
  * iOS), which ships no test of it.
+ *
+ * Run on Robolectric for Android's ICU, which the quote's cut on a whole grapheme needs (the pattern of
+ * KeyboardEmojiTest and GraphemesTest).
  */
+@RunWith(RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(application = android.app.Application::class, sdk = [36])
 class ReactionWriteTest {
 
     private val classic = listOf("❤️", "👍", "👎", "😂", "‼️", "❓")

@@ -2,6 +2,7 @@ package com.yaz.sms.core.sms
 
 import android.content.Context
 import android.os.SystemClock
+import com.yaz.sms.core.common.takeWhole
 import com.yaz.sms.core.chat.RichChat
 import com.yaz.sms.core.mms.Attachment
 import com.yaz.sms.core.mms.MediaPrivacy
@@ -244,5 +245,7 @@ class PendingSends(context: Context, private val scope: CoroutineScope, private 
     }
 
     /** The start of a quoted message, short enough for the first line. */
-    private fun excerpt(text: String): String = text.replace('\n', ' ').let { if (it.length > 60) it.take(58).trimEnd() + "…" else it }
+    // Cut on a whole grapheme, never inside an emoji: Signal's BreakIteratorCompat
+    // (https://github.com/signalapp/Signal-Android/blob/main/core/util/src/main/java/org/signal/core/util/BreakIteratorCompat.java), core/common/Graphemes.kt.
+    private fun excerpt(text: String): String = text.replace('\n', ' ').let { if (it.length > 60) it.takeWhole(58).trimEnd() + "…" else it }
 }

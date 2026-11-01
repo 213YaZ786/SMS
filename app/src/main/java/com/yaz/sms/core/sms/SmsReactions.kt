@@ -1,5 +1,6 @@
 package com.yaz.sms.core.sms
 
+import com.yaz.sms.core.common.takeWhole
 import com.yaz.sms.data.sms.Message
 
 /**
@@ -44,7 +45,8 @@ object SmsReactions {
         val what = when (p.media) {
             "image" -> "a picture"
             "video" -> "a video"
-            else -> "“" + squash(p.quoted).let { if (it.length > 60) it.take(59).trimEnd() + "…" else it } + "”"
+            // Cut on a whole grapheme (Signal's BreakIteratorCompat, core/common/Graphemes.kt).
+            else -> "“" + squash(p.quoted).let { if (it.length > 60) it.takeWhole(59).trimEnd() + "…" else it } + "”"
         }
         return (if (p.removed) "Removed ${p.emoji} from " else "Reacted ${p.emoji} to ") + what
     }
@@ -61,8 +63,12 @@ object SmsReactions {
         return "$HAIR${if (removed) "Removed " else "Reacted "}$mark$emoji$mark${if (removed) " from " else " to "}$HAIR$quoted$HAIR$HAIR"
     }
 
-    /** A quoted message squashed to one line and cut at 200 characters, as Google writes it. */
-    private fun excerpt(text: String) = squash(text).let { if (it.length > 200) it.take(199).trimEnd() + "…" else it }
+    /**
+     * A quoted message squashed to one line and cut at 200 characters, as Google writes it; the cut falls on a whole
+     * grapheme, never inside an emoji (Signal's BreakIteratorCompat,
+     * https://github.com/signalapp/Signal-Android/blob/main/core/util/src/main/java/org/signal/core/util/BreakIteratorCompat.java).
+     */
+    private fun excerpt(text: String) = squash(text).let { if (it.length > 200) it.takeWhole(199).trimEnd() + "…" else it }
 
     /** The two ways a reaction travels as text: Google Messages' (invisible marks) and the iPhone's (Apple's words). */
     enum class Style { GOOGLE, APPLE }

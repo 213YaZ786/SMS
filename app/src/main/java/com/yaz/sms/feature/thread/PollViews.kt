@@ -1,6 +1,7 @@
 package com.yaz.sms.feature.thread
 
 import androidx.compose.animation.AnimatedVisibility
+import com.yaz.sms.core.common.takeWhole
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -66,7 +67,13 @@ internal fun PollDialog(onSend: (String, List<String>) -> Unit, onDismiss: () ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = question,
-                    onValueChange = { question = it.replace('\n', ' ').take(200) },
+                    // A single line, Next moves to the first choice; a newline can only come from a paste and
+                    // becomes a space. Compose's ImeAction.Next moves focus by default (KeyboardActions,
+                    // https://developer.android.com/develop/ui/compose/text/user-input#keyboard-actions);
+                    // cut on a whole grapheme (Signal's BreakIteratorCompat, core/common/Graphemes.kt).
+                    onValueChange = { question = it.replace('\n', ' ').takeWhole(200) },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                     placeholder = { Text("Question") },
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -74,8 +81,13 @@ internal fun PollDialog(onSend: (String, List<String>) -> Unit, onDismiss: () ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
                             value = option,
-                            onValueChange = { options[i] = it.replace('\n', ' ').take(100) },
+                            onValueChange = { options[i] = it.replace('\n', ' ').takeWhole(100) },
                             singleLine = true,
+                            // Next to the following choice, the last one Done (the keyboard closes): Compose's default
+                            // key actions for those (https://developer.android.com/develop/ui/compose/text/user-input#keyboard-actions).
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                imeAction = if (i == options.lastIndex) androidx.compose.ui.text.input.ImeAction.Done else androidx.compose.ui.text.input.ImeAction.Next
+                            ),
                             placeholder = { Text("Choice ${i + 1}") },
                             leadingIcon = { Text(Polls.keys[i]) },
                             modifier = Modifier.weight(1f)

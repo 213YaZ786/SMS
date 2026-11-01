@@ -1,6 +1,7 @@
 package com.yaz.sms.feature.thread
 
 import android.content.ComponentName
+import com.yaz.sms.core.common.takeLastWhole
 import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.Settings
@@ -137,7 +138,8 @@ fun KeyboardEmojiTarget(onPick: (String) -> Unit, onClose: () -> Unit) {
                 value = text,
                 onValueChange = { typed ->
                     val emoji = KeyboardEmoji.firstEmoji(typed)
-                    if (emoji != null) end(emoji) else text = typed.takeLast(40)
+                    // The kept end starts on a whole grapheme (Signal's BreakIteratorCompat, core/common/Graphemes.kt).
+                    if (emoji != null) end(emoji) else text = typed.takeLastWhole(40)
                 },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, platformImeOptions = PlatformImeOptions(KeyboardEmoji.OPTION)),

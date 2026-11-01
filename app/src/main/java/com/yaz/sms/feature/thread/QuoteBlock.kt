@@ -1,6 +1,7 @@
 package com.yaz.sms.feature.thread
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import com.yaz.sms.core.common.takeWhole
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
@@ -128,7 +129,8 @@ internal fun QuoteBlock(
                 Text(it, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = bar, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text(
-                quote.excerpt.take(300),
+                // Cut on a whole grapheme (Signal's BreakIteratorCompat, core/common/Graphemes.kt).
+                quote.excerpt.takeWhole(300),
                 style = MaterialTheme.typography.bodyMedium,
                 color = ink.copy(alpha = 0.8f),
                 maxLines = 2,
