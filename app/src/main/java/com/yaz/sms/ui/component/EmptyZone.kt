@@ -59,7 +59,8 @@ fun EmptyZone(
                         Icon(it, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(36.dp))
                     } else Icon(it, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
                 }
-                Text(title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+                // Every title in the accent (the user, 2026-10-31), as SettingsTiles' SettingsSectionTitle.
+                Text(title, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
                 Text(
                     message,
                     style = MaterialTheme.typography.bodyMedium,

@@ -126,7 +126,7 @@ internal fun sceneLook(code: String?, base: GlassLook, hour: Int): GlassLook {
         val halos = lights.map { l ->
             Halo(l.x, l.y, 0.35f + 0.45f * l.share, Color(0xFF000000 or l.rgb.toLong()).copy(alpha = if (dark) 0.40f else 0.62f))
         }
-        return GlassLook(dark, ground, halos, base.zoneTint, base.floatTint, base.accentTint)
+        return GlassLook(dark, ground, halos, base.zoneTint, base.floatTint, base.accentTint, quiet = base.quiet)
     }
     if (code.startsWith(COLOR)) {
         // A person's colour: its light, with two neighbours of its hue around it.
@@ -139,7 +139,7 @@ internal fun sceneLook(code: String?, base: GlassLook, hour: Int): GlassLook {
             Halo(x, y, radius, l.copy(alpha = (if (dark) nightStrength else dayStrength)[i]))
         }
         val ground = lerp(c, if (dark) Color(0xFF101114) else Color.White, if (dark) 0.88f else 0.9f)
-        return GlassLook(dark, ground, halos, base.zoneTint, base.floatTint, base.accentTint)
+        return GlassLook(dark, ground, halos, base.zoneTint, base.floatTint, base.accentTint, quiet = base.quiet)
     }
     val scene = Scene.entries.firstOrNull { it.code == code } ?: return base
     val palette = if (scene == Scene.SKY) skyAt(hour) else palettes[scene] ?: return base
@@ -147,7 +147,7 @@ internal fun sceneLook(code: String?, base: GlassLook, hour: Int): GlassLook {
         val (x, y, radius) = spots[i]
         Halo(x, y, radius, Color(c).copy(alpha = (if (dark) nightStrength else dayStrength)[i]))
     }
-    return GlassLook(dark, Color(if (dark) palette.night else palette.day), halos, base.zoneTint, base.floatTint, base.accentTint)
+    return GlassLook(dark, Color(if (dark) palette.night else palette.day), halos, base.zoneTint, base.floatTint, base.accentTint, quiet = base.quiet)
 }
 
 internal const val PHOTO = "photo:"

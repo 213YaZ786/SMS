@@ -76,6 +76,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
@@ -444,6 +445,9 @@ private fun ThreadContent(
      * from https://github.com/CodingInfinite/BulkSMSSender and https://github.com/AhsenSaeed/AndroidBulkSmsSender,
      * no licence file: no code taken), and each waits as its own item in PendingSends, so the Cancel of a waiting
      * bubble drops the copies not yet sent (idea of cancelling a run while it goes, same two repositories).
+     * With Undo send off (undoSeconds 0) the copies after the first still wait their spacing, but not as undo
+     * items: [com.yaz.sms.core.sms.PendingSends.Waiting.undo] is false, so the bubble shows a sending mark, no
+     * countdown ring, and cannot be taken back.
      */
     fun sendAgain(m: Message, words: String, count: Int) {
         val files = m.parts.map { com.yaz.sms.core.mms.Attachment(it.uri, it.contentType) }
@@ -455,7 +459,7 @@ private fun ThreadContent(
             val p = com.yaz.sms.core.sms.PendingSends.Waiting(
                 key = base + i, text = words, sub = m.subId, attachments = files, quoted = null, effect = null,
                 people = people, thread = thread, wire = mentionsWire(words), seconds = seconds,
-                dueAt = now + seconds * 1000L
+                dueAt = now + seconds * 1000L, undo = undo > 0
             )
             if (seconds <= 0) sends.sendNow(p) else sends.queue(p)
         }
@@ -1342,7 +1346,8 @@ private fun BubbleGlass(shape: androidx.compose.ui.graphics.Shape, mine: Boolean
             halos = look.halos,
             zoneTint = if (look.dark) scheme.primary.copy(alpha = 0.36f) else scheme.primaryContainer.copy(alpha = 0.55f),
             floatTint = look.floatTint,
-            accentTint = look.accentTint
+            accentTint = look.accentTint,
+            quiet = look.quiet
         )
     }
     val ink = when {
@@ -1876,7 +1881,17 @@ private fun Bubble(
         val chatKeys = rich?.reactions.orEmpty().filter { poll == null || com.yaz.sms.core.sms.Polls.choiceOf(it) < 0 }
         val reactionGroups = com.yaz.sms.core.sms.ReactionGroups.ofCounts(chatKeys, rich?.counts.orEmpty(), rich?.myReactions.orEmpty()) +
             com.yaz.sms.core.sms.ReactionGroups.ofList(smsReactions, smsMine)
-        ReactionChips(reactionGroups, mine, Modifier.padding(top = 2.dp), onToggle = { emoji ->
+        // Signal's placement (ReactionsConversationView.java, https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/reactions/ReactionsConversationView.java
+        // and layout/v2_conversation_item_text_only_incoming.xml): 4 dp over the bubble's bottom edge (marginTop -4 dp),
+        // OUTER_MARGIN 5 dp from the bubble's side; this column already aligns to that side (end for mine, start otherwise).
+        ReactionChips(reactionGroups, mine, Modifier
+            .padding(start = if (mine) 0.dp else 5.dp, end = if (mine) 5.dp else 0.dp)
+            .layout { measurable, constraints ->
+                val up = 4.dp.roundToPx()
+                val placeable = measurable.measure(constraints)
+                val h = if (placeable.height > 0) placeable.height - up else 0
+                layout(placeable.width, h) { placeable.place(0, -up) }
+            }, onToggle = { emoji ->
             haptics.tick()
             react(emoji)
         })
@@ -2185,15 +2200,16 @@ internal fun LinkAsk(url: String, verdict: com.yaz.sms.core.link.LinkCheck.Verdi
 /**
  * The message just written: it flies up from the field into its place as
  * a drop of glass, and a ring on it empties over the seconds it waits; a
- * tap takes it back into the field.
+ * tap takes it back into the field. Not an undo item ([com.yaz.sms.core.sms.PendingSends.Waiting.undo]
+ * false): no ring, no tap, a small sending clock in the ring's place.
  */
 @Composable
 private fun PendingBubble(p: com.yaz.sms.core.sms.PendingSends.Waiting, modifier: Modifier, onCancel: () -> Unit) {
     val flight = remember { Animatable(0f) }
     LaunchedEffect(Unit) { flight.animateTo(1f, spring(dampingRatio = 0.62f, stiffness = 260f)) }
     // The ring starts where the countdown is: full for a message just written, shorter for one come back to.
-    val ring = remember { Animatable(p.remaining() / (p.seconds * 1000f).coerceAtLeast(1f)) }
-    LaunchedEffect(Unit) { ring.animateTo(0f, androidx.compose.animation.core.tween(p.remaining().toInt(), easing = androidx.compose.animation.core.LinearEasing)) }
+    val ring = remember { Animatable(if (p.undo) p.remaining() / (p.seconds * 1000f).coerceAtLeast(1f) else 0f) }
+    LaunchedEffect(Unit) { if (p.undo) ring.animateTo(0f, androidx.compose.animation.core.tween(p.remaining().toInt(), easing = androidx.compose.animation.core.LinearEasing)) }
     val accent = MaterialTheme.colorScheme.primary
     Column(horizontalAlignment = Alignment.End, modifier = modifier.fillMaxWidth()) {
         Box(
@@ -2206,7 +2222,7 @@ private fun PendingBubble(p: com.yaz.sms.core.sms.PendingSends.Waiting, modifier
                     scaleY = sc
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)
                 }
-                .clickable(onClick = onCancel)
+                .then(if (p.undo) Modifier.clickable(onClick = onCancel) else Modifier)
         ) {
             ZoneSurface(shape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp), accent = true, modifier = Modifier.widthIn(max = 320.dp)) {
                 Text(
@@ -2215,11 +2231,17 @@ private fun PendingBubble(p: com.yaz.sms.core.sms.PendingSends.Waiting, modifier
                     modifier = Modifier.padding(start = 16.dp, end = 34.dp, top = 10.dp, bottom = 10.dp)
                 )
             }
-            androidx.compose.foundation.Canvas(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp)) {
-                drawArc(accent, -90f, 360f * ring.value, false, style = androidx.compose.ui.graphics.drawscope.Stroke(2.5.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))
+            if (p.undo) {
+                androidx.compose.foundation.Canvas(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp)) {
+                    drawArc(accent, -90f, 360f * ring.value, false, style = androidx.compose.ui.graphics.drawscope.Stroke(2.5.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                }
+            } else {
+                // Signal's pending delivery mark, a small clock where the ring was (DeliveryStatusView, AGPL-3.0):
+                // https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/components/DeliveryStatusView.kt
+                Icon(AppIcons.Schedule, contentDescription = "Sending", modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(14.dp))
             }
         }
-        Text("Tap to take it back", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, end = 6.dp))
+        if (p.undo) Text("Tap to take it back", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, end = 6.dp))
     }
 }
 

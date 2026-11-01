@@ -55,7 +55,9 @@ class PendingSends(context: Context, private val scope: CoroutineScope, private 
         /** The words as the chat's members read them (mentions renamed), or null. */
         val wire: String?,
         val seconds: Int,
-        val dueAt: Long
+        val dueAt: Long,
+        /** False for a message only spaced out (Send again with Undo send off): no countdown look, no taking back. */
+        val undo: Boolean = true
     ) {
         /** Milliseconds left of the delay. */
         fun remaining(): Long = (dueAt - SystemClock.elapsedRealtime()).coerceIn(0L, seconds * 1000L)

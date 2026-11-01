@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -94,6 +95,7 @@ import com.yaz.sms.ui.component.QuietButton
 import com.yaz.sms.ui.component.ZoneAlertDialog
 import com.yaz.sms.ui.component.ZoneSurface
 import com.yaz.sms.ui.component.rememberHaptics
+import com.yaz.sms.ui.component.rememberSparklePress
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -286,7 +288,12 @@ fun MessageMenu(
                                         alpha = 1f - hop.value
                                     }
                                     .background(if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.Transparent, CircleShape)
-                                    .clickable(onClickLabel = emoji) {
+                                    // The press is Android 12's sparkle ripple in a circle (SparklePress), never a square.
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = rememberSparklePress(CircleShape),
+                                        onClickLabel = emoji
+                                    ) {
                                         haptics.tick()
                                         onReact(emoji)
                                         onDismiss()
@@ -299,7 +306,11 @@ fun MessageMenu(
                         // Any other emoji, from Android's picker.
                         onMoreReactions?.let { more ->
                             Box(
-                                Modifier.size(44.dp).clickable(onClickLabel = "More reactions") {
+                                Modifier.size(44.dp).clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = rememberSparklePress(CircleShape),
+                                    onClickLabel = "More reactions"
+                                ) {
                                     haptics.tick()
                                     onDismiss()
                                     more()
@@ -492,6 +503,9 @@ fun Palette(
                     rise.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 500f))
                 }
                 val tint = if (action.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                // The whole tile stays the tap target, but the press plays only inside the round drop:
+                // the tile's clickable has no indication, the drop shows the sparkle from this source.
+                val press = remember { MutableInteractionSource() }
                 Column(
                     horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
                     modifier = tileModifier
@@ -499,8 +513,7 @@ fun Palette(
                             translationY = rise.value * 8.dp.toPx()
                             alpha = 1f - rise.value
                         }
-                        .clip(ShapeDefaults.Large)
-                        .clickable(onClickLabel = action.label) {
+                        .clickable(interactionSource = press, indication = null, onClickLabel = action.label) {
                             haptics.tick()
                             onDismiss()
                             action.run()
@@ -510,7 +523,11 @@ fun Palette(
                     // Each action in a drop of polished glass of its own (rim, bevel, shadow), the
                     // colour in the icon only: an accent wash flattened them into plain discs.
                     ZoneSurface(shape = CircleShape, modifier = Modifier.size(56.dp)) {
-                        Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+                        // The sparkle sits on the Box that fills the drop, above the glass, from its centre.
+                        Box(
+                            Modifier.fillMaxSize().indication(press, rememberSparklePress(CircleShape, fromCentre = true)),
+                            contentAlignment = androidx.compose.ui.Alignment.Center
+                        ) {
                             Icon(action.icon, contentDescription = null, tint = tint, modifier = Modifier.size(28.dp))
                         }
                     }

@@ -624,7 +624,9 @@ fun GlassVideo(
 fun DarkGround(content: @Composable () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val night = remember(scheme) { scheme.onDarkGround() }
-    val look = rememberGlassLook(night, enabled = LocalGlass.current != null)
+    // The page's quiet glass goes on in the player (Haze's materials, https://github.com/chrisbanes/haze/blob/main/haze-materials/src/commonMain/kotlin/dev/chrisbanes/haze/blur/materials/HazeMaterials.kt;
+    // the long press menu's pane, dialogGlass; the user, 2026-11-01).
+    val look = rememberGlassLook(night, enabled = LocalGlass.current != null, quiet = LocalGlass.current?.quiet == true)
     MaterialTheme(colorScheme = night) {
         CompositionLocalProvider(LocalGlass provides look, content = content)
     }

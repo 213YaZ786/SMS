@@ -1,10 +1,14 @@
 package com.yaz.sms.feature.thread
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -13,60 +17,93 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yaz.sms.core.sms.ReactionGroups
-import com.yaz.sms.ui.component.FloatingPane
+import com.yaz.sms.ui.glass.LocalGlass
 
 /**
- * The reactions under a message: one chip for each emoji, "❤️ 2" when several gave it, the user's own in accent glass.
+ * The reactions of a message as Signal's pills: at most three, the busiest first; past three, the first two and one
+ * "+N" pill for the rest. Where they sit (over the bubble's bottom edge) is the call site's.
  *
- * Ported from Element X Android (AGPL-3.0, https://github.com/element-hq/element-x-android),
- * features/messages/impl/.../timeline/components/TimelineItemReactionsView.kt (the reactions in a flow with 4 dp
- * between items and rows, from the message's side) and MessagesReactionButton.kt (ReactionContent: the emoji at
- * 15 sp over a 20 sp line, the count after a 4 dp gap only above one, the count's colour stronger when the user's
- * own; the chip's 10 dp by 4 dp padding; clearAndSetSemantics for the spoken form; highlighted = the user reacted).
- * The tap is MessagesReactionButton's onClick (a tap toggles the user's own reaction with that emoji, the timeline's
- * onReactionClick); its long press (who reacted) is not ported, the long press stays free. Without [onToggle] (the
- * conversation list's preview, inside a card that takes the tap) the chip lets the tap through to the card.
- * Not ported: its custom expand / "show more" layout (TimelineItemReactionsLayout), reactions here are few.
- * The chip is drawn in this app's glass (FloatingPane), accent when highlighted, in place of Element X's filled surface.
+ * Ported from Signal-Android (AGPL-3.0, https://github.com/signalapp/Signal-Android):
+ * - app/src/main/java/org/thoughtcrime/securesms/reactions/ReactionsConversationView.java: buildSortedReactionsList
+ *   (sorted by count, more than 3 become the first two plus one merged pill, selected if any merged one is the
+ *   user's) and buildPill (the emoji, the count only above one, the merged pill with no emoji and "+N").
+ * - app/src/main/res/layout/reactions_pill.xml: 26 dp high, 7 dp inside, 1 dp margin each side, emoji 17 dp, 4 dp gap,
+ *   count 12 sp sans-serif-medium.
+ * - app/src/main/res/drawable/reaction_pill_background.xml and reaction_pill_background_selected.xml: fully round,
+ *   a 1 dp stroke in the page's background colour (the cut-out against the bubble).
+ * Changed for this app: the fill is the quiet glass tint (or surfaceVariant without glass), the user's own is marked
+ * by a thin accent outline in place of Signal's fill; the pill is at least 26 dp so the 200 % font does not cut it.
+ * A tap on an emoji's pill toggles it (onToggle, as before from Element X's MessagesReactionButton); the "+N" pill
+ * toggles nothing. Without [onToggle] (the conversation list's preview, inside a card that takes the tap) the pill
+ * lets the tap through.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ReactionChips(groups: List<ReactionGroups.Group>, mine: Boolean, modifier: Modifier = Modifier, onToggle: ((String) -> Unit)? = null) {
     if (groups.isEmpty()) return
+    val sorted = groups.sortedByDescending { it.count }
+    val pills: List<Pill> =
+        if (sorted.size > 3) {
+            val rest = sorted.drop(2)
+            sorted.take(2).map { Pill(it, it.count, it.isHighlighted) } + Pill(null, rest.sumOf { it.count }, rest.any { it.isHighlighted })
+        } else sorted.map { Pill(it, it.count, it.isHighlighted) }
+    // The column around already puts this row on the bubble's side (end for [mine], start otherwise).
     FlowRow(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(4.dp, if (mine) Alignment.End else Alignment.Start),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        horizontalArrangement = Arrangement.Start,
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        groups.forEach { group -> ReactionChip(group, onToggle) }
+        pills.forEach { ReactionPill(it, onToggle) }
     }
 }
 
+/** One pill: a [group] with its emoji, or null for the merged "+N" pill. */
+private class Pill(val group: ReactionGroups.Group?, val count: Int, val mine: Boolean)
+
 @Composable
-private fun ReactionChip(group: ReactionGroups.Group, onToggle: ((String) -> Unit)?) {
+private fun ReactionPill(pill: Pill, onToggle: ((String) -> Unit)?) {
+    val group = pill.group
     val spoken = buildString {
-        append(group.displayKey)
-        if (group.count > 1) append(", ").append(group.count)
-        if (group.isHighlighted) append(", yours")
+        if (group != null) {
+            append(group.displayKey)
+            if (pill.count > 1) append(", ").append(pill.count)
+        } else append("+").append(pill.count)
+        if (pill.mine) append(", yours")
     }
-    FloatingPane(shape = CircleShape, accent = group.isHighlighted, onClick = onToggle?.let { toggle -> { toggle(group.key) } }) {
-        // The spoken form sits on the content, so the pane's own click (a tap, for TalkBack too) is kept.
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clearAndSetSemantics { contentDescription = spoken }.padding(horizontal = 10.dp, vertical = 4.dp)) {
+    val fill = LocalGlass.current?.zoneTint ?: MaterialTheme.colorScheme.surfaceVariant
+    val outline = if (pill.mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background
+    val tap = if (group != null && onToggle != null) ({ onToggle(group.key) }) else null
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .padding(horizontal = 1.dp)
+            .clip(CircleShape)
+            .background(fill)
+            .border(1.dp, outline, CircleShape)
+            .let { if (tap != null) it.clickable(role = Role.Button, onClick = tap) else it }
+            .heightIn(min = 26.dp)
+            .padding(horizontal = 7.dp)
+            .clearAndSetSemantics { contentDescription = spoken }
+    ) {
+        if (group != null) {
             Text(group.displayKey, style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 20.sp))
-            if (group.count > 1) {
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    group.count.toString(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    // The pane's own ink when highlighted (readable on the accent), a quieter one otherwise.
-                    color = if (group.isHighlighted) androidx.compose.ui.graphics.Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        }
+        if (group == null || pill.count > 1) {
+            if (group != null) Spacer(Modifier.width(4.dp))
+            Text(
+                if (group == null) "+${pill.count}" else pill.count.toString(),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium),
+                color = if (pill.mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

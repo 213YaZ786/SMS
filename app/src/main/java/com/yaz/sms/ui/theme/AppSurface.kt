@@ -48,7 +48,8 @@ fun ComponentActivity.AppSurface(content: @Composable () -> Unit) {
     }
 
     AppTheme(darkTheme = dark, pureBlack = settings.pureBlack, textScale = settings.textScale) {
-        val look = rememberGlassLook(MaterialTheme.colorScheme, settings.glass)
+        // Quiet glass, SMS first: the long press menu's pane (dialogGlass) for every pane (the user, 2026-11-01).
+        val look = rememberGlassLook(MaterialTheme.colorScheme, settings.glass, quiet = true)
         // Text and icons take the theme's colour in every window: without it
         // Compose draws them black, unreadable on a dark ground.
         CompositionLocalProvider(LocalGlass provides look, LocalContentColor provides MaterialTheme.colorScheme.onBackground) {

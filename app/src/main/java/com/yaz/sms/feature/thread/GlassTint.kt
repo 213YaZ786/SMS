@@ -16,6 +16,6 @@ internal fun rememberTinted(look: GlassLook?, tint: Color?): GlassLook? = rememb
     if (look == null || tint == null) {
         null
     } else {
-        GlassLook(look.dark, look.ground, look.halos, zoneTint = tint, floatTint = tint, accentTint = look.accentTint)
+        GlassLook(look.dark, look.ground, look.halos, zoneTint = tint, floatTint = tint, accentTint = look.accentTint, quiet = look.quiet)
     }
 }
