@@ -56,6 +56,8 @@ data class Settings(
     val signatures: Map<String, String> = emptyMap(),
     /** Seconds a message waits before it goes, to take it back with a tap; 0 sends at once. */
     val undoSeconds: Int = 4,
+    /** Seconds new encrypted chats' messages last after they are read (Signal's default timer for new chats); 0 keeps them. */
+    val vanishDefault: Int = 2_419_200,
     /** Encrypted chat with other SMS users, over a chatmail relay. */
     val richChat: Boolean = true,
     /**

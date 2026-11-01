@@ -2168,7 +2168,7 @@ internal fun GroupNameDialog(current: String, onDone: (String) -> Unit, onDismis
     )
 }
 
-/** 5 min, 1 hour, 1 day, 1 week. */
+/** 5 min, 1 hour, 1 day, 1 week, 4 weeks. */
 internal fun vanishLabel(seconds: Int): String = when {
     seconds < 3600 -> "${seconds / 60} min"
     seconds < 86_400 -> if (seconds == 3600) "1 hour" else "${seconds / 3600} hours"
@@ -2176,13 +2176,23 @@ internal fun vanishLabel(seconds: Int): String = when {
     else -> if (seconds == 604_800) "1 week" else "${seconds / 604_800} weeks"
 }
 
-/** How long messages last in this chat, for both sides. */
+/**
+ * How long messages last in this chat, for both sides. The list is Signal-Android's timer choices
+ * (off, 5 minutes, 1 hour, 1 day, 1 week, 4 weeks; https://github.com/signalapp/Signal-Android, the
+ * disappearing messages timer and the default timer row of PrivacySettingsScreen.kt).
+ */
 @Composable
-internal fun VanishDialog(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+internal fun VanishDialog(
+    current: Int,
+    onPick: (Int) -> Unit,
+    title: String = "Vanishing messages",
+    text: String = "New messages vanish on both phones this long after they are read.",
+    onDismiss: () -> Unit
+) {
     com.yaz.sms.ui.component.ChoiceDialog(
-        title = "Vanishing messages",
-        text = "New messages vanish on both phones this long after they are read.",
-        options = listOf(0, 300, 3600, 86_400, 604_800).map { seconds -> seconds to (if (seconds == 0) "Off" else vanishLabel(seconds)) },
+        title = title,
+        text = text,
+        options = listOf(0, 300, 3600, 86_400, 604_800, 2_419_200).map { seconds -> seconds to (if (seconds == 0) "Off" else vanishLabel(seconds)) },
         selected = current,
         onPick = onPick,
         onDismiss = onDismiss

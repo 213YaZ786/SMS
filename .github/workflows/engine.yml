@@ -23,9 +23,9 @@ permissions:
   contents: read
 
 env:
-  CORE_VERSION: "2.65.0"
-  # v2.65.0's commit, so a moved tag changes nothing.
-  CORE_COMMIT: "706ee7a48ca509229bb75c836c00a4268e095a02"
+  CORE_VERSION: "2.66.0"
+  # v2.66.0's commit, so a moved tag changes nothing.
+  CORE_COMMIT: "3ba231cd5ca358b9011cf79ad3ebf075595050ef"
   PATCH: "p1"
 
 jobs:
@@ -51,14 +51,17 @@ jobs:
         run: nix shell nixpkgs#osv-scanner --command osv-scanner scan -L Cargo.lock || true
 
       # Only semver-compatible fixes: the engine's code is unchanged. iroh's
-      # own copies (hickory 0.25, rustls-webpki 0.102, quinn) stay, the app
-      # keeps iroh off (webxdc_realtime_enabled 0).
+      # own copies (hickory 0.25, rustls-webpki 0.102, quinn) stay, iroh never
+      # starts (the app sends no webxdc realtime data). OpenSSL, vendored for
+      # sqlcipher and native-tls, leaves 3.4 (supported until 2026-10-22,
+      # openssl-library.org/policies/releasestrat) for the newest 3.x that
+      # openssl-sys accepts (openssl-src 300.x).
       - name: Move the dependencies to their fixes
         run: |
           nix shell nixpkgs#cargo --command sh -eu -c '
-            cargo update tokio@1.53.1 --precise 1.53.3
             cargo update event-listener@5.4.0 --precise 5.4.2
             cargo update quinn-proto@0.11.16 --precise 0.11.18
+            cargo update openssl-src@300.4.2+3.4.1 --precise 300.6.1+3.6.3
           '
           git diff --stat Cargo.lock
 
@@ -101,5 +104,5 @@ jobs:
           gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "Encrypted chat engine ${CORE_VERSION} (${PATCH})" \
-            --notes "chatmail core ${CORE_VERSION} built with rustls 0.23.46, rustls-webpki 0.103.16, tokio 1.53.3, webpki-roots 0.26.11, event-listener 5.4.2, quinn-proto 0.11.18." \
+            --notes "chatmail core ${CORE_VERSION} built with rustls 0.23.46, rustls-webpki 0.103.16, tokio 1.53.3, webpki-roots 0.26.11, event-listener 5.4.2, quinn-proto 0.11.18, OpenSSL 3.6.3." \
             out/deltachat-rpc-server-* out/Cargo-*.lock out/SHA256-*.txt

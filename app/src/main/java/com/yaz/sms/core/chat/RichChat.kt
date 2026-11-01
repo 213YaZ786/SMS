@@ -280,11 +280,13 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             engine.call("set_config", account, ReadReceipts.KEY, ReadReceipts.value(settings.current.readReceipts))
             // SMS uses no webxdc app and no backup transfer: the engine's peer-to-peer channel (iroh) stays off,
             // and with it the DNS resolver, QUIC and the older certificate checker that carry this engine's
-            // known flaws (hickory 0.25.2, quinn-proto 0.11.16, rustls-webpki 0.102.8; osv-scanner on core
-            // 2.62.0's Cargo.lock). The engine starts iroh only when this is on, for a webxdc's realtime data
-            // or a peer's gossip header: chatmail core src/peer_channels.rs (get_or_try_init_peer_channel,
-            // add_gossip_peer_from_header), https://github.com/chatmail/core/blob/v2.62.0/src/peer_channels.rs
-            engine.call("set_config", account, "webxdc_realtime_enabled", "0")
+            // known flaws (hickory, quinn-proto, rustls-webpki 0.102; osv-scanner on core's Cargo.lock).
+            // Core 2.66 removed the switch (commit f3bb558ac3 "api!: remove webxdc_realtime_enabled config"):
+            // iroh now starts only from get_or_try_init_peer_channel, which send_webxdc_realtime_advertisement,
+            // send_webxdc_realtime_data and the IrohNodeAddr message they send (src/mimefactory.rs) call; a
+            // received gossip header (add_gossip_peer_from_header) only stores the peer, and adds it when iroh
+            // already runs. SMS never calls those, so iroh stays off.
+            // chatmail core src/peer_channels.rs, https://github.com/chatmail/core/blob/v2.66.0/src/peer_channels.rs
             engine.call("start_io", account)
             _ready.value = true
             scope.launch {
@@ -370,11 +372,15 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                 engine.call("list_transports", account).jsonArray.mapNotNull { (it as? JsonObject)?.get("addr")?.jsonPrimitive?.contentOrNull }
             }.getOrDefault(emptyList())
             if (transports.size <= MAX_RELAYS) return@withLock
-            val sending = runCatching { engine.call("get_config", account, "configured_addr").jsonPrimitive.contentOrNull }.getOrNull()
+            // Core 2.66 removed the "configured_addr" config: the sending address is get_primary_self_addr,
+            // "SELECT addr FROM transports ORDER BY id LIMIT 1" (chatmail core src/config.rs,
+            // https://github.com/chatmail/core/blob/v2.66.0/src/config.rs); list_transports reads the same
+            // table without ORDER BY (src/configure.rs, https://github.com/chatmail/core/blob/v2.66.0/src/configure.rs).
+            val sending = transports.firstOrNull()
             // The backup kept: the one answering fastest now, else the first listed.
             val backups = transports.filter { it != sending }
             val times = coroutineScope { backups.map { addr -> async { addr to Relays.answerTime(addr.substringAfter('@')) } }.map { it.await() } }
-            val keep = setOfNotNull(sending ?: transports.first()) +
+            val keep = setOfNotNull(sending) +
                 (times.filter { it.second != null }.minByOrNull { it.second!! }?.first ?: backups.first())
             transports.filter { it !in keep }.forEach { addr -> runCatching { engine.call("delete_transport", account, addr) } }
             _changes.value++
@@ -782,6 +788,33 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     }
 
     /**
+     * The default timer for new chats, applied once, at the first message the user sends in a one-to-one
+     * chat whose timer is 0 and that holds no message from a person yet (system messages do not count).
+     * Never on a chat with messages, never over a timer the user set, never fails the send.
+     * Signal-Android, RecipientUtil.setAndSendUniversalExpireTimerIfNecessary, which sets the universal
+     * timer when the thread is new and the recipient's own timer is 0
+     * (https://github.com/signalapp/Signal-Android/blob/main/app/src/main/java/org/thoughtcrime/securesms/recipients/RecipientUtil.java);
+     * the chat's messages from jsonrpc get_message_ids and get_message (isInfo), the timer from
+     * get_chat_ephemeral_timer and set_chat_ephemeral_timer
+     * (https://github.com/chatmail/core/blob/v2.66.0/deltachat-jsonrpc/src/api.rs).
+     */
+    private suspend fun applyDefaultTimer(chatId: Int) {
+        val seconds = settings.current.vanishDefault
+        if (seconds <= 0) return
+        runCatching {
+            if (engine.call("get_chat_ephemeral_timer", account, chatId).jsonPrimitive.int != 0) return@runCatching
+            val ids = engine.call("get_message_ids", account, chatId, false, false).jsonArray.map { it.jsonPrimitive.int }
+            val spoken = ids.any { id ->
+                engine.call("get_message", account, id).jsonObject["isInfo"]?.jsonPrimitive?.booleanOrNull != true
+            }
+            if (spoken) return@runCatching
+            engine.call("set_chat_ephemeral_timer", account, chatId, seconds)
+            timers[chatId] = seconds
+            _changes.value++
+        }
+    }
+
+    /**
      * Sends over the chat, the text and each attachment in full quality,
      * each kept in Android's store as going out; the chat's reports turn
      * it sent, read or failed.
@@ -794,6 +827,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         if (!start()) return false
         val chatId = chatOf(phones) ?: return false
         val phone = phones[0]
+        if (phones.size == 1) applyDefaultTimer(chatId)
         return runCatching {
             if (attachments.isEmpty()) {
                 val id = engine.call("send_msg", account, chatId, mapOf("text" to (wire ?: text), "quotedText" to quote)).jsonPrimitive.int
