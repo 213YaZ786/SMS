@@ -1,6 +1,7 @@
 package com.yaz.sms.data.settings
 
 import android.content.Context
+import android.util.Log
 import com.yaz.sms.core.common.writeTextAtomically
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -89,21 +90,72 @@ class StarStore(context: Context) {
     private val file = File(context.filesDir, "starred.json")
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val _stars = MutableStateFlow(load())
+    private val _stars = MutableStateFlow(loadFromDisk())
 
     /** Starred uid to its thread id. */
     val stars: StateFlow<Map<String, Long>> = _stars.asStateFlow()
 
-    private fun load(): Map<String, Long> =
-        if (!file.exists()) emptyMap() else Stars.parse(runCatching { file.readText() }.getOrDefault(""), json)
+    // not ported: startReloadIfChangedUnexpectedly (only this process writes the file, nothing changes it behind the store)
+    /**
+     * SharedPreferencesImpl.loadFromDisk: a file that cannot be read is logged ("Cannot read") and the map
+     * stays empty, but the file is not lost: it is kept aside as makeBackupFile keeps ".bak", here ".bad",
+     * and never read as empty then overwritten. Not ported: the .bak rename on start (the write below moves a
+     * whole file in one step), the stat timestamps and the waiting threads (mLock, one reader).
+     * https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-16.0.0_r1/core/java/android/app/SharedPreferencesImpl.java#L153-L225
+     */
+    private fun loadFromDisk(): Map<String, Long> {
+        val fileExists = file.exists()
+        var map: String? = null
+        var thrown: Throwable? = null
+        if (fileExists) {
+            try {
+                map = file.readText()
+                json.decodeFromString<Starred>(map)
+            } catch (e: Exception) {
+                thrown = e
+                Log.w(TAG, "Cannot read " + file.name + ": " + e.javaClass.simpleName)
+            }
+        }
+        if (thrown != null && map != null) makeBackupFile(file)
+        return if (thrown == null && map != null) Stars.parse(map, json) else emptyMap()
+    }
 
-    /** The write of SettingsStore.update: the new value in the flow, then the file replaced at once. */
+    /** makeBackupFile: the corrupt file's new name, ".bad". A failed rename is logged; the next write replaces the file. */
+    private fun makeBackupFile(prefsFile: File) {
+        val mBackupFile = File(prefsFile.path + ".bad")
+        if (!prefsFile.renameTo(mBackupFile)) Log.e(TAG, "Couldn't keep " + prefsFile.name + " aside")
+    }
+
+    /** The write of SettingsStore.update: the new value in the flow, then the file replaced at once. False if the file was not written. */
     @Synchronized
-    private fun update(transform: (Map<String, Long>) -> Map<String, Long>) {
+    private fun update(transform: (Map<String, Long>) -> Map<String, Long>): Boolean {
         val updated = transform(_stars.value)
-        if (updated == _stars.value) return
+        if (updated == _stars.value) return true
         _stars.value = updated
-        runCatching { file.writeTextAtomically(json.encodeToString(Starred.serializer(), Starred(updated))) }
+        return writeToFile(Starred(updated))
+    }
+
+    /**
+     * SharedPreferencesImpl.writeToFile: an exception is logged ("writeToFile: Got exception"), the partly
+     * written file cleaned up, and the result is false (mcr.setDiskWriteResult(false, false)).
+     * https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-16.0.0_r1/core/java/android/app/SharedPreferencesImpl.java#L731-L880
+     */
+    private fun writeToFile(mcr: Starred): Boolean {
+        try {
+            file.writeTextAtomically(json.encodeToString(Starred.serializer(), mcr))
+            return true
+        } catch (e: Exception) {
+            Log.w(TAG, "writeToFile: Got exception: " + e.javaClass.simpleName)
+        }
+
+        // Clean up an unsuccessfully written file
+        val mFile = File(file.parentFile, file.name + ".tmp")
+        if (mFile.exists()) {
+            if (!mFile.delete()) {
+                Log.e(TAG, "Couldn't clean up partially-written file " + mFile.name)
+            }
+        }
+        return false
     }
 
     /** Star the message, or take the star off. */
@@ -113,4 +165,8 @@ class StarStore(context: Context) {
 
     /** Keep only the stars of messages the store still holds (see [Stars.alive]). */
     fun keepAlive(alive: Map<String, Long>) = update { Stars.alive(it, alive) }
+
+    private companion object {
+        const val TAG = "StarStore"
+    }
 }

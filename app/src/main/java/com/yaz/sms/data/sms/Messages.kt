@@ -114,6 +114,11 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
     private val _loaded = MutableStateFlow(false)
     val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
 
+    private val _failed = MutableStateFlow(false)
+
+    /** The last read of the store failed: [conversations] is the previous list, not an empty one. */
+    val failed: StateFlow<Boolean> = _failed.asStateFlow()
+
     /** Bumped on every change of the store, for open conversations to read again. */
     private val _changes = MutableStateFlow(0)
     val changes: StateFlow<Int> = _changes.asStateFlow()
@@ -148,8 +153,21 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
         watching = true
     }
 
+    // not ported: roomListContentState (a Compose presenter: the list screen picks Empty, Skeleton or Rooms from loaded, failed and conversations)
+    /**
+     * Element X's RoomListPresenter.roomListContentState: the list is empty only once loaded with zero
+     * rooms, a skeleton while it is not loaded. A read that fails keeps the list shown and says so in
+     * [failed], never replaces it by an empty one.
+     * https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/home/impl/src/main/kotlin/io/element/android/features/home/impl/roomlist/RoomListPresenter.kt#L251-L295
+     */
     private suspend fun load() {
-        _conversations.value = withContext(Dispatchers.IO) { readConversations() }
+        val roomSummaries = withContext(Dispatchers.IO) { readConversations() }
+        if (roomSummaries == null) {
+            _failed.value = true
+            return
+        }
+        _conversations.value = roomSummaries
+        _failed.value = false
         _loaded.value = true
     }
 
@@ -158,7 +176,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
      * conversation), and the unread ones counted: never every message of the
      * phone, which took seconds and ran again at each change of the store.
      */
-    private fun readConversations(): List<Conversation> = runCatching {
+    private fun readConversations(): List<Conversation>? = runCatching {
         val people = recipients()
         val drafts = Drafts.all(context)
         // Announcements still waiting for their download (kept NotificationInd rows).
@@ -177,7 +195,9 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             "${Telephony.Mms.MESSAGE_BOX} = ${Telephony.Mms.MESSAGE_BOX_INBOX} AND ${Telephony.Mms.READ} = 0", null, null
         )?.use { c -> while (c.moveToNext()) c.getLong(0).let { unread[it] = (unread[it] ?: 0) + 1 } }
         // The messages the user sent, per conversation, in one read (SpamJudge.sentCounts).
-        val sentCounts = com.yaz.sms.core.sms.SpamJudge.sentCounts(context)
+        // Read only when spam protection is on: nothing else uses them.
+        val spamProtection = runCatching { org.koin.core.context.GlobalContext.get().get<com.yaz.sms.data.settings.SettingsStore>().current.spamProtection }.getOrDefault(true)
+        val sentCounts = if (spamProtection) com.yaz.sms.core.sms.SpamJudge.sentCounts(context) else emptyMap()
         // The newest of each conversation, an SMS (type) or a picture message (msg_box).
         class Last(val thread: Long, val id: Long, val date: Long, val body: String, val address: String, val sms: Boolean, val box: Int)
         val last = ArrayList<Last>()
@@ -190,7 +210,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                 val sms = !c.isNull(5)
                 last += Last(c.getLong(0), c.getLong(1), c.getLong(2), c.getString(3).orEmpty(), c.getString(4).orEmpty(), sms, if (sms) c.getInt(5) else c.getInt(6))
             }
-        }
+        } ?: throw IllegalStateException("conversations view gave no cursor")
         val parts = MmsStore.parts(context, last.filterNot { it.sms }.map { it.id })
         val subjects = MmsStore.subjects(context, last.filterNot { it.sms }.map { it.id })
         // Whether the newest message the user sent reached the phone it went to: one read for all the conversations.
@@ -250,7 +270,7 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                 )
             }
         }.sortedByDescending { it.date }
-    }.getOrDefault(emptyList())
+    }.onFailure { android.util.Log.w("Messages", "conversations not read: " + it.javaClass.simpleName) }.getOrNull()
 
     /**
      * Of the sent SMS [ids], those the network reported delivered (status complete): the reading of rowsWhere
@@ -352,6 +372,25 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             )
         }.getOrDefault(emptyList())
     }
+
+    // not ported: getMessages (its blocked-number filter and contact lookups; rowsWhere reads the rows, Android drops blocked numbers)
+    /**
+     * The same read as [thread], null when the store cannot be read: a screen then keeps what it shows
+     * and says so, instead of showing an empty conversation. The query of Fossify Messages' getMessages
+     * (the thread's selection, the newest [limit] first), its error not hidden as an empty list.
+     * https://raw.githubusercontent.com/FossifyOrg/Messages/main/app/src/main/kotlin/org/fossify/messages/extensions/Context.kt#L114-L217
+     */
+    suspend fun threadOrNull(threadId: Long, limit: Int = PAGE): List<Message>? = withContext(Dispatchers.IO) {
+        if (!canRead()) return@withContext null
+        val selection = "${Telephony.Sms.THREAD_ID} = ? AND ${Telephony.Sms.TYPE} != ${Telephony.Sms.MESSAGE_TYPE_DRAFT}"
+        val mmsSelection = "${Telephony.Mms.THREAD_ID} = ? AND ${Telephony.Mms.MESSAGE_BOX} != ${Telephony.Mms.MESSAGE_BOX_DRAFTS}"
+        val selectionArgs = arrayOf(threadId.toString())
+        val messages = runCatching { rowsWhere(selection, selectionArgs, mmsSelection, selectionArgs, limit) }.getOrNull()
+        messages
+    }
+
+    /** How many messages of [threadId] are not read yet, SMS and picture messages together (see [getUnreadCountsByThread]). */
+    suspend fun unreadCount(threadId: Long): Int = withContext(Dispatchers.IO) { getUnreadCountsByThread(context, threadId) }
 
     /**
      * The messages named by [uids] ("sms/7", "mms/45"), oldest first, each with its own thread
@@ -474,6 +513,11 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
         scope.launch(Dispatchers.IO) { markRead(context, threadId) }
     }
 
+    /** The messages of [threadId] up to [upToDate] read and seen; the notification goes when nothing unread remains. */
+    fun markRead(threadId: Long, upToDate: Long) {
+        scope.launch(Dispatchers.IO) { markRead(context, threadId, upToDate) }
+    }
+
     /**
      * Deletes the messages of [threadId] sent or received up to [cutoffMillis], the newer ones stay:
      * AOSP Messaging's DeleteConversationAction (cutoffTimestamp, "to prevent us deleting new
@@ -501,11 +545,19 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
         }.getOrDefault(false)
     }
 
-    fun deleteMessage(message: Message) = run {
+    /**
+     * Deletes one message from the store, off the main thread (the caller's). True only when the provider
+     * deleted a row: DeleteConversationAction.deleteConversationMessagesFromTelephony counts what
+     * MmsUtils.deleteMessage(messageUri) deleted and logs "Could not delete telephony message" when it is not above 0.
+     * https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/datamodel/action/DeleteConversationAction.java#L121-L160
+     */
+    fun deleteMessage(message: Message): Boolean {
         val base = if (message.mms) Telephony.Mms.CONTENT_URI else Telephony.Sms.CONTENT_URI
-        scope.launch(Dispatchers.IO) {
-            runCatching { context.contentResolver.delete(Uri.withAppendedPath(base, message.id.toString()), null, null) }
-        }
+        val messageUri = Uri.withAppendedPath(base, message.id.toString())
+        val count = runCatching { context.contentResolver.delete(messageUri, null, null) }.getOrDefault(0)
+        if (count > 0) return true
+        android.util.Log.w("Messages", "deleteMessage: Could not delete telephony message")
+        return false
     }
 
     companion object {
@@ -525,7 +577,19 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
             else -> Box.SENDING
         }
 
+        /**
+         * MarkReadReceiver.onReceive for one conversation: its message notification is cancelled
+         * (NotificationCancellationHelper.cancel(context, notificationId)), then everything in it is marked
+         * read and seen (threads().setRead(thread)), then process() is told what was marked.
+         * Not ported: process's scheduleDeletion (no disappearing timer on SMS), MultiDeviceReadUpdateJob (no linked
+         * device), SendReadReceiptJob (the chat sends its own receipts); processCallEvents (calls are Dialer's);
+         * removeStickyThread and updateNotification (the notifier keeps no state, a read thread has nothing left to show).
+         * https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/notifications/MarkReadReceiver.java#process
+         */
         fun markRead(context: Context, threadId: Long) {
+            // The notification's id is the thread's (MessageNotifier.show).
+            val notificationId = threadId.toInt()
+            androidx.core.app.NotificationManagerCompat.from(context).cancel(notificationId)
             runCatching {
                 context.contentResolver.update(
                     Telephony.Mms.CONTENT_URI,
@@ -547,6 +611,81 @@ class Messages(private val context: Context, private val scope: CoroutineScope) 
                     "${Telephony.Sms.THREAD_ID} = ? AND (${Telephony.Sms.READ} = 0 OR ${Telephony.Sms.SEEN} = 0)",
                     arrayOf(threadId.toString())
                 )
+            }
+        }
+
+        // not ported: messagesDB.markThreadRead and conversationsDB.markRead (Fossify's own Room copy of the store; there is none here)
+        /**
+         * Fossify Messages' markThreadMessagesRead, the received messages of [threadId] read and seen up to
+         * [upToDate] only (an SMS date is in milliseconds, a picture message's in seconds); the newer ones stay.
+         * https://raw.githubusercontent.com/FossifyOrg/Messages/main/app/src/main/kotlin/org/fossify/messages/extensions/Context.kt#L1008-L1029
+         */
+        private fun markThreadMessagesRead(context: Context, threadId: Long, upToDate: Long) {
+            val id = threadId.toString()
+
+            val smsValues = ContentValues().apply {
+                put(Telephony.Sms.READ, 1)
+                put(Telephony.Sms.SEEN, 1)
+            }
+            val smsSelection = "${Telephony.Sms.THREAD_ID}=? AND ${Telephony.Sms.TYPE}=? AND (${Telephony.Sms.READ}=? OR ${Telephony.Sms.SEEN}=?) AND ${Telephony.Sms.DATE}<=?"
+            val smsArgs = arrayOf(id, Telephony.Sms.MESSAGE_TYPE_INBOX.toString(), "0", "0", upToDate.toString())
+            runCatching { context.contentResolver.update(Telephony.Sms.CONTENT_URI, smsValues, smsSelection, smsArgs) }
+
+            val mmsValues = ContentValues().apply {
+                put(Telephony.Mms.READ, 1)
+                put(Telephony.Mms.SEEN, 1)
+            }
+            val mmsSelection = "${Telephony.Mms.THREAD_ID}=? AND ${Telephony.Mms.MESSAGE_BOX}=? AND (${Telephony.Mms.READ}=? OR ${Telephony.Mms.SEEN}=?) AND ${Telephony.Mms.DATE}<=?"
+            val mmsArgs = arrayOf(id, Telephony.Mms.MESSAGE_BOX_INBOX.toString(), "0", "0", (upToDate / 1000).toString())
+            runCatching { context.contentResolver.update(Telephony.Mms.CONTENT_URI, mmsValues, mmsSelection, mmsArgs) }
+        }
+
+        // not ported: getUnreadCountsByThread's map of every thread (the list's readConversations reads them in one pass; this is one thread)
+        /**
+         * Fossify Messages' getUnreadCountsByThread for one conversation: unread SMS, then unread MMS, each bumped
+         * into the result.
+         * https://raw.githubusercontent.com/FossifyOrg/Messages/main/app/src/main/kotlin/org/fossify/messages/extensions/Context.kt#L323-L349
+         */
+        fun getUnreadCountsByThread(context: Context, threadId: Long): Int {
+            var result = 0
+            fun bump(count: Int) {
+                result += count
+            }
+
+            // Unread SMS
+            runCatching {
+                context.contentResolver.query(
+                    Telephony.Sms.CONTENT_URI,
+                    arrayOf(Telephony.Sms.THREAD_ID),
+                    "${Telephony.Sms.THREAD_ID} = ? AND ${Telephony.Sms.READ} = 0 AND ${Telephony.Sms.TYPE} = ${Telephony.Sms.MESSAGE_TYPE_INBOX}",
+                    arrayOf(threadId.toString()), null
+                )?.use { bump(it.count) }
+            }
+
+            // Unread MMS
+            runCatching {
+                context.contentResolver.query(
+                    Telephony.Mms.CONTENT_URI,
+                    arrayOf(Telephony.Mms.THREAD_ID),
+                    "${Telephony.Mms.THREAD_ID} = ? AND ${Telephony.Mms.READ} = 0 AND ${Telephony.Mms.MESSAGE_BOX} = ${Telephony.Mms.MESSAGE_BOX_INBOX}",
+                    arrayOf(threadId.toString()), null
+                )?.use { bump(it.count) }
+            }
+
+            return result
+        }
+
+        // not ported: process (its read receipts, expiry timers and linked-device sync have no SMS counterpart, see the form above)
+        /**
+         * MarkReadReceiver.onReceive for the messages of [threadId] up to [upToDate] only: they are marked read, and
+         * the notification goes only when no unread message is left (updateNotification then finds nothing to show).
+         * https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/notifications/MarkReadReceiver.java#process
+         */
+        fun markRead(context: Context, threadId: Long, upToDate: Long) {
+            val notificationId = threadId.toInt()
+            markThreadMessagesRead(context, threadId, upToDate)
+            if (getUnreadCountsByThread(context, threadId) == 0) {
+                androidx.core.app.NotificationManagerCompat.from(context).cancel(notificationId)
             }
         }
     }

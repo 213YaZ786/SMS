@@ -1,6 +1,7 @@
 package com.yaz.sms.data.settings
 
 import android.content.Context
+import android.util.Log
 import com.yaz.sms.core.common.writeTextAtomically
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -130,24 +131,73 @@ class TrashStore(context: Context) {
     private val json = Json { ignoreUnknownKeys = true }
 
     private var swept = 0L
-    private val _items = MutableStateFlow(load())
+    private val _items = MutableStateFlow(loadFromDisk())
 
     /** Thread id to when it was trashed and its cutoff. */
     val items: StateFlow<Map<Long, Trashed>> = _items.asStateFlow()
 
-    private fun load(): Map<Long, Trashed> {
-        val text = if (file.exists()) runCatching { file.readText() }.getOrDefault("") else ""
-        return Trash.parse(text, json, System.currentTimeMillis()).also { swept = it.swept }.items
+    // not ported: startReloadIfChangedUnexpectedly (only this process writes the file, nothing changes it behind the store)
+    /**
+     * SharedPreferencesImpl.loadFromDisk: a file that cannot be read is logged ("Cannot read") and the map
+     * stays empty, but the file is not lost: it is kept aside as makeBackupFile keeps ".bak", here ".bad",
+     * and never read as empty then overwritten. Not ported: the .bak rename on start (the write below moves a
+     * whole file in one step), the stat timestamps and the waiting threads (mLock, one reader).
+     * https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-16.0.0_r1/core/java/android/app/SharedPreferencesImpl.java#L153-L225
+     */
+    private fun loadFromDisk(): Map<Long, Trashed> {
+        val fileExists = file.exists()
+        var map: String? = null
+        var thrown: Throwable? = null
+        if (fileExists) {
+            try {
+                map = file.readText()
+                json.decodeFromString<TrashFile>(map)
+            } catch (e: Exception) {
+                thrown = e
+                Log.w(TAG, "Cannot read " + file.name + ": " + e.javaClass.simpleName)
+            }
+        }
+        if (thrown != null && map != null) makeBackupFile(file)
+        return Trash.parse(if (thrown == null) map.orEmpty() else "", json, System.currentTimeMillis()).also { swept = it.swept }.items
     }
 
-    /** The write of SettingsStore.update: the new value in the flow, then the file replaced at once. */
+    /** makeBackupFile: the corrupt file's new name, ".bad". A failed rename is logged; the next write replaces the file. */
+    private fun makeBackupFile(prefsFile: File) {
+        val mBackupFile = File(prefsFile.path + ".bad")
+        if (!prefsFile.renameTo(mBackupFile)) Log.e(TAG, "Couldn't keep " + prefsFile.name + " aside")
+    }
+
+    /** The write of SettingsStore.update: the new value in the flow, then the file replaced at once. False if the file was not written. */
     @Synchronized
-    private fun update(sweptNow: Long = swept, transform: (Map<Long, Trashed>) -> Map<Long, Trashed>) {
+    private fun update(sweptNow: Long = swept, transform: (Map<Long, Trashed>) -> Map<Long, Trashed>): Boolean {
         val updated = transform(_items.value)
-        if (updated == _items.value && sweptNow == swept) return
+        if (updated == _items.value && sweptNow == swept) return true
         _items.value = updated
         swept = sweptNow
-        runCatching { file.writeTextAtomically(json.encodeToString(TrashFile.serializer(), TrashFile(updated, swept))) }
+        return writeToFile(TrashFile(updated, swept))
+    }
+
+    /**
+     * SharedPreferencesImpl.writeToFile: an exception is logged ("writeToFile: Got exception"), the partly
+     * written file cleaned up, and the result is false (mcr.setDiskWriteResult(false, false)).
+     * https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-16.0.0_r1/core/java/android/app/SharedPreferencesImpl.java#L731-L880
+     */
+    private fun writeToFile(mcr: TrashFile): Boolean {
+        try {
+            file.writeTextAtomically(json.encodeToString(TrashFile.serializer(), mcr))
+            return true
+        } catch (e: Exception) {
+            Log.w(TAG, "writeToFile: Got exception: " + e.javaClass.simpleName)
+        }
+
+        // Clean up an unsuccessfully written file
+        val mFile = File(file.parentFile, file.name + ".tmp")
+        if (mFile.exists()) {
+            if (!mFile.delete()) {
+                Log.e(TAG, "Couldn't clean up partially-written file " + mFile.name)
+            }
+        }
+        return false
     }
 
     /**
@@ -187,5 +237,9 @@ class TrashStore(context: Context) {
         }
         update(if (failed) swept else now) { Trash.remove(it, gone) }
         return gone
+    }
+
+    private companion object {
+        const val TAG = "TrashStore"
     }
 }

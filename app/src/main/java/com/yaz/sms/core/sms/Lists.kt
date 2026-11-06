@@ -9,6 +9,16 @@ enum class Filter { ALL, UNREAD, SPAM, ARCHIVED, TRASH }
 /** How the list of conversations is put together, apart from the screen. */
 object Lists {
 
+    /**
+     * DeleteConversationAction deletes messages up to a cutoffTimestamp "to prevent us deleting new
+     * messages": a conversation with a message past it is back in use, its entry in the trash is stale.
+     * https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/datamodel/action/DeleteConversationAction.java#L82-L120
+     */
+    fun cameBack(conversationId: Conversation, trashed: Map<Long, Trashed>): Boolean {
+        val cutoffTimestamp = trashed[conversationId.threadId]?.cutoff ?: return false
+        return conversationId.date > cutoffTimestamp
+    }
+
     /** Archived: put away after its last message. A newer message brings it back. */
     fun isArchived(c: Conversation, archived: Map<Long, Long>): Boolean = archived[c.threadId]?.let { c.date <= it } == true
 

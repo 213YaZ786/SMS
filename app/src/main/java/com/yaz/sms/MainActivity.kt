@@ -1,12 +1,16 @@
 package com.yaz.sms
 
+import android.content.ContentValues
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Telephony
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
+import com.yaz.sms.core.sms.Lists
 import com.yaz.sms.core.sms.OpenRequest
 import com.yaz.sms.core.sms.OpenRequests
 import com.yaz.sms.core.sms.ShowMessage
@@ -14,6 +18,7 @@ import com.yaz.sms.data.settings.SettingsStore
 import com.yaz.sms.navigation.SmsApp
 import com.yaz.sms.ui.theme.AppSurface
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
@@ -35,6 +40,8 @@ class MainActivity : ComponentActivity() {
         // Only on a real launch: a recreated activity already took it.
         if (savedInstanceState == null) receive(intent)
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) { com.yaz.sms.core.sms.Tapbacks.warm() }
+        // Messages left in the outbox or queued past ten minutes become failed, once as the app opens.
+        if (savedInstanceState == null) lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { executeAction() } }
         // Conversations past their 30 days in the Trash are deleted as the app opens, at most once a
         // day, with no job and no alarm: Fossify Messages' checkAndDeleteOldRecycleBinMessages called
         // from MainActivity.onCreate (https://github.com/FossifyOrg/Messages, extensions/Context.kt),
@@ -42,6 +49,15 @@ class MainActivity : ComponentActivity() {
         // (https://github.com/deckerst/aves/blob/develop/lib/model/source/media_store_source.dart);
         // the messages go up to their cutoff as AOSP Messaging's MmsUtils.deleteThread does.
         if (savedInstanceState == null) lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // A trashed conversation that came back (a message past its cutoff, DeleteConversationAction's
+            // cutoffTimestamp) leaves the Trash first, so the sweep never deletes the old messages of a
+            // conversation in use. If the store cannot be read, nothing is swept today.
+            if (!messages.canRead()) return@launch
+            val conversationId = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
+                messages.loaded.first { it }
+                messages.conversations.value
+            } ?: return@launch
+            trash.restore(conversationId.filter { Lists.cameBack(it, trash.items.value) }.map { it.threadId })
             val gone = trash.sweep(System.currentTimeMillis()) { thread, cutoff -> messages.deleteUpTo(thread, cutoff) }
             if (gone.isNotEmpty()) {
                 org.koin.java.KoinJavaComponent.get<com.yaz.sms.core.chat.RichChat>(com.yaz.sms.core.chat.RichChat::class.java).prune()
@@ -73,6 +89,46 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         receive(intent)
+    }
+
+    // not ported: unregister (no connectivity listener or alarm here)
+    // not ported: queueActions (SmsSender sends, nothing is queued from here)
+    // not ported: scheduleProcessPendingMessagesAction (no retry alarm: nothing runs in the background)
+    // not ported: processFirstPendingMessage (one SIM loop of the action's start; this runs once as the app opens)
+    // not ported: register (connectivity listener)
+    // not ported: setRetry (no retry count)
+    // not ported: getNextRetry (no retry count)
+    // not ported: getHavePendingMessages (only asks if a retry is needed)
+    // not ported: findNextMessageToDownload (picture messages are fetched by MmsTransport)
+    // not ported: writeToParcel (the action is not parceled)
+    // not ported: createFromParcel (the action is not parceled)
+    // not ported: newArray (the action is not parceled)
+    /**
+     * ProcessPendingMessagesAction.executeAction: only the default SMS app acts on the pending messages.
+     * https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/datamodel/action/ProcessPendingMessagesAction.java#executeAction
+     */
+    private fun executeAction() {
+        if (Telephony.Sms.getDefaultSmsPackage(this) == packageName) {
+            findNextMessageToSend(System.currentTimeMillis())
+        } else {
+            Log.v(TAG, "ProcessPendingMessagesAction: Not default SMS app")
+        }
+    }
+
+    /**
+     * findNextMessageToSend marks as failed the pending messages outside the resend window. Not ported: the choice
+     * of the one message to send (sendingCnt, pendingCnt) and the inactive subscription test.
+     * https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/datamodel/action/ProcessPendingMessagesAction.java#findNextMessageToSend
+     */
+    private fun findNextMessageToSend(now: Long) {
+        val values = ContentValues()
+        values.put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_FAILED)
+        val failedCnt = contentResolver.update(
+            Telephony.Sms.CONTENT_URI, values,
+            "${Telephony.Sms.TYPE} IN (${Telephony.Sms.MESSAGE_TYPE_OUTBOX}, ${Telephony.Sms.MESSAGE_TYPE_QUEUED}) AND ${Telephony.Sms.DATE} < ?",
+            arrayOf((now - RESEND_TIMEOUT).toString())
+        )
+        Log.d(TAG, "ProcessPendingMessagesAction: $failedCnt failed messages")
     }
 
     private fun receive(intent: Intent?) {
@@ -133,7 +189,11 @@ class MainActivity : ComponentActivity() {
                                 // belongsToCurrentApplication), or a share could send our own files out.
                                 if (uri.scheme != android.content.ContentResolver.SCHEME_CONTENT) return@mapNotNull null
                                 val owner = packageManager.resolveContentProvider(uri.authority ?: return@mapNotNull null, 0)?.packageName
-                                if (owner == null || owner == packageName) return@mapNotNull null
+                                // Except our own forwarded copies (the thread screen's forward-N files under cache/shared,
+                                // through the mms FileProvider), so a forwarded picture arrives.
+                                val forwarded = uri.authority == "$packageName.mms" && uri.pathSegments.firstOrNull() == "shared" &&
+                                    uri.lastPathSegment.orEmpty().startsWith("forward-")
+                                if (owner == null || (owner == packageName && !forwarded)) return@mapNotNull null
                                 val claimed = resolver.getType(uri) ?: intent.type ?: return@mapNotNull null
                                 val dir = java.io.File(cache, "shared-in").apply { mkdirs() }
                                 val file = java.io.File(dir, "in-${System.nanoTime()}")
@@ -172,5 +232,10 @@ class MainActivity : ComponentActivity() {
         const val ACTION_SHOW_KEYS = "com.yaz.sms.action.SHOW_KEYS"
         const val EXTRA_THREAD = "thread"
         const val EXTRA_ADDRESS = "address"
+
+        private const val TAG = "MainActivity"
+
+        /** A message still in the outbox or queued after this long failed: ten minutes. */
+        private const val RESEND_TIMEOUT = 10 * 60 * 1000L
     }
 }
