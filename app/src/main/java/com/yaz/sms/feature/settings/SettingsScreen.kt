@@ -81,6 +81,7 @@ import com.yaz.sms.BuildConfig
 import com.yaz.sms.core.update.UpdateMode
 import com.yaz.sms.core.update.Updates
 import com.yaz.sms.data.settings.ThemeMode
+import com.yaz.sms.feature.main.rememberSetupTiles
 import com.yaz.sms.navigation.LocalReadableInset
 import com.yaz.sms.navigation.WidthClass
 import com.yaz.sms.ui.component.SettingsActionTile
@@ -94,6 +95,7 @@ import com.yaz.sms.ui.component.SettingsTile
 import com.yaz.sms.ui.component.SettingsTileDialogs
 import com.yaz.sms.ui.component.SettingsTileGrid
 import com.yaz.sms.ui.component.ZoneAlertDialog
+import com.yaz.sms.ui.component.leftText
 import com.yaz.sms.ui.component.ZoneSurface
 import com.yaz.sms.ui.component.rememberHaptics
 import com.yaz.sms.ui.icon.AppIcons
@@ -152,6 +154,10 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
     val country = remember { SalesCalls.country(context) }
     // Shown only where the Language app is on the phone (a button whose target app is missing hides).
     val transcriber: com.yaz.sms.core.voice.Transcriber = org.koin.compose.koinInject()
+    // The guide's tile says how many steps are left, read from the system as the guide reads them
+    // (Language's SettingsScreen, guideValue = setup.leftText()):
+    // https://github.com/213YaZ786/Language/blob/main/app/src/main/java/com/yaz/language/feature/settings/SettingsScreen.kt#SettingsScreen
+    val guideValue = rememberSetupTiles().leftText()
 
     val tiles: Map<SettingsSection, List<SettingsSwitchTile>> = mapOf(
         CHAT to listOf(
@@ -331,7 +337,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             // Dialer's Guide tile (YAZ/Dialer/app/src/main/java/com/yaz/dialer/feature/settings/SettingsScreen.kt).
             SettingsActionTile(
                 id = "guide", name = "Guide", title = "Guide", icon = AppIcons.Play,
-                value = "Show again", summary = "See the welcome pages again",
+                value = guideValue, summary = "See the welcome guide again",
                 onClick = {
                     viewModel.replayGuide()
                     onBack()

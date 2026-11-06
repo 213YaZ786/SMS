@@ -49,12 +49,6 @@ internal enum class SetupStep(val title: String, val message: String, val action
         "To see new messages and answer them.",
         "Allow",
         "Don't allow"
-    ),
-    BUBBLES(
-        "New messages in bubbles",
-        "A conversation floats over any app as a bubble, to answer without leaving what you do. Android asks you to allow it once.",
-        "Allow bubbles",
-        "Not now"
     )
 }
 
@@ -81,6 +75,10 @@ internal class Setup(
     val cardStep: SetupStep? = step,
     /** "Not now" or "Don't allow" on a step: remembered for good, the card moves on at once. */
     val refuse: (SetupStep) -> Unit = {},
+    /** SMS holds the SMS role, read from the system at each return (the guide's first tile). */
+    val roleHeld: Boolean = false,
+    /** Notifications are allowed in Android, read from the system at each return (the guide's second tile). */
+    val notificationsAllowed: Boolean = false,
 ) {
     /** The label of [step]'s button: Android's page once it no longer asks. */
     fun action(step: SetupStep): String = when {
@@ -144,7 +142,13 @@ internal fun rememberSetup(): Setup {
     val refusals = refusalCount.intValue
     val step = remember(checks) { nextStep(context, skipRefused = false) }
     val cardStep = remember(checks, refusals) { nextStep(context, skipRefused = true) }
-    return Setup(step, cardStep = cardStep, refuse = { refusedStep ->
+    // Each tile of the guide reads the system again at every resume, as FlorisBoard's SetupScreen reads
+    // isFlorisBoardEnabled and hasNotificationPermission.
+    val roleHeld = remember(checks) {
+        context.getSystemService(RoleManager::class.java).let { !it.isRoleAvailable(RoleManager.ROLE_SMS) || it.isRoleHeld(RoleManager.ROLE_SMS) }
+    }
+    val notificationsAllowed = remember(checks) { context.getSystemService(NotificationManager::class.java).areNotificationsEnabled() }
+    return Setup(step, cardStep = cardStep, roleHeld = roleHeld, notificationsAllowed = notificationsAllowed, refuse = { refusedStep ->
         refuse(context, refusedStep)
         checks++
     }, run = { wanted ->
@@ -157,13 +161,6 @@ internal fun rememberSetup(): Setup {
                 } else {
                     openNotificationSettings(context)
                 }
-            SetupStep.BUBBLES -> {
-                // Asked once: whatever is chosen on Android's page stands.
-                context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).edit().putBoolean(BUBBLES_ASKED, true).apply()
-                context.startActivity(
-                    Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                )
-            }
         }
     }, askRole = { askRole(false) }, roleBlocked = roleBlocked, notificationsRefused = refused)
 }
@@ -175,13 +172,10 @@ private val refusalCount = mutableIntStateOf(0)
  * The step a refusing button sets aside for good, one key per step. Element X's "Not now" on its notification
  * opt-in, NotNowClicked, stores the refusal so the opt-in never shows again (element-hq/element-x-android, AGPL-3.0,
  * https://github.com/element-hq/element-x-android/blob/develop/features/ftue/impl/src/main/kotlin/io/element/android/features/ftue/impl/notifications/NotificationsOptInPresenter.kt);
- * stored as SharedPreferences.Editor.putBoolean, as this file did for the bubbles step.
+ * stored as SharedPreferences.Editor.putBoolean.
  */
 private fun refuse(context: Context, step: SetupStep) {
-    val edit = context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).edit().putBoolean(REFUSED + step.name, true)
-    // The bubbles step keeps its own key, which the first launch page reads too.
-    if (step == SetupStep.BUBBLES) edit.putBoolean(BUBBLES_ASKED, true)
-    edit.apply()
+    context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).edit().putBoolean(REFUSED + step.name, true).apply()
     refusalCount.intValue++
 }
 
@@ -228,16 +222,10 @@ private fun nextStep(context: Context, skipRefused: Boolean): SetupStep? {
     if (roles.isRoleAvailable(RoleManager.ROLE_SMS) && !roles.isRoleHeld(RoleManager.ROLE_SMS) && open(SetupStep.ROLE)) return SetupStep.ROLE
     val notifications = context.getSystemService(NotificationManager::class.java)
     if (!notifications.areNotificationsEnabled() && open(SetupStep.NOTIFICATIONS)) return SetupStep.NOTIFICATIONS
-    // Android lets an app's messages bubble only once the user allows it.
-    if (notifications.bubblePreference != NotificationManager.BUBBLE_PREFERENCE_ALL &&
-        !context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).getBoolean(BUBBLES_ASKED, false) &&
-        open(SetupStep.BUBBLES)
-    ) return SetupStep.BUBBLES
     return null
 }
 
 private const val SETUP = "setup"
-private const val BUBBLES_ASKED = "bubbles_asked"
 private const val NOTIFICATIONS_REFUSED = "notifications_refused"
 private const val REFUSED = "refused_"
 

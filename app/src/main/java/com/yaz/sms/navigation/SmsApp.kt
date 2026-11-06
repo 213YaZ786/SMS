@@ -287,7 +287,15 @@ private fun Main(wide: Boolean, open: OpenThread?, onClose: () -> Unit, onOpenSe
     var showWelcome by rememberSaveable { mutableStateOf(!store.current.welcomeSeen) }
     val settings by store.settings.collectAsState()
     // Settings > Guide asks for the welcome pages again, then the show (as Dialer's DialerApp).
-    LaunchedEffect(settings.welcomeSeen) { if (!settings.welcomeSeen) showWelcome = true }
+    // Opened again from Settings once it was closed: the button reads Done (Language's `reopened`, read on entry,
+    // since closing the first guide sets welcomeSeen while the screen is still leaving).
+    var reopened by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(settings.welcomeSeen) {
+        if (!settings.welcomeSeen) {
+            if (!showWelcome) reopened = true
+            showWelcome = true
+        }
+    }
     // The update installs when the user leaves the app, never during a call, a sending or a voice message.
     val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     if (!showWelcome && !BuildConfig.DEBUG) {
@@ -347,8 +355,9 @@ private fun Main(wide: Boolean, open: OpenThread?, onClose: () -> Unit, onOpenSe
                 contentColor = MaterialTheme.colorScheme.onBackground
             ) {
                 Readable {
-                    WelcomeScreen(onStart = {
+                    WelcomeScreen(reopened = reopened, onStart = {
                         showWelcome = false
+                        reopened = false
                         store.update { it.copy(welcomeSeen = true) }
                     })
                 }
