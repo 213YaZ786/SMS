@@ -177,7 +177,13 @@ fun WelcomeScreen(onStart: () -> Unit) {
             )
             Spacer(Modifier.height(12.dp))
         }
-        BoldButton(filled = true, enabled = !needsRole, onClick = onStart) { Text("Start") }
+        BoldButton(filled = true, enabled = !needsRole, onClick = {
+            // The role held: the chat engine wakes now, not at the next opening (ChatLife.wake checks the chat is on).
+            if (context.getSystemService(android.app.role.RoleManager::class.java).isRoleHeld(android.app.role.RoleManager.ROLE_SMS)) {
+                com.yaz.sms.core.chat.ChatLife.wake()
+            }
+            onStart()
+        }) { Text("Start") }
         Spacer(Modifier.height(24.dp))
         Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
     }

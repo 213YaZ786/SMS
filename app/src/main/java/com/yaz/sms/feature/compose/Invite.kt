@@ -40,8 +40,10 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import com.yaz.sms.core.chat.Hello
 import com.yaz.sms.core.chat.RichChat
 import com.yaz.sms.ui.component.BoldButton
+import kotlinx.coroutines.withTimeoutOrNull
 import com.yaz.sms.ui.component.ZoneAlertDialog
 import com.yaz.sms.ui.component.rememberHaptics
 import com.yaz.sms.ui.icon.AppIcons
@@ -64,19 +66,40 @@ fun InviteDialog(onDismiss: () -> Unit, onJoined: (String) -> Unit) {
     val link by produceState<String?>(null) { value = chat.inviteLink() }
     val code by produceState<ImageBitmap?>(null, link) { value = link?.let(::qr) }
     var joining by remember { mutableStateOf(false) }
-    var failed by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
 
+    // The reasons told apart, in the order RichChat.joinByLink meets them: the chat off (enabled), a link that is not an
+    // invite (Hello.fromLink), the engine not started (start, ready), the join itself refused (secure_join); a wait over
+    // 20 seconds ends the spinner. Not ported: engine.call("secure_join") and the noNumber / save steps (RichChat does them).
+    // https://raw.githubusercontent.com/213YaZ786/SMS/main/app/src/main/java/com/yaz/sms/core/chat/RichChat.kt#joinByLink
+    // https://raw.githubusercontent.com/213YaZ786/SMS/main/app/src/main/java/com/yaz/sms/feature/compose/Invite.kt#join
     fun join(text: String) {
+        if (!chat.enabled) {
+            haptics.reject()
+            problem = "The encrypted chat is off. Turn it on in Settings."
+            return
+        }
+        if (!looksLikeInvite(text) || Hello.fromLink(text.trim(), ByteArray(Hello.NONCE_BYTES)) == null) {
+            haptics.reject()
+            problem = "This is not a valid invite link."
+            return
+        }
         joining = true
+        problem = null
         scope.launch {
-            val address = chat.joinByLink(text)
+            var reached = false
+            val address = withTimeoutOrNull(JOIN_WAIT) { chat.joinByLink(text).also { reached = true } }
             joining = false
             if (address != null) {
                 haptics.done()
                 onJoined(address)
             } else {
                 haptics.reject()
-                failed = true
+                problem = when {
+                    !reached -> "Could not reach the chat."
+                    !chat.ready.value -> "The chat is not running. Check that the phone is online, then try again."
+                    else -> "Could not join this invite."
+                }
             }
         }
     }
@@ -111,15 +134,15 @@ fun InviteDialog(onDismiss: () -> Unit, onJoined: (String) -> Unit) {
                     }) { Text("Share my link") }
                     BoldButton(filled = false, onClick = {
                         val pasted = context.getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
-                        if (looksLikeInvite(pasted)) join(pasted) else {
+                        if (pasted.isBlank()) {
                             haptics.reject()
-                            failed = true
-                        }
+                            problem = "No invite link was found. Copy theirs first, or scan their code with your camera."
+                        } else join(pasted)
                     }) { Text("Paste theirs") }
                 }
                 when {
                     joining -> Text("Joining…", style = MaterialTheme.typography.bodySmall)
-                    failed -> Text("No invite link was found. Copy theirs first, or scan their code with your camera.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                    problem != null -> Text(problem.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
                     else -> Text("Their code: scan it with your camera, it opens SMS.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                 }
             }
@@ -127,6 +150,9 @@ fun InviteDialog(onDismiss: () -> Unit, onJoined: (String) -> Unit) {
         confirmButton = { BoldButton(filled = true, onClick = onDismiss) { Text("Close") } }
     )
 }
+
+/** How long a join may wait before the spinner stops (milliseconds). */
+private const val JOIN_WAIT = 20_000L
 
 /** A chat invite link: the engine's own form, nothing else. */
 fun looksLikeInvite(text: String): Boolean {
@@ -156,30 +182,47 @@ fun JoinQuestion(link: String, onDismiss: () -> Unit, onJoined: (String) -> Unit
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
     var joining by remember { mutableStateOf(false) }
-    var failed by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(AppIcons.Lock, null) },
         title = { Text("Start an encrypted chat?") },
         text = {
             Text(
-                if (failed) "This invite could not be joined. Is the encrypted chat on, and the phone online?"
-                else "With the person who gave this code or link. No number is given on either side.",
+                problem ?: "With the person who gave this code or link. No number is given on either side.",
                 textAlign = TextAlign.Center
             )
         },
         confirmButton = {
             BoldButton(filled = true, enabled = !joining, onClick = {
+                // The same reasons told apart as InviteDialog.join, from RichChat.joinByLink's order of checks:
+                // https://raw.githubusercontent.com/213YaZ786/SMS/main/app/src/main/java/com/yaz/sms/core/chat/RichChat.kt#joinByLink
+                if (!chat.enabled) {
+                    haptics.reject()
+                    problem = "The encrypted chat is off. Turn it on in Settings."
+                    return@BoldButton
+                }
+                if (Hello.fromLink(link.trim(), ByteArray(Hello.NONCE_BYTES)) == null) {
+                    haptics.reject()
+                    problem = "This is not a valid invite link."
+                    return@BoldButton
+                }
                 joining = true
+                problem = null
                 scope.launch {
-                    val address = chat.joinByLink(link)
+                    var reached = false
+                    val address = withTimeoutOrNull(JOIN_WAIT) { chat.joinByLink(link).also { reached = true } }
                     joining = false
                     if (address != null) {
                         haptics.done()
                         onJoined(address)
                     } else {
                         haptics.reject()
-                        failed = true
+                        problem = when {
+                            !reached -> "Could not reach the chat."
+                            !chat.ready.value -> "The chat is not running. Check that the phone is online, then try again."
+                            else -> "Could not join this invite."
+                        }
                     }
                 }
             }) { Text(if (joining) "Joining…" else "Start") }

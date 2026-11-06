@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -128,6 +129,16 @@ internal fun rememberSetup(): Setup {
             refused = true
         }
         checks++
+    }
+    // Granted since, here or in Android's page: the refusal is forgotten, as Element X's opt-in ends once the permission
+    // is granted (notificationsPermissionsState.permissionGranted).
+    // https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/ftue/impl/src/main/kotlin/io/element/android/features/ftue/impl/notifications/NotificationsOptInPresenter.kt#L73-L78
+    LaunchedEffect(checks) {
+        val permissionGranted = context.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
+        if (permissionGranted && refused) {
+            context.getSharedPreferences(SETUP, Context.MODE_PRIVATE).edit().putBoolean(NOTIFICATIONS_REFUSED, false).apply()
+            refused = false
+        }
     }
     // Read here so that every card on screen follows a refusal made on another at once.
     val refusals = refusalCount.intValue
@@ -241,7 +252,9 @@ private fun openDefaultApps(context: Context) {
 }
 
 private fun openNotificationSettings(context: Context) {
-    context.startActivity(
-        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-    )
+    runCatching {
+        context.startActivity(
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        )
+    }
 }

@@ -133,8 +133,20 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
     val simNumber = remember { com.yaz.sms.core.mms.OwnNumbers.sim(context).firstOrNull() }
 
     val chat: com.yaz.sms.core.chat.RichChat = org.koin.compose.koinInject()
+    val messagesRepository: com.yaz.sms.data.sms.Messages = org.koin.compose.koinInject()
     val chatStatus by chat.status.collectAsState()
+    // Why the last start failed, as the engine said it (RichChat.statusDetail); null while the chat is up.
+    val chatDetail by chat.statusDetail.collectAsState()
     val changes by chat.changes.collectAsState()
+    // Element X's NotificationSettingsView reads the system's notifications again on each ON_RESUME
+    // (RefreshSystemNotificationsEnabled) and, when they are off, shows an item that opens Android's notification settings
+    // (SystemNotificationOffItem, startNotificationSettingsIntent): the Notifications tile below does the same.
+    // https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/preferences/impl/src/main/kotlin/io/element/android/features/preferences/impl/notifications/NotificationSettingsView.kt#NotificationSettingsView
+    var systemNotificationsEnabled by remember { mutableStateOf(context.getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled()) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        systemNotificationsEnabled = context.getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled()
+        onPauseOrDispose { }
+    }
     val relays by androidx.compose.runtime.produceState(emptyList<String>(), chatStatus, changes) { value = chat.relays() }
     // Only where the country keeps ranges for sales.
     val country = remember { SalesCalls.country(context) }
@@ -145,7 +157,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
         CHAT to listOf(
             SettingsSwitchTile(
                 id = "chat", name = "Encrypted chat", title = "Encrypted chat with SMS users", icon = AppIcons.Lock,
-                summary = if (settings.richChat) chatStatus else "Messages go as SMS and MMS only.",
+                summary = if (settings.richChat) chatDetail?.let { "$chatStatus, $it" } ?: chatStatus else "Messages go as SMS and MMS only.",
                 checked = settings.richChat,
                 onChange = { on ->
                     viewModel.setRichChat(on)
@@ -173,7 +185,12 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
             SettingsSwitchTile(
                 id = "spam", name = "Spam protection", title = "Spam protection", icon = AppIcons.Report,
                 summary = "Spam goes to Spam, without a notification.",
-                checked = settings.spamProtection, onChange = viewModel::setSpamProtection
+                checked = settings.spamProtection,
+                // The list is read again at once, so the spam judge works from the sent counts as they stand.
+                onChange = { on ->
+                    viewModel.setSpamProtection(on)
+                    messagesRepository.refresh()
+                }
             ),
             if (country in SalesCalls.countries) SettingsSwitchTile(
                 id = "sales", name = "Quiet sales", title = "Quiet sales messages", icon = AppIcons.NotificationsOff,
@@ -277,8 +294,12 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                     value = reaction, summary = reaction, onClick = { dialog = OpenDialog.REACTION_FORMAT }
                 ),
                 SettingsActionTile(
-                    id = "notifications", name = "Notifications", title = "Notifications", icon = AppIcons.NotificationsOn,
-                    value = "Sound, vibration", summary = "Sound, vibration and how they show",
+                    id = "notifications", name = "Notifications", title = "Notifications",
+                    icon = if (systemNotificationsEnabled) AppIcons.NotificationsOn else AppIcons.NotificationsOff,
+                    value = if (systemNotificationsEnabled) "Sound, vibration" else "Turned off",
+                    summary = if (systemNotificationsEnabled) "Sound, vibration and how they show"
+                    else "Android blocks the notifications of SMS. Turn them on to see new messages.",
+                    iconTint = if (systemNotificationsEnabled) null else MaterialTheme.colorScheme.error,
                     onClick = { open(context, Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)) }
                 ),
                 SettingsActionTile(
@@ -441,7 +462,10 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 onPick = { host ->
                     viewModel.setRelay(host)
                     // A relay picked by hand joins the profile at once.
-                    if (host.isNotBlank()) scope.launch { chat.addRelay(host) }
+                    // addRelay's answer is told: false when the relay could not be added (offline, refused).
+                    if (host.isNotBlank()) scope.launch {
+                        if (!chat.addRelay(host)) android.widget.Toast.makeText(context, "Could not add $host. Check that the phone is online.", android.widget.Toast.LENGTH_LONG).show()
+                    }
                 },
                 onDismiss = { dialog = OpenDialog.NONE }
             )

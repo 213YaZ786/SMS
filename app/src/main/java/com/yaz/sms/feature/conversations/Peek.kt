@@ -50,9 +50,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.yaz.sms.core.dial.NumberActions
-import com.yaz.sms.core.mms.MmsTransport
 import com.yaz.sms.core.mms.mediaWord
-import com.yaz.sms.core.sms.SmsSender
+import com.yaz.sms.core.sms.PendingSends
+import com.yaz.sms.data.settings.SettingsStore
 import com.yaz.sms.data.sms.Box as MessageBox
 import com.yaz.sms.data.sms.Conversation
 import com.yaz.sms.data.sms.Message
@@ -86,6 +86,8 @@ internal fun Peek(
     onPin: (Boolean) -> Unit,
     onArchive: (Boolean) -> Unit,
     onRead: () -> Unit,
+    /** Marks the conversation unread (Signal's handleMarkAsUnread), in the caller. */
+    onUnread: () -> Unit = {},
     onDelete: () -> Unit,
     /** Starts the multi select on this conversation (AOSP Messaging's select mode). */
     onSelect: () -> Unit = {},
@@ -101,8 +103,34 @@ internal fun Peek(
     val messages: Messages = koinInject()
     val scope = rememberCoroutineScope()
     var last by remember { mutableStateOf<List<Message>>(emptyList()) }
-    LaunchedEffect(c.threadId) { last = messages.thread(c.threadId).takeLast(4) }
+    // The glance shows four messages: only those are read, not a page of 200.
+    LaunchedEffect(c.threadId) { last = messages.thread(c.threadId, PEEK_MESSAGES) }
     var text by remember { mutableStateOf("") }
+    val sends: PendingSends = koinInject()
+    val store: SettingsStore = koinInject()
+    // The thread's own path for a reply (ThreadScreen.queue): PendingSends, so the chat when the person has it, an
+    // address without a number kept off SMS, One SMS each for a marked group, and the undo delay. It answers whether the
+    // message was handed over: false (nobody to write to, SMS not the messaging app) leaves Peek open with its words.
+    // Not ported: sentEffects, playing, quote (a reply here has no effect, no quote), mentionsWire (no mentions in a glance).
+    // https://raw.githubusercontent.com/213YaZ786/SMS/main/app/src/main/java/com/yaz/sms/feature/thread/ThreadScreen.kt#queue
+    fun queue(text: String, sub: Int, attachments: List<com.yaz.sms.core.mms.Attachment>, quoted: String?): Boolean {
+        if (c.addresses.none { it.isNotBlank() }) {
+            android.widget.Toast.makeText(context, "Nobody to write to in this conversation", android.widget.Toast.LENGTH_SHORT).show()
+            return false
+        }
+        if (android.provider.Telephony.Sms.getDefaultSmsPackage(context) != context.packageName) {
+            android.widget.Toast.makeText(context, "SMS must be your messaging app to send", android.widget.Toast.LENGTH_SHORT).show()
+            return false
+        }
+        val seconds = store.current.undoSeconds
+        val p = PendingSends.Waiting(
+            key = System.nanoTime(), text = text, sub = sub, attachments = attachments, quoted = quoted, effect = null,
+            people = c.addresses, thread = c.threadId, wire = null, seconds = seconds,
+            dueAt = android.os.SystemClock.elapsedRealtime() + seconds * 1000L
+        )
+        if (seconds <= 0) sends.sendNow(p) else sends.queue(p)
+        return true
+    }
     var confirmDelete by remember { mutableStateOf(false) }
     // Rises from a little lower and smaller, settling with a slight bounce.
     val rise = remember { Animatable(0f) }
@@ -184,13 +212,13 @@ internal fun Peek(
                         }
                         FloatingPane(shape = CircleShape, accent = text.isNotBlank(), onClick = {
                             if (text.isBlank()) return@FloatingPane
-                            val body = text
-                            haptics.done()
-                            scope.launch(Dispatchers.IO) {
-                                if (c.group) MmsTransport.send(context, c.addresses, body, emptyList(), -1)
-                                else SmsSender.send(context, c.address, body)
-                                Messages.markRead(context, c.threadId)
+                            // The result checked: on a refusal Peek stays open, the words kept in its field.
+                            if (!queue(text, android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID, emptyList(), null)) {
+                                haptics.reject()
+                                return@FloatingPane
                             }
+                            haptics.done()
+                            messages.markRead(c.threadId)
                             onDismiss()
                         }, modifier = Modifier.size(46.dp)) {
                             Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
@@ -208,7 +236,9 @@ internal fun Peek(
                     ) {
                         if (onNotSpam != null) Action(AppIcons.ReportOff, "Not spam") { onNotSpam(); onDismiss() }
                         Action(AppIcons.PushPin, if (pinned) "Unpin" else "Pin") { onPin(!pinned); onDismiss() }
+                        // Signal's conversation menu: Read on an unread conversation, Unread on a read one.
                         if (c.unread > 0) Action(AppIcons.DoneAll, "Read") { onRead(); onDismiss() }
+                        else Action(AppIcons.MarkUnread, "Unread") { onUnread(); onDismiss() }
                         Action(if (archived) AppIcons.Unarchive else AppIcons.Archive, if (archived) "Unarchive" else "Archive") { onArchive(!archived); onDismiss() }
                         if (!c.group && c.address.count(Char::isDigit) >= 3) Action(AppIcons.Call, "Call") { NumberActions.dial(context, c.address); onDismiss() }
                         Action(AppIcons.SelectAll, "Select") { onSelect() }
@@ -237,6 +267,9 @@ internal fun Peek(
         }
     }
 }
+
+/** How many messages a glance reads. */
+private const val PEEK_MESSAGES = 4
 
 @Composable
 private fun Action(icon: ImageVector, label: String, onClick: () -> Unit) {

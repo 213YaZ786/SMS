@@ -77,7 +77,10 @@ import com.yaz.sms.data.settings.Trash
 import com.yaz.sms.data.settings.TrashStore
 import com.yaz.sms.data.sms.Conversation
 import com.yaz.sms.data.sms.Messages
+import com.yaz.sms.feature.main.SetupStep
 import com.yaz.sms.feature.main.TabFrame
+import com.yaz.sms.feature.main.rememberSetup
+import com.yaz.sms.core.dial.People
 import com.yaz.sms.feature.thread.Delivery
 import com.yaz.sms.ui.component.ContactAvatar
 import com.yaz.sms.ui.component.EmptyZone
@@ -126,6 +129,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         com.yaz.sms.feature.thread.ThreadsAhead.warm(messages, ahead.map { it.first })
     }
     val loaded by messages.loaded.collectAsState()
+    // The read itself failed (Messages.failed): the list says so, with Retry, rather than "No messages yet".
+    val failedRead by messages.failed.collectAsState()
     val contacts by book.entries.collectAsState()
     val settings by store.settings.collectAsState()
     val context = LocalContext.current
@@ -171,8 +176,16 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         // Someone with no number goes by the name they chose in the chat.
         else if ('@' in c.address) chat.nameFor(c.address) ?: c.address.substringBefore('@')
         else index.find(T9.clean(c.address))?.name
-    // Put in the Trash by a swipe, waiting its few seconds to be taken back.
-    var swiped by remember { mutableStateOf<Conversation?>(null) }
+    // What was just done, waiting its few seconds to be taken back (the Undo pane): Trash, archive, block.
+    var undoing by remember { mutableStateOf<UndoOffer?>(null) }
+    val undoWords = remember { arrayOfNulls<UndoOffer>(1) }
+    // Conversations whose deletion Android refused, how many (the dialog with the role button).
+    var deleteFailed by remember { mutableStateOf(0) }
+    val notifier = remember { com.yaz.sms.core.sms.MessageNotifier(context) }
+    val setup = rememberSetup()
+    val say: (String) -> Unit = { words -> android.widget.Toast.makeText(context, words, android.widget.Toast.LENGTH_SHORT).show() }
+    // The threads the store holds now: a selection or a pin list may name some that are gone.
+    val existing = remember(all) { all.mapTo(HashSet()) { it.threadId } }
     // A trashed conversation tapped: it is restored to be read.
     var restoring by remember { mutableStateOf<Conversation?>(null) }
     val rememberedHaptics = rememberHaptics()
@@ -191,12 +204,18 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // Names, numbers and the newest message first, then the conversations only an older message matches (with the
     // words found, which stand under the name in place of the last message).
     val searched = remember(all, filter, settings.pinned, settings.archived, trashed, query, index, spamThreads, bodies) {
-        val q = query.trim().lowercase()
+        // Case and accents folded as the new message picker does (People.plain), a number found with or without spaces (T9.clean).
+        val q = People.plain(query.trim())
+        val digits = if (query.any(Char::isLetter)) "" else T9.clean(query.filterNot(Char::isWhitespace)).filter(Char::isDigit)
+        // The pins stay in the order the user pinned them.
         val listed = Lists.shown(all, filter, settings.pinned, settings.archived, trashed = trashed, spam = spamThreads)
+            .let { list -> list.filter { it.threadId in settings.pinned }.sortedBy { settings.pinned.indexOf(it.threadId) } + list.filterNot { it.threadId in settings.pinned } }
         if (q.isEmpty()) Pair(listed, emptyMap<Long, com.yaz.sms.data.sms.Found>())
         else {
             val (named, rest) = listed.partition { c ->
-                nameOf(c)?.lowercase()?.contains(q) == true || c.addresses.any { it.contains(q) } || c.snippet.lowercase().contains(q)
+                nameOf(c)?.let { People.plain(it).contains(q) } == true ||
+                    c.addresses.any { a -> People.plain(a).contains(q) || (digits.isNotEmpty() && T9.clean(a).contains(digits)) } ||
+                    People.plain(c.snippet).contains(q)
             }
             val inside = if (bodies.first == query.trim()) bodies.second else emptyMap()
             val older = rest.filter { it.threadId in inside }
@@ -205,7 +224,14 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     }
     val shown = searched.first
     val olderFound = searched.second
-    val code = remember(live) { Lists.latestCode(live, System.currentTimeMillis()) }
+    // The code chip comes only from a conversation the inbox shows: not archived, not in Spam.
+    val code = remember(live, settings.archived, spamThreads) {
+        Lists.latestCode(live.filter { !Lists.isArchived(it, settings.archived) && it.threadId !in spamThreads }, System.currentTimeMillis())
+    }
+    // What Spam holds, on its chip.
+    val spamCount = remember(all, settings.archived, trashed, spamThreads) {
+        all.count { it.threadId in spamThreads && !Lists.isArchived(it, settings.archived) && !Lists.isTrashed(it, trashed) }
+    }
     // Conversations the store no longer holds leave the Trash's list.
     androidx.compose.runtime.LaunchedEffect(all) {
         if (all.isNotEmpty()) trash.keepThreads(all.mapTo(HashSet()) { it.threadId })
@@ -221,6 +247,12 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     var forever by remember { mutableStateOf<Set<Long>?>(null) }
     var emptying by remember { mutableStateOf(false) }
     androidx.activity.compose.BackHandler(picked != null) { picked = null }
+    // The list moves under a selection: what was taken and is gone leaves it, and an empty one ends it.
+    androidx.compose.runtime.LaunchedEffect(existing) {
+        val taking = picked ?: return@LaunchedEffect
+        val still = taking.filterTo(HashSet()) { it in existing }
+        if (still.size != taking.size) picked = still.ifEmpty { null }
+    }
     // No "To answer" cards (the user, 2026-10-28): the pinned faces and the unread counts say it already.
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
 
@@ -229,7 +261,118 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     // (https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/datamodel/action/DeleteConversationAction.java);
     // the time to keep and the list of what waits are Aves' bin (https://github.com/deckerst/aves/blob/develop/lib/model/source/trash.dart),
     // and the move is Fossify Messages' moveMessageToRecycleBin (https://github.com/FossifyOrg/Messages, extensions/Context.kt).
-    fun moveToTrash(those: Collection<Conversation>) = trash.trash(those.associate { it.threadId to it.date })
+    fun moveToTrash(those: Collection<Conversation>) {
+        trash.trash(those.associate { it.threadId to it.date })
+        // The notification of a conversation put away goes with it.
+        those.forEach { notifier.cancel(it.threadId) }
+    }
+
+    // The Trash with its Undo pane, shaped like onActionBarArchive's snackbar (its undoRunnable does the other way):
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/conversationlist/AbstractConversationListActivity.java#L146-L176
+    fun onActionBarTrash(conversations: Collection<Conversation>) {
+        val conversationIds = conversations.map { it.threadId }
+        if (conversationIds.isEmpty()) return
+        moveToTrash(conversations)
+        val undoRunnable = { trash.restore(conversationIds) }
+        undoing = UndoOffer("Moved to Trash", undoRunnable)
+    }
+
+    // Archive and unarchive in one function, AOSP Messaging's onActionBarArchive(conversations, isToArchive): each
+    // conversation archived or not, an undoRunnable that does the other way, the message in a snackbar with Undo,
+    // the selection left. Signal's handleArchive and handleUnarchive are the same two ways (selectedConversations,
+    // count, snackBarTitle, the selection ended).
+    // Not ported: handleArchive, handleUnarchive (both are this function with isToArchive), showProgress, progressDialog,
+    // dismissProgressDialog, SignalProgressDialog (the store is written at once, nothing to wait for), Completable and
+    // lifecycleDisposable (RxJava off-thread work: store.update is not on the main thread),
+    // mainNavigationViewModel.getSnackbarRegistry (this screen's Undo pane), UpdateConversationArchiveStatusAction
+    // (Android's SMS store has no archive: Settings keeps thread to date).
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/conversationlist/AbstractConversationListActivity.java#L146-L176
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversationlist/ConversationListFragment.java#handleArchive
+    fun onActionBarArchive(conversations: Collection<Conversation>, isToArchive: Boolean) {
+        val selectedConversations = conversations.toList()
+        val count = selectedConversations.size
+        if (count == 0) return
+        val conversationIds = selectedConversations.mapTo(LinkedHashSet()) { it.threadId }
+        val snackBarTitle = when {
+            isToArchive && count == 1 -> "Archived"
+            isToArchive -> "$count archived"
+            count == 1 -> "Moved to inbox"
+            else -> "$count moved to inbox"
+        }
+        store.update { s ->
+            s.copy(archived = if (isToArchive) s.archived + selectedConversations.map { it.threadId to it.date } else s.archived - conversationIds)
+        }
+        if (isToArchive) conversationIds.forEach { notifier.cancel(it) }
+        picked = null
+        val undoRunnable = { onActionBarArchive(selectedConversations, !isToArchive) }
+        undoing = UndoOffer(snackBarTitle, undoRunnable)
+    }
+
+    // Signal's handlePin: the conversations not pinned yet in the order given (LinkedHashSet), more than the limit
+    // refused with its words, the selection ended. Signal's limit is 3 chats; this list shows nine faces.
+    // Not ported: SimpleTask, SignalExecutors.BOUNDED, ThreadTable.pinConversations, ConversationUtil.refreshRecipientShortcuts
+    // (the pin is Settings' list, kept in the order pinned), RemoteConfig.pinnedChatLimit (PINNED_FACES_MAX).
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversationlist/ConversationListFragment.java#handlePin
+    fun handlePin(conversations: Collection<Conversation>) {
+        val toPin = conversations.filter { it.threadId !in settings.pinned }.mapTo(LinkedHashSet()) { it.threadId }
+        val pinnedCount = settings.pinned.count { it in existing }
+        if (toPin.size + pinnedCount > PINNED_FACES_MAX) {
+            rememberedHaptics.reject()
+            say("Up to $PINNED_FACES_MAX pinned conversations")
+            picked = null
+            return
+        }
+        store.update { s -> s.copy(pinned = s.pinned + toPin.filterNot { it in s.pinned }) }
+        picked = null
+    }
+
+    // Signal's handleUnpin.
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversationlist/ConversationListFragment.java#handleUnpin
+    fun handleUnpin(ids: Collection<Long>) {
+        store.update { s -> s.copy(pinned = s.pinned - ids.toSet()) }
+        picked = null
+    }
+
+    // Signal's handleMarkAsUnread: setForcedUnread off the main thread, then the selection ended. Android's store has
+    // no forced flag: the newest message received in each thread is set unread (setForcedUnread below).
+    // Not ported: SimpleTask (a coroutine does it), SignalDatabase.threads() (Telephony's providers).
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversationlist/ConversationListFragment.java#handleMarkAsUnread
+    fun handleMarkAsUnread(conversations: Collection<Conversation>) {
+        val ids = conversations.map { it.threadId }
+        scope.launch {
+            val marked = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { setForcedUnread(context, ids) }
+            if (!marked) {
+                rememberedHaptics.reject()
+                say("Could not mark as unread")
+            }
+            picked = null
+        }
+    }
+
+    // AOSP Messaging's onActionBarBlock: the destinations blocked, then onUpdateDestinationBlockedAction: on success a
+    // snackbar whose Undo (undoRunnable) unblocks them; on failure an error.
+    // Not ported: AlertDialog (the screens' own confirm dialogs ask first), UpdateDestinationBlockedAction (Android's
+    // BlockedNumberContract is written by NumberActions), SnackBarInteraction, exitMultiSelectState (picked = null by the caller).
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/conversationlist/AbstractConversationListActivity.java#L193-L227
+    fun onActionBarBlock(conversations: Collection<Conversation>) {
+        scope.launch {
+            val blocked = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                conversations.filter { NumberActions.block(context, it.address) }
+            }
+            val success = blocked.isNotEmpty()
+            if (!success) {
+                rememberedHaptics.reject()
+                say("Could not block")
+                return@launch
+            }
+            if (blocked.size < conversations.size) say("Could not block ${conversations.size - blocked.size}")
+            val undoRunnable = {
+                scope.launch { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { blocked.forEach { NumberActions.unblock(context, it.address) } } }
+                Unit
+            }
+            undoing = UndoOffer("Blocked", undoRunnable)
+        }
+    }
 
     // Report spam and Not spam on a conversation, as Google Messages offers them
     // (https://support.google.com/messages/answer/9061432): the sender is reported or cleared and the
@@ -240,7 +383,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     fun reportSpam(c: Conversation, block: Boolean) {
         scope.launch {
             spamStore.report(SpamJudge.senderKey(c.address), Spams.received(messages.thread(c.threadId, Spams.MAX_PER_REPORT * 2)))
-            if (block) NumberActions.block(context, c.address)
+            if (block) onActionBarBlock(listOf(c))
         }
     }
     fun notSpam(c: Conversation) {
@@ -259,7 +402,10 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         val entries = trashed.filterKeys { it in threads }
         scope.launch {
             val gone = entries.filter { (thread, t) -> messages.deleteUpTo(thread, t.cutoff) }.keys
-            if (gone.size < entries.size) rememberedHaptics.reject()
+            if (gone.size < entries.size) {
+                rememberedHaptics.reject()
+                deleteFailed = entries.size - gone.size
+            }
             if (gone.isEmpty()) return@launch
             // The chat side of its messages goes too, before their numbers are reused.
             chat.prune()
@@ -322,16 +468,11 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             archived = Lists.isArchived(c, settings.archived),
             onSwipe = { action ->
                 when (action) {
-                    com.yaz.sms.core.sms.SwipeAction.ARCHIVE -> {
-                        val on = !Lists.isArchived(c, settings.archived)
-                        store.update { s -> s.copy(archived = if (on) s.archived + (c.threadId to c.date) else s.archived - c.threadId) }
-                    }
-                    com.yaz.sms.core.sms.SwipeAction.DELETE -> {
-                        moveToTrash(listOf(c))
-                        swiped = c
-                    }
-                    com.yaz.sms.core.sms.SwipeAction.READ -> messages.markRead(c.threadId)
-                    com.yaz.sms.core.sms.SwipeAction.PIN -> store.update { s -> s.copy(pinned = if (c.threadId in s.pinned) s.pinned - c.threadId else s.pinned + c.threadId) }
+                    com.yaz.sms.core.sms.SwipeAction.ARCHIVE -> onActionBarArchive(listOf(c), !Lists.isArchived(c, settings.archived))
+                    com.yaz.sms.core.sms.SwipeAction.DELETE -> onActionBarTrash(listOf(c))
+                    // The swipe toggles: Read on an unread conversation, Unread on a read one (Signal's handleMarkAsRead, handleMarkAsUnread).
+                    com.yaz.sms.core.sms.SwipeAction.READ -> if (c.unread > 0) messages.markRead(c.threadId) else handleMarkAsUnread(listOf(c))
+                    com.yaz.sms.core.sms.SwipeAction.PIN -> if (c.threadId in settings.pinned) handleUnpin(listOf(c.threadId)) else handlePin(listOf(c))
                     com.yaz.sms.core.sms.SwipeAction.REPLY -> onOpenThread(c.threadId, c.addresses.joinToString(","))
                     com.yaz.sms.core.sms.SwipeAction.NONE -> Unit
                 }
@@ -437,7 +578,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 listOfNotNull(
                     Filter.ARCHIVED to "Archive",
                     Filter.TRASH to "Trash",
-                    if (settings.spamProtection) Filter.SPAM to "Spam" else null
+                    if (settings.spamProtection) Filter.SPAM to (if (spamCount > 0) "Spam $spamCount" else "Spam") else null
                 )
             ) {
                 picked = null
@@ -459,12 +600,18 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
                     .padding(top = 8.dp)
             ) {
-                val taken = picked.orEmpty()
+                // Only the conversations that still exist (the list moves under a selection).
+                val taken = picked.orEmpty().filterTo(HashSet()) { it in existing }
                 val those = all.filter { it.threadId in taken }
                 FloatingPane(shape = CircleShape) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
                         com.yaz.sms.ui.component.FloatingAction(AppIcons.Close, "Leave the selection", { picked = null })
                         Text("${taken.size}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 6.dp))
+                        // Select all: every conversation the list shows now.
+                        if (taken.size < shown.size) com.yaz.sms.ui.component.FloatingAction(AppIcons.SelectAll, "Select all", {
+                            rememberedHaptics.tick()
+                            picked = shown.mapTo(HashSet()) { it.threadId }
+                        })
                         if (inTrash) {
                             // Restore or delete for good what was taken (Google Messages' Trash).
                             com.yaz.sms.ui.component.FloatingAction(AppIcons.RestoreFromTrash, "Restore", {
@@ -474,17 +621,18 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                             })
                             com.yaz.sms.ui.component.FloatingAction(AppIcons.DeleteForever, "Delete forever", { forever = taken }, tint = MaterialTheme.colorScheme.error)
                         } else {
-                            com.yaz.sms.ui.component.FloatingAction(AppIcons.DoneAll, "Mark read", {
+                            // Signal's selection menu: Read when something in it is unread, else Unread (handleMarkAsRead, handleMarkAsUnread).
+                            if (those.any { it.unread > 0 }) com.yaz.sms.ui.component.FloatingAction(AppIcons.DoneAll, "Mark read", {
                                 rememberedHaptics.done()
                                 those.forEach { messages.markRead(it.threadId) }
                                 picked = null
+                            }) else com.yaz.sms.ui.component.FloatingAction(AppIcons.MarkUnread, "Mark unread", {
+                                rememberedHaptics.done()
+                                handleMarkAsUnread(those)
                             })
                             com.yaz.sms.ui.component.FloatingAction(if (archive) AppIcons.Unarchive else AppIcons.Archive, if (archive) "Unarchive" else "Archive", {
                                 rememberedHaptics.done()
-                                store.update { s ->
-                                    s.copy(archived = if (archive) s.archived - taken else s.archived + those.map { it.threadId to it.date })
-                                }
-                                picked = null
+                                onActionBarArchive(those, !archive)
                             })
                             // In Spam: Not spam for what was taken, beside Block and Move to trash.
                             if (inSpam) com.yaz.sms.ui.component.FloatingAction(AppIcons.ReportOff, "Not spam", {
@@ -492,16 +640,20 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                                 those.forEach(::notSpam)
                                 picked = null
                             })
-                            if (those.isNotEmpty() && those.all { !it.group && it.address.count(Char::isDigit) >= 3 } && NumberActions.canBlock(context))
+                            if (those.isNotEmpty() && those.all { !it.group && it.address.count(Char::isDigit) >= 3 } && NumberActions.canBlock(context) &&
+                                those.any { !NumberActions.isBlocked(context, it.address) })
                                 com.yaz.sms.ui.component.FloatingAction(AppIcons.Block, "Block", { confirmBlockMany = true })
                             com.yaz.sms.ui.component.FloatingAction(AppIcons.Delete, "Move to trash", { confirmTrashMany = true }, tint = MaterialTheme.colorScheme.error)
                         }
                     }
                 }
             }
-            // A conversation put in the Trash by a swipe can be taken back for a few seconds.
+            // What was just done (Trash, archive, block) can be taken back for a few seconds: the Undo pane,
+            // its words kept while it slides out.
+            val offer = undoing
+            if (offer != null) undoWords[0] = offer
             androidx.compose.animation.AnimatedVisibility(
-                visible = swiped != null,
+                visible = offer != null,
                 enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),
                 exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -510,12 +662,12 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             ) {
                 FloatingPane(shape = CircleShape) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 20.dp, end = 6.dp, top = 4.dp, bottom = 4.dp)) {
-                        Text("Moved to Trash", style = MaterialTheme.typography.bodyLarge)
+                        Text(undoWords[0]?.text.orEmpty(), style = MaterialTheme.typography.bodyLarge)
                         Spacer(Modifier.width(8.dp))
                         androidx.compose.material3.TextButton(onClick = {
                             rememberedHaptics.done()
-                            swiped?.let { trash.restore(listOf(it.threadId)) }
-                            swiped = null
+                            offer?.undo?.invoke()
+                            undoing = null
                         }) { Text("Undo") }
                     }
                 }
@@ -544,11 +696,25 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             }
         }
     ) { padding ->
+        // https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/home/impl/src/main/kotlin/io/element/android/features/home/impl/filters/RoomListFiltersEmptyStateResources.kt#fromSelectedFilters
+        val filtered = FiltersEmptyState.fromSelectedFilters(listOfNotNull(filter.takeIf { it == Filter.UNREAD }))
         when {
+            // The role not held: the text gets the button that asks for it again, whatever "Not now" said before.
             !messages.canRead() -> EmptyZone(
                 title = "Your messages show here",
                 message = "Once SMS is your messaging app.",
                 icon = AppIcons.Message,
+                actionLabel = "Choose SMS",
+                onAction = { setup.run(SetupStep.ROLE) },
+                modifier = Modifier.fillMaxSize().padding(padding)
+            )
+            // The read itself failed: not "No messages yet".
+            failedRead && all.isEmpty() -> EmptyZone(
+                title = "Could not read your messages",
+                message = "Android did not answer.",
+                icon = AppIcons.Message,
+                actionLabel = "Retry",
+                onAction = { messages.refresh() },
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
             !loaded -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { LoadingMark(size = 72.dp) }
@@ -556,9 +722,10 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             shown.isEmpty() && query.isNotBlank() && bodies.first != query.trim() ->
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { LoadingMark(size = 72.dp) }
             shown.isEmpty() -> EmptyZone(
+                // Element X's empty state of a filter: its own words and a way to clear it (fromSelectedFilters).
                 title = when {
                     query.isNotBlank() -> "Nothing found"
-                    filter == Filter.UNREAD -> "All read"
+                    filtered != null -> filtered.title
                     filter == Filter.ARCHIVED -> "Nothing in the archive"
                     filter == Filter.TRASH -> "Trash is empty"
                     filter == Filter.SPAM -> "No spam"
@@ -566,6 +733,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 },
                 message = when {
                     query.isNotBlank() -> "No name, number or message matches \"$query\"."
+                    filtered != null -> filtered.subtitle
                     filter == Filter.ALL -> "Write to someone with the button below."
                     filter == Filter.TRASH -> "Conversations you trash stay here 30 days."
                     inSpam -> "Report a conversation as spam to put it here."
@@ -575,7 +743,10 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     Filter.TRASH -> AppIcons.Delete
                     Filter.SPAM -> AppIcons.Report
                     else -> AppIcons.Message
-                },                modifier = Modifier.fillMaxSize().padding(padding)
+                },
+                actionLabel = "Show all".takeIf { filtered != null && query.isBlank() },
+                onAction = { filter = Filter.ALL },
+                modifier = Modifier.fillMaxSize().padding(padding)
             )
             else -> BoxWithConstraints(Modifier.fillMaxSize()) {
               // As many columns as fit, each card at least 280 dp (its face column and a bubble of words), as
@@ -639,11 +810,11 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         }
     }
 
-    // The offer to take back a swiped conversation lasts a few seconds.
-    swiped?.let { c ->
-        androidx.compose.runtime.LaunchedEffect(c.threadId) {
+    // The offer to take back what was just done lasts a few seconds.
+    undoing?.let { offer ->
+        androidx.compose.runtime.LaunchedEffect(offer) {
             kotlinx.coroutines.delay(5_000)
-            swiped = null
+            if (undoing === offer) undoing = null
         }
     }
 
@@ -657,7 +828,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 BoldButton(filled = true, onClick = {
                     confirmTrashMany = false
                     rememberedHaptics.done()
-                    moveToTrash(all.filter { it.threadId in taken })
+                    onActionBarTrash(all.filter { it.threadId in taken })
                     picked = null
                 }) { Text("Move to trash") }
             },
@@ -699,7 +870,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         )
     }
     if (confirmBlockMany) {
-        val those = all.filter { it.threadId in picked.orEmpty() }
+        // Only the numbers not yet blocked (AbstractConversationListActivity.java#onActionBarBlock offers Block for a number once).
+        val those = all.filter { it.threadId in picked.orEmpty() && !NumberActions.isBlocked(context, it.address) }
         com.yaz.sms.ui.component.ZoneAlertDialog(
             onDismissRequest = { confirmBlockMany = false },
             title = { Text(if (those.size == 1) "Block this number?" else "Block ${those.size} numbers?") },
@@ -708,11 +880,31 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 BoldButton(filled = true, onClick = {
                     confirmBlockMany = false
                     rememberedHaptics.done()
-                    those.forEach { NumberActions.block(context, it.address) }
+                    onActionBarBlock(those)
                     picked = null
                 }) { Text("Block") }
             },
             dismissButton = { QuietButton(onClick = { confirmBlockMany = false }) { Text("Cancel") } }
+        )
+    }
+    // A deletion Android refused: AbstractConversationListActivity#onActionBarDelete answers "requires default sms app" with a
+    // change button when SMS is not the default app (isDefaultSmsApp, getChangeDefaultSmsAppIntent), here the dialog of this
+    // file's confirmTrashMany:
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/conversationlist/AbstractConversationListActivity.java#onActionBarDelete
+    // https://raw.githubusercontent.com/213YaZ786/SMS/main/app/src/main/java/com/yaz/sms/feature/conversations/ConversationsScreen.kt#confirmTrashMany
+    if (deleteFailed > 0) {
+        val isDefaultSmsApp = android.provider.Telephony.Sms.getDefaultSmsPackage(context) == context.packageName
+        com.yaz.sms.ui.component.ZoneAlertDialog(
+            onDismissRequest = { deleteFailed = 0 },
+            title = { Text(if (deleteFailed == 1) "Could not delete 1 conversation" else "Could not delete $deleteFailed conversations") },
+            text = { Text(if (isDefaultSmsApp) "Android refused. Try again." else "SMS must be your messaging app to delete messages.") },
+            confirmButton = {
+                BoldButton(filled = true, onClick = {
+                    deleteFailed = 0
+                    if (!isDefaultSmsApp) setup.run(SetupStep.ROLE)
+                }) { Text(if (isDefaultSmsApp) "Close" else "Choose SMS") }
+            },
+            dismissButton = if (isDefaultSmsApp) null else ({ QuietButton(onClick = { deleteFailed = 0 }) { Text("Close") } })
         )
     }
     peeking?.let { c ->
@@ -728,19 +920,24 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 peeking = null
                 onOpenThread(c.threadId, c.addresses.joinToString(","))
             },
-            onPin = { on -> store.update { s -> s.copy(pinned = if (on) s.pinned + c.threadId else s.pinned - c.threadId) } },
-            onArchive = { on -> store.update { s -> s.copy(archived = if (on) s.archived + (c.threadId to c.date) else s.archived - c.threadId) } },
+            // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversationlist/ConversationListFragment.java#handlePin
+            onPin = { on -> if (on) handlePin(listOf(c)) else handleUnpin(listOf(c.threadId)) },
+            // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/conversationlist/AbstractConversationListActivity.java#onActionBarArchive
+            onArchive = { on -> onActionBarArchive(listOf(c), on) },
             onRead = { messages.markRead(c.threadId) },
+            // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversationlist/ConversationListFragment.java#handleMarkAsUnread
+            onUnread = { handleMarkAsUnread(listOf(c)) },
             onSelect = {
                 picked = setOf(c.threadId)
                 peeking = null
             },
-            onDelete = { moveToTrash(listOf(c)) },
+            // The Trash with its Undo pane, as onActionBarArchive's snackbar (AbstractConversationListActivity.java#onActionBarArchive).
+            onDelete = { onActionBarTrash(listOf(c)) },
             onReportSpam = if (canReport(c) && c.threadId !in spamThreads) ({ reporting = c }) else null,
             onNotSpam = if (c.threadId in spamThreads) ({ notSpam(c) }) else null,
-            // In Spam: Block asks first, as the selection's Block does.
+            // In Spam: Block asks first, as the selection's Block does; hidden when the number is already blocked.
             onBlock = if (c.threadId in spamThreads && !c.group &&
-                c.address.count(Char::isDigit) >= 3 && NumberActions.canBlock(context)
+                c.address.count(Char::isDigit) >= 3 && NumberActions.canBlock(context) && !NumberActions.isBlocked(context, c.address)
             ) ({ blocking = c }) else null
         )
     }
@@ -754,7 +951,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 BoldButton(filled = true, onClick = {
                     blocking = null
                     rememberedHaptics.done()
-                    NumberActions.block(context, c.address)
+                    onActionBarBlock(listOf(c))
                 }) { Text("Block") }
             },
             dismissButton = { QuietButton(onClick = { blocking = null }) { Text("Cancel") } }
@@ -921,11 +1118,12 @@ internal fun ConversationLine(
             val icon = when (side) {
                 com.yaz.sms.core.sms.SwipeAction.ARCHIVE -> if (archived) AppIcons.Unarchive else AppIcons.Archive
                 com.yaz.sms.core.sms.SwipeAction.DELETE -> AppIcons.Delete
-                com.yaz.sms.core.sms.SwipeAction.READ -> AppIcons.DoneAll
+                com.yaz.sms.core.sms.SwipeAction.READ -> if (c.unread > 0) AppIcons.DoneAll else AppIcons.MarkUnread
                 com.yaz.sms.core.sms.SwipeAction.PIN -> AppIcons.PushPin
                 else -> AppIcons.Reply
             }
             val label = when (side) {
+                com.yaz.sms.core.sms.SwipeAction.READ -> if (c.unread > 0) "Mark as read" else "Mark as unread"
                 com.yaz.sms.core.sms.SwipeAction.ARCHIVE -> if (archived) "Unarchive" else "Archive"
                 com.yaz.sms.core.sms.SwipeAction.PIN -> if (pinned) "Unpin" else "Pin"
                 else -> side.label
@@ -1271,3 +1469,83 @@ private fun CardRow(cards: List<Conversation>, cell: androidx.compose.ui.unit.Dp
 
 /** The date of each conversation's newest message when it was made ready. */
 private val warmed = HashMap<Long, Long>()
+
+/** What the Undo pane says, and what its button does. */
+internal class UndoOffer(val text: String, val undo: () -> Any?)
+
+/**
+ * The words of the list when a filter leaves it empty: Element X's RoomListFiltersEmptyStateResources, the title
+ * and the subtitle, built from the filters selected. Here only Unread is a filter of the inbox (the Archive, the
+ * Trash and Spam are places with their own empty words).
+ * Not ported: RoomListFilter.People, RoomListFilter.Rooms, RoomListFilter.Favourites, RoomListFilter.Invites (filters
+ * this list does not have), StringRes (the words are written here), isSpaceFilterSelected's spaces (no spaces here).
+ */
+internal data class FiltersEmptyState(val title: String, val subtitle: String) {
+    companion object {
+        // https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/home/impl/src/main/kotlin/io/element/android/features/home/impl/filters/RoomListFiltersEmptyStateResources.kt#fromSelectedFilters
+        fun fromSelectedFilters(selectedFilters: List<Filter>, isSpaceFilterSelected: Boolean = false): FiltersEmptyState? {
+            return when {
+                isSpaceFilterSelected -> FiltersEmptyState(
+                    title = "No conversations found",
+                    subtitle = "Remove a filter to see more."
+                )
+                selectedFilters.isEmpty() -> null
+                selectedFilters.size == 1 -> {
+                    when (selectedFilters.first()) {
+                        Filter.UNREAD -> FiltersEmptyState(
+                            title = "No unread conversations",
+                            subtitle = "Everything is read."
+                        )
+                        else -> null
+                    }
+                }
+                else -> FiltersEmptyState(
+                    title = "No conversations found",
+                    subtitle = "Remove a filter to see more."
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Signal's ThreadTable.setForcedUnread for Android's store, which has no such flag: the newest message received in
+ * each thread is set unread (read = 0), so the list counts one unread message and the dot shows. True when every
+ * thread could be marked; false when one has nothing received, or the store refused (SMS is not the default app).
+ * Shaped like Messages.markRead (this app's data/sms/Messages.kt, the same two tables written the same way).
+ * Not ported: markRead (the opposite write: read and seen to 1 for the whole thread), SignalDatabase.threads(), the
+ * forced-unread column (Signal's own database).
+ */
+// https://raw.githubusercontent.com/213YaZ786/SMS/main/app/src/main/java/com/yaz/sms/data/sms/Messages.kt#markRead
+internal fun setForcedUnread(context: android.content.Context, ids: Collection<Long>): Boolean {
+    var marked = true
+    for (threadId in ids) {
+        val thread = arrayOf(threadId.toString())
+        val done = runCatching {
+            val smsId = context.contentResolver.query(
+                android.provider.Telephony.Sms.Inbox.CONTENT_URI,
+                arrayOf(android.provider.Telephony.Sms._ID, android.provider.Telephony.Sms.DATE),
+                "${android.provider.Telephony.Sms.THREAD_ID} = ?", thread, "${android.provider.Telephony.Sms.DATE} DESC LIMIT 1"
+            )?.use { if (it.moveToFirst()) it.getLong(0) to it.getLong(1) else null }
+            // A picture message keeps its date in seconds, an SMS in milliseconds.
+            val mmsId = context.contentResolver.query(
+                android.provider.Telephony.Mms.Inbox.CONTENT_URI,
+                arrayOf(android.provider.Telephony.Mms._ID, android.provider.Telephony.Mms.DATE),
+                "${android.provider.Telephony.Mms.THREAD_ID} = ?", thread, "${android.provider.Telephony.Mms.DATE} DESC LIMIT 1"
+            )?.use { if (it.moveToFirst()) it.getLong(0) to it.getLong(1) * 1000 else null }
+            val row = when {
+                smsId == null && mmsId == null -> return@runCatching false
+                mmsId == null || (smsId != null && smsId.second >= mmsId.second) ->
+                    android.content.ContentUris.withAppendedId(android.provider.Telephony.Sms.CONTENT_URI, smsId!!.first)
+                else -> android.content.ContentUris.withAppendedId(android.provider.Telephony.Mms.CONTENT_URI, mmsId.first)
+            }
+            context.contentResolver.update(
+                row,
+                android.content.ContentValues().apply { put(android.provider.Telephony.Sms.READ, 0) },
+                null, null
+            ) > 0
+        }.getOrDefault(false)
+        if (!done) marked = false
+    }
+    return marked
+}
