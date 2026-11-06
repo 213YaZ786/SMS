@@ -5,9 +5,13 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.os.PersistableBundle
+import android.widget.Toast
 import androidx.core.app.RemoteInput
 import com.yaz.sms.core.chat.RichChat
+import com.yaz.sms.core.mms.MmsTransport
 import org.koin.core.context.GlobalContext
 import com.yaz.sms.data.sms.Messages
 import kotlinx.coroutines.CoroutineScope
@@ -27,14 +31,31 @@ class NotificationActions : BroadcastReceiver() {
             try {
                 when (intent.action) {
                     ACTION_REPLY -> {
-                        val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_REPLY)?.toString().orEmpty()
-                        if (text.isNotBlank() && address.isNotBlank()) {
-                            // Over the rich chat when the number has it, else SMS.
-                            val chat = GlobalContext.get().get<RichChat>()
-                            if (chat.linkFor(address) == null || !chat.send(listOf(address), text, emptyList(), null)) SmsSender.send(app, address, text)
+                        // Get the response text from the notification and send it as a reply, as Signal's RemoteReplyReceiver.onReceive:
+                        // to the thread's recipient (every member of a group), the thread read and the notification dismissed
+                        // only once it left; a reply that did not leave leaves the notification, put back as it was.
+                        // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/notifications/RemoteReplyReceiver.java#onReceive
+                        val responseText = (RemoteInput.getResultsFromIntent(intent) ?: return@launch).getCharSequence(KEY_REPLY)?.toString().orEmpty()
+                        if (responseText.isBlank()) return@launch
+                        val members = GlobalContext.get().get<Messages>().addressesOf(thread)
+                        val recipient = if (members.size > 1) members else listOf(address).filter { it.isNotBlank() }
+                        // Over the rich chat when its link is proven or the group is ready, and never a plain message in its place;
+                        // else a group in its thread as a picture message to all its members, one number as an SMS.
+                        val chat = GlobalContext.get().get<RichChat>()
+                        val delivered = recipient.isNotEmpty() && when {
+                            recipient.size > 1 && chat.groupOf(recipient)?.left == true -> false
+                            recipient.size > 1 && chat.groupReady(recipient) -> chat.send(recipient, responseText, emptyList(), null)
+                            recipient.size == 1 && chat.linkFor(recipient[0]) != null -> chat.send(recipient, responseText, emptyList(), null)
+                            recipient.size > 1 -> MmsTransport.send(app, recipient, responseText, emptyList(), -1, thread) != null
+                            else -> SmsSender.send(app, recipient[0], responseText) != null
                         }
-                        Messages.markRead(app, thread)
-                        MessageNotifier(app).cancel(thread)
+                        if (delivered) {
+                            Messages.markRead(app, thread)
+                            MessageNotifier(app).cancel(thread)
+                        } else {
+                            MessageNotifier(app).show(thread)
+                            Handler(Looper.getMainLooper()).post { Toast.makeText(app, "Not sent", Toast.LENGTH_LONG).show() }
+                        }
                     }
                     ACTION_READ -> {
                         Messages.markRead(app, thread)

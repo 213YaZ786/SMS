@@ -1,7 +1,11 @@
 package com.yaz.sms.core.sms
 
+import android.app.role.RoleManager
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
+import android.widget.Toast
 import com.yaz.sms.core.common.takeWhole
 import com.yaz.sms.core.chat.RichChat
 import com.yaz.sms.core.mms.Attachment
@@ -64,8 +68,8 @@ class PendingSends(context: Context, private val scope: CoroutineScope, private 
         fun remaining(): Long = (dueAt - SystemClock.elapsedRealtime()).coerceIn(0L, seconds * 1000L)
     }
 
-    /** Text that did not leave, to go back into the field of its conversation. */
-    data class Returned(val people: List<String>, val text: String)
+    /** What did not leave, to go back into the field of its conversation: the words and the attachments with them. */
+    data class Returned(val people: List<String>, val text: String, val attachments: List<Attachment> = emptyList())
 
     private val lock = Any()
     private val jobs = HashMap<Long, Job>()
@@ -160,12 +164,18 @@ class PendingSends(context: Context, private val scope: CoroutineScope, private 
         p
     }
 
+    // A message that did not leave is given back whole, words and attachments, as ProcessSentMessageAction.processResult
+    // keeps a failed message with all its parts (https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/datamodel/action/ProcessSentMessageAction.java#L201-L289).
     private fun giveBack(p: Waiting) {
-        _returned.update { it + Returned(p.people, p.text) }
+        _returned.update { it + Returned(p.people, p.text, p.attachments) }
     }
 
     /** What ThreadScreen.sendNow did, with the people, thread and sub carried by [p]. */
     private suspend fun deliver(p: Waiting) {
+        // What did not leave is said on the screen, whatever thread this runs on, with its reason.
+        val notSent = { reason: String ->
+            Handler(Looper.getMainLooper()).post { Toast.makeText(context, "Not sent: $reason", Toast.LENGTH_LONG).show() }
+        }
         try {
             withContext(Dispatchers.IO) {
                 // Photos leave without their place, camera and dates.
@@ -181,7 +191,14 @@ class PendingSends(context: Context, private val scope: CoroutineScope, private 
                 // else a group or a picture as a picture message, the rest as SMS.
                 // The effect travels over the encrypted chat; an SMS stays plain (and cheap).
                 val wire = p.wire?.let { w -> p.effect?.let { Effects.mark(w, it) } ?: w }
-                if (encrypted && chat.send(people, p.effect?.let { Effects.mark(p.text, it) } ?: p.text, attachments, p.quoted, wire)) return@withContext
+                if (encrypted) {
+                    if (chat.send(people, p.effect?.let { Effects.mark(p.text, it) } ?: p.text, attachments, p.quoted, wire)) return@withContext
+                    // The link is proven (or the group is ready): a failed chat send never falls back to a plain
+                    // SMS or MMS, it goes back to its field.
+                    giveBack(p)
+                    notSent("the encrypted chat is not available")
+                    return@withContext
+                }
                 // Someone with no number has the chat only: never an SMS to an address.
                 if (people.any { '@' in it }) {
                     giveBack(p)
@@ -190,25 +207,43 @@ class PendingSends(context: Context, private val scope: CoroutineScope, private 
                     }
                     return@withContext
                 }
+                // Sending by SMS or MMS needs the SMS role, as ConversationFragment.isReadyForAction asks
+                // (https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/conversation/ConversationFragment.java#L1043-L1045).
+                if (context.getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS) != true) {
+                    giveBack(p)
+                    notSent("SMS is not your messaging app")
+                    return@withContext
+                }
                 val text = p.quoted?.let { "«${excerpt(it)}»\n${p.text}" } ?: p.text
                 // A group marked "One SMS each": words alone go as AOSP's broadcast; pictures stay a group MMS.
                 if (group && attachments.isEmpty()) {
                     val thread = p.thread ?: runCatching { android.provider.Telephony.Threads.getOrCreateThreadId(context, people.toSet()) }.getOrNull()
                     if (thread != null && BroadcastStore.of(context).contains(thread)) {
-                        broadcast(thread, people, text, p.sub)
+                        if (!broadcast(thread, people, text, p.sub)) {
+                            giveBack(p)
+                            notSent("no message could be written to the phone's messages")
+                        }
                         return@withContext
                     }
                 }
-                if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, p.sub, p.thread)
+                val sent = if (group || attachments.isNotEmpty()) MmsTransport.send(context, people, text, attachments, p.sub, p.thread)
                 else SmsSender.send(context, to, text, p.sub, p.thread)
-                // The first message to a number asks, unseen, whether it has SMS too.
-                if (!group) chat.hello(to)
+                if (sent == null) {
+                    // Never silent: the whole message goes back, words and attachments, and the user is told.
+                    giveBack(p)
+                    notSent("the message could not be written to the phone's messages")
+                    return@withContext
+                }
+                // The first message to a number asks, unseen, whether it has SMS too; the message has left,
+                // so a failure here never gives it back.
+                if (!group) try { chat.hello(to) } catch (e: CancellationException) { throw e } catch (e: Exception) { }
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            // A send that failed unexpectedly is given back, never lost.
+            // A send that failed unexpectedly is given back, never lost, and said.
             giveBack(p)
+            notSent("something went wrong while sending")
         }
     }
 
@@ -219,11 +254,11 @@ class PendingSends(context: Context, private val scope: CoroutineScope, private 
      * dated one millisecond later; then insertSendingSmsMessage with no conversation, so SmsSender gives each
      * message the thread of that person alone (getOrCreateSmsThreadId) and it is sent and reported there.
      */
-    internal fun broadcast(thread: Long, people: List<String>, text: String, sub: Int) {
+    internal fun broadcast(thread: Long, people: List<String>, text: String, sub: Int): Boolean {
         val own = com.yaz.sms.core.mms.OwnNumbers.of(context)
         val others = people.filterNot { com.yaz.sms.core.mms.OwnNumbers.isOwn(it, own) }.distinct()
         val body = text.trim(' ', '\n', '\t', '\r')
-        if (others.isEmpty() || body.isEmpty()) return
+        if (others.isEmpty() || body.isEmpty()) return false
         val now = System.currentTimeMillis()
         val subId = if (sub != android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) sub else android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId()
         runCatching {
@@ -241,7 +276,8 @@ class PendingSends(context: Context, private val scope: CoroutineScope, private 
                 }
             )
         }
-        for (to in others) SmsSender.send(context, to, body, sub)
+        // True when at least one of the messages was written; each is sent and reported in its own thread.
+        return others.map { SmsSender.send(context, it, body, sub) }.any { it != null }
     }
 
     /** The start of a quoted message, short enough for the first line. */

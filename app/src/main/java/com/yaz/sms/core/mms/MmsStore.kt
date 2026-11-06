@@ -57,7 +57,11 @@ object MmsStore {
             }
         ) ?: return null
         val id = ContentUris.parseId(uri)
-        writeParts(context, id, conf.body)
+        // A message whose parts did not all get written is not kept half: the row goes, the announcement stays.
+        if (!writeParts(context, id, conf.body)) {
+            delete(context, id)
+            return null
+        }
         writeAddress(context, id, from, PduHeaders.FROM)
         to.forEach { writeAddress(context, id, it, PduHeaders.TO) }
         cc.forEach { writeAddress(context, id, it, PduHeaders.CC) }
@@ -110,6 +114,39 @@ object MmsStore {
         )?.use { c ->
             if (!c.moveToFirst()) return null
             Triple(c.getString(0) ?: return null, c.getInt(1), c.getString(2)?.toByteArray())
+        }
+    }.getOrNull()
+
+    /**
+     * The retrieve status the network gave a downloaded message, kept in the announcement's row before anything
+     * else is done with it: insertDownloadedMessageAndSendResponse writes RETRIEVE_STATUS to the notification URI.
+     * https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/sms/MmsUtils.java#L1648-L1696
+     * not ported: insertDownloadedMessageAndSendResponse (MmsTransport.insertDownloadedMessageAndSendResponse; only its RETRIEVE_STATUS write is here)
+     */
+    fun updateRetrieveStatus(context: Context, notificationUri: Uri, retrieveStatus: Int) {
+        val values = ContentValues(1)
+        values.put(Telephony.Mms.RETRIEVE_STATUS, retrieveStatus)
+        runCatching { context.contentResolver.update(notificationUri, values, null, null) }
+    }
+
+    /** When a kept announcement stops being downloadable, in seconds, or 0 when the network gave none (the stored EXPIRY). */
+    fun expiryOf(context: Context, mmsId: Long): Long = runCatching {
+        context.contentResolver.query(
+            ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, mmsId), arrayOf(Telephony.Mms.EXPIRY), null, null, null
+        )?.use { c -> if (c.moveToFirst()) c.getLong(0) else 0L }
+    }.getOrNull() ?: 0L
+
+    /** The conversation a row belongs to, or null when it is gone. */
+    fun threadOf(context: Context, mmsId: Long): Long? = runCatching {
+        context.contentResolver.query(
+            ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, mmsId), arrayOf(Telephony.Mms.THREAD_ID), null, null, null
+        )?.use { c -> if (c.moveToFirst()) c.getLong(0).takeIf { it > 0 } else null }
+    }.getOrNull()
+
+    /** The box a row is in (outbox, failed, sent), or null when it is gone. */
+    fun boxOf(context: Context, uri: Uri): Int? = runCatching {
+        context.contentResolver.query(uri, arrayOf(Telephony.Mms.MESSAGE_BOX), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getInt(0) else null
         }
     }.getOrNull()
 
@@ -166,7 +203,11 @@ object MmsStore {
             }
         ) ?: return null
         val id = ContentUris.parseId(uri)
-        writeParts(context, id, body)
+        // Parts that did not all get written: no half message goes out, its row is removed.
+        if (!writeParts(context, id, body)) {
+            delete(context, id)
+            return null
+        }
         writeAddress(context, id, "insert-address-token", PduHeaders.FROM)
         recipients.forEach { writeAddress(context, id, it, PduHeaders.TO) }
         uri
@@ -178,17 +219,20 @@ object MmsStore {
      * ProcessSentMessageAction (EXTRA_MMS_DATA, MmsSender.parseSendConf: the response parsed, anything but a
      * SendConf dropped) and MmsUtils.updateSentMmsMessageStatus (RESPONSE_STATUS and MESSAGE_ID written, the
      * Message-ID as PduPersister.toIsoString) in https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/.
-     * A response that is not small, not a SendConf or without a Message-ID changes nothing.
+     * A response that is not small, not a SendConf or without a Message-ID changes nothing. The response status is
+     * returned (null when there is no usable response): anything but OK is a refusal by the carrier, which
+     * MmsUtils.updateSentMmsMessageStatus counts as a failed send.
      */
-    fun saveSendConf(context: Context, uri: Uri, response: ByteArray?) {
-        if (response == null || response.isEmpty() || response.size > 16 * 1024) return
-        runCatching {
-            val conf = PduParser(response, true).parse() as? SendConf ?: return
+    fun saveSendConf(context: Context, uri: Uri, response: ByteArray?): Int? {
+        if (response == null || response.isEmpty() || response.size > 16 * 1024) return null
+        return runCatching {
+            val conf = PduParser(response, true).parse() as? SendConf ?: return null
             val values = ContentValues(2)
             values.put(Telephony.Mms.RESPONSE_STATUS, conf.responseStatus)
             conf.messageId?.takeIf { it.isNotEmpty() && it.size <= 256 }?.let { values.put(Telephony.Mms.MESSAGE_ID, isoString(it)) }
             context.contentResolver.update(uri, values, null, null)
-        }
+            conf.responseStatus
+        }.getOrNull()
     }
 
     /** A Message-ID as text, as AOSP Messaging's PduPersister.toIsoString (ISO-8859-1). */
@@ -301,7 +345,10 @@ object MmsStore {
             }
         ) ?: return null
         val id = ContentUris.parseId(uri)
-        writeParts(context, id, bodyOf(text, mime, data))
+        if (!writeParts(context, id, bodyOf(text, mime, data))) {
+            delete(context, id)
+            return null
+        }
         writeAddress(context, id, phone, PduHeaders.FROM)
         others.forEach { writeAddress(context, id, it, PduHeaders.TO) }
         thread to id
@@ -392,8 +439,9 @@ object MmsStore {
         )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
     }.getOrNull()
 
-    private fun writeParts(context: Context, id: Long, body: PduBody?) {
-        body ?: return
+    /** Writes every part of [body] to the message [id]; false as soon as one cannot be written (the caller drops the row). */
+    private fun writeParts(context: Context, id: Long, body: PduBody?): Boolean = runCatching {
+        body ?: return true
         val partsUri = Uri.parse("content://mms/$id/part")
         for (i in 0 until body.partsNum) {
             val part = body.getPart(i)
@@ -411,19 +459,20 @@ object MmsStore {
                     put(Telephony.Mms.Part.TEXT, EncodedStringValue(charset, part.data ?: ByteArray(0)).string)
                 }
             }
-            val partUri = context.contentResolver.insert(partsUri, values) ?: continue
+            val partUri = context.contentResolver.insert(partsUri, values) ?: return false
             if (type != ContentType.TEXT_PLAIN && type != ContentType.APP_SMIL) {
                 val data = part.data
                 val from = part.dataUri
                 when {
-                    data != null -> context.contentResolver.openOutputStream(partUri)?.use { it.write(data) }
-                    from != null -> context.contentResolver.openInputStream(from)?.use { input ->
-                        context.contentResolver.openOutputStream(partUri)?.use { input.copyTo(it) }
+                    data != null -> (context.contentResolver.openOutputStream(partUri) ?: return false).use { it.write(data) }
+                    from != null -> (context.contentResolver.openInputStream(from) ?: return false).use { input ->
+                        (context.contentResolver.openOutputStream(partUri) ?: return false).use { input.copyTo(it) }
                     }
                 }
             }
         }
-    }
+        true
+    }.getOrDefault(false)
 
     private fun writeAddress(context: Context, id: Long, address: String, type: Int) {
         if (address.isBlank()) return
