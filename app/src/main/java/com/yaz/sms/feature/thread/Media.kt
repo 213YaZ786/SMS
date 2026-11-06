@@ -243,10 +243,22 @@ internal fun savePart(context: Context, part: MmsPart) {
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun PictureViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null) {
-    val still by rememberPicture(uri, 2048)
-    val moving by rememberGifFrame(uri, 1440, part?.contentType?.contains("gif", ignoreCase = true) == true)
-    val image = moving ?: still
     val context = LocalContext.current
+    // A picture the isolated decoder cannot read says so and closes, instead of a black screen.
+    val gif = part?.contentType?.contains("gif", ignoreCase = true) == true
+    var unreadable by remember(uri) { mutableStateOf(false) }
+    val still by produceState<ImageBitmap?>(null, uri) {
+        value = SafeImages.decode(context, uri, 2048)?.asImageBitmap()
+        if (value == null) unreadable = true
+    }
+    val moving by rememberGifFrame(uri, 1440, gif)
+    val image = moving ?: still
+    LaunchedEffect(unreadable) {
+        if (unreadable && !gif) {
+            android.widget.Toast.makeText(context, "Could not open this picture", android.widget.Toast.LENGTH_SHORT).show()
+            onClose()
+        }
+    }
     val haptics = com.yaz.sms.ui.component.rememberHaptics()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val drag = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -493,15 +505,18 @@ private fun HeldTile(label: String, icon: androidx.compose.ui.graphics.vector.Im
  * under (the sender's only when the bytes agree, MediaCheck.typeFor), or
  * null for an app hidden in a message.
  */
-private fun sharedCopy(context: Context, part: MmsPart): Pair<Uri, String>? = runCatching {
+internal fun sharedCopy(context: Context, part: MmsPart, name: String = "media"): Pair<Uri, String>? = runCatching {
     val dir = File(context.cacheDir, "shared").apply { mkdirs() }
     val type = MediaCheck.typeFor(context, part.uri, com.yaz.sms.core.mms.MediaPrivacy.safeType(part.contentType))
-    val file = File(dir, "media." + com.yaz.sms.core.mms.MediaPrivacy.extension(type))
+    val file = File(dir, name + "." + com.yaz.sms.core.mms.MediaPrivacy.extension(type))
     context.contentResolver.openInputStream(part.uri)?.use { input -> file.outputStream().use { input.copyTo(it) } }
     // An app hidden in a message is never handed to the installer.
     if (com.yaz.sms.core.mms.MediaPrivacy.isApp(part.contentType, file)) {
         file.delete()
-        android.widget.Toast.makeText(context, "Apps can't be opened from a message.", android.widget.Toast.LENGTH_LONG).show()
+        // May be called off the main thread (Forward copies on one): the word goes up through the main looper.
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(context, "Apps can't be opened from a message.", android.widget.Toast.LENGTH_LONG).show()
+        }
         return null
     }
     FileProvider.getUriForFile(context, "${context.packageName}.mms", file) to type

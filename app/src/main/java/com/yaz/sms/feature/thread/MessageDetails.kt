@@ -15,7 +15,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.yaz.sms.core.chat.RichChat
 import com.yaz.sms.core.dial.Numbers
+import org.koin.compose.koinInject
 import com.yaz.sms.data.sms.Box as MessageBox
 import com.yaz.sms.data.sms.Message
 import com.yaz.sms.ui.component.ZoneAlertDialog
@@ -32,6 +34,11 @@ fun MessageDetailsDialog(m: Message, onClose: () -> Unit) {
     val context = LocalContext.current
     val extra by produceState<Extra?>(null, m.uid) {
         value = withContext(Dispatchers.IO) { readExtra(context, m) }
+    }
+    // A chat message that failed says why, in the engine's own words (RichChat.failureOf).
+    val chat: RichChat = koinInject()
+    val reason by produceState<String?>(null, m.uid, m.box) {
+        value = if (m.box == MessageBox.FAILED) chat.chatIdOf(m.mms, m.id)?.let { chat.failureOf(it) } else null
     }
     val received = m.box == MessageBox.RECEIVED
     ZoneAlertDialog(
@@ -60,6 +67,7 @@ fun MessageDetailsDialog(m: Message, onClose: () -> Unit) {
                         else -> "Sent"
                     }
                 )
+                reason?.takeIf { it.isNotBlank() }?.let { DetailRow("Reason", it) }
             }
         }
     )

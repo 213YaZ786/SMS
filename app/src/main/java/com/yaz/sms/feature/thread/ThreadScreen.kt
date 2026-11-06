@@ -82,6 +82,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.MutableState
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -189,6 +194,25 @@ private fun ThreadContent(
     val messages: Messages = koinInject()
     val book: PhoneBook = koinInject()
     val scope = rememberCoroutineScope()
+    // A short word where a failure used to only buzz or say nothing (Media.kt's Toasts).
+    val say: (String) -> Unit = { words -> android.widget.Toast.makeText(context, words, android.widget.Toast.LENGTH_SHORT).show() }
+    // Without the SMS role no write to the provider: the dialog below offers to ask again (AOSP Messaging's
+    // ConversationFragment.warnOfMissingActionConditions, https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/conversation/ConversationFragment.java#warnOfMissingActionConditions).
+    var missingRole by remember { mutableStateOf(false) }
+    val askRole = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { }
+    if (missingRole) ZoneAlertDialog(
+        onDismissRequest = { missingRole = false },
+        title = { Text("SMS is not your messaging app") },
+        text = { Text("Make it your messaging app to send, delete and mark messages read.") },
+        confirmButton = {
+            BoldButton(filled = true, onClick = {
+                missingRole = false
+                val roles = context.getSystemService(android.app.role.RoleManager::class.java)
+                runCatching { askRole.launch(roles.createRequestRoleIntent(android.app.role.RoleManager.ROLE_SMS)) }.onFailure { say("Could not ask for it") }
+            }) { Text("Ask again") }
+        },
+        dismissButton = { QuietButton(onClick = { missingRole = false }) { Text("Not now") } }
+    )
     val contacts by book.entries.collectAsState()
     // Read once, then kept up to date by the book itself: not again at each conversation opened.
     LaunchedEffect(Unit) { if (book.canRead() && contacts.isEmpty()) book.refresh() }
@@ -244,17 +268,27 @@ private fun ThreadContent(
     // news, only what comes after it drops in (Google Messages and iOS Messages show a conversation
     // at its newest message at once; only a message arriving while it is open animates in).
     var read by remember { mutableStateOf(false) }
-    LaunchedEffect(thread, changes, chatKey, window) {
+    // The provider could not be read: the list on screen stays, with a Retry (Messages.threadOrNull is null then).
+    var loadFailed by remember { mutableStateOf(false) }
+    var loadTry by remember { mutableIntStateOf(0) }
+    // The window the list on screen was read with: a search for a message is over only once the widest one was read.
+    var loadedWindow by remember { mutableIntStateOf(0) }
+    LaunchedEffect(thread, changes, chatKey, window, loadTry) {
         val t = thread ?: return@LaunchedEffect
         // Opened for the first time: the newest few first, on screen at once, then the page.
         if (list.isEmpty() && window == Messages.PAGE) {
-            val first = messages.thread(t, FIRST)
-            list = first
+            val first = messages.threadOrNull(t, FIRST)
+            if (first != null) list = first
             // On screen before the page is read: its rows are made first.
-            if (first.isNotEmpty()) androidx.compose.runtime.snapshotFlow { rowsOfList }.first { it === first }
+            if (!first.isNullOrEmpty()) androidx.compose.runtime.snapshotFlow { rowsOfList }.first { it === first }
         }
-        list = messages.thread(t, window)
-        read = true
+        val loaded = messages.threadOrNull(t, window)
+        loadFailed = loaded == null
+        if (loaded != null) {
+            loadedWindow = window
+            list = loaded
+            read = true
+        }
     }
     // The messages unread when the conversation opened, kept before they are marked read below: the divider
     // "N unread messages" stays until the conversation is left. The read flag is AOSP Messaging's
@@ -271,19 +305,42 @@ private fun ThreadContent(
         delay(1500)
         unreadSettled = true
     }
+    // Signal's ConversationFragment: unreadCount, the first unread message and the conversation's window
+    // (https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversation/v2/ConversationFragment.kt#onResume).
+    var unreadTotal by remember(thread) { mutableIntStateOf(0) }
+    var unreadReach by remember(thread) { mutableIntStateOf(-1) }
     LaunchedEffect(thread, list, shown) {
         val t = thread ?: return@LaunchedEffect
-        if (!shown || list.isEmpty()) return@LaunchedEffect
-        if (!unreadChecked) {
+        if (!shown || list.isEmpty() || unreadChecked) return@LaunchedEffect
+        if (unreadReach < 0) {
             // Read again, not from what the list holds: a conversation reopened from memory may be out of date.
-            val fresh = messages.thread(t, Messages.PAGE)
+            val count = messages.unreadCount(t)
+            var limit = Messages.PAGE
+            var fresh = messages.threadOrNull(t, limit) ?: return@LaunchedEffect
+            // Further back until the oldest unread message is in the window, before the line is placed.
+            while (fresh.size >= limit && limit < 5000 && fresh.count { it.box == MessageBox.RECEIVED && !it.read } < count) {
+                limit *= 2
+                fresh = messages.threadOrNull(t, limit) ?: return@LaunchedEffect
+            }
             unreadUids = fresh.filter { it.box == MessageBox.RECEIVED && !it.read }.map { it.uid }.toSet()
-            unreadChecked = true
-            if (unreadUids.isEmpty()) unreadSettled = true
+            unreadTotal = count
+            unreadReach = fresh.size
+            if (limit > window) window = limit
         }
-        if (list.any { it.box == MessageBox.RECEIVED && !it.read }) messages.markRead(t)
-        // In its bubble the notification holds the bubble: it is only quieted.
-        if (bubble) MessageNotifier(context).settle(t) else MessageNotifier(context).cancel(t)
+        if (list.size < unreadReach) return@LaunchedEffect
+        unreadChecked = true
+        if (unreadUids.isEmpty()) unreadSettled = true
+    }
+    // Opening a conversation clears the notice of a message that failed in it.
+    LaunchedEffect(thread, shown) {
+        val t = thread ?: return@LaunchedEffect
+        if (shown) MessageNotifier(context).cancelFailed(t)
+    }
+    // The conversation in front keeps its notifications quiet (Signal's onResume setVisibleThread and onPause
+    // clearVisibleThread, same file; in a bubble the notification holds the bubble, so not there).
+    androidx.compose.runtime.DisposableEffect(thread, shown, bubble) {
+        if (shown && !bubble) thread?.let { MessageNotifier.visibleThread = it }
+        onDispose { if (!bubble && MessageNotifier.visibleThread == thread) MessageNotifier.visibleThread = -1L }
     }
     val index = remember(contacts, com.yaz.sms.core.dial.PrivateNames.version.intValue) { PhoneIndex(contacts, Numbers.countryIso(context)) }
     val to = people.firstOrNull().orEmpty()
@@ -430,6 +487,11 @@ private fun ThreadContent(
     // The sending and its countdown belong to the app (PendingSends): leaving the conversation
     // never cancels a message in its delay. Here: what the screen alone does (effects, field, haptic).
     fun queue(text: String, sub: Int, attachments: List<com.yaz.sms.core.mms.Attachment>, quoted: String?, effect: com.yaz.sms.core.sms.Effects.Effect? = null) {
+        // Not the default SMS app: nothing is written, the dialog offers the role (AOSP Messaging's sendMessage).
+        if (!isReadyForAction(context)) {
+            missingRole = true
+            return
+        }
         quote = null
         effect?.let { e ->
             sentEffects[text] = e to System.currentTimeMillis()
@@ -456,6 +518,10 @@ private fun ThreadContent(
      * countdown ring, and cannot be taken back.
      */
     fun sendAgain(m: Message, words: String, count: Int) {
+        if (!isReadyForAction(context)) {
+            missingRole = true
+            return
+        }
         val files = m.parts.map { com.yaz.sms.core.mms.Attachment(it.uri, it.contentType) }
         val undo = store.current.undoSeconds
         val now = android.os.SystemClock.elapsedRealtime()
@@ -507,10 +573,11 @@ private fun ThreadContent(
     val bubbleMessages = remember(rows) { rows.filterIsInstance<Row.Bubble>().map { it.message } }
     // The divider: the oldest of the messages unread at opening that the rows show (a reaction folded under its
     // message has no row), and how many of them there are.
-    val unreadMark = remember(rows, unreadUids) {
+    val unreadMark = remember(rows, unreadUids, unreadTotal) {
         if (unreadUids.isEmpty()) null
         else rows.filterIsInstance<Row.Bubble>().filter { it.message.uid in unreadUids }.let { found ->
-            found.firstOrNull()?.let { it.message.uid to found.size }
+            // The count is the provider's (Messages.unreadCount), the line the oldest unread message the rows show.
+            found.firstOrNull()?.let { it.message.uid to maxOf(found.size, unreadTotal) }
         }
     }
     // Opened with the divider near the top (Signal Android's UnreadDividerInstrumentationTest: "opens scrolled to
@@ -625,6 +692,24 @@ private fun ThreadContent(
             }
         }.collect { onScreen -> if (!seen.containsAll(onScreen)) seen = seen + onScreen }
     }
+    // Read only up to what was seen, or all at the bottom; the notification goes then, not on opening
+    // (Element X's TimelinePresenter, sendReadReceiptIfNeeded, called when the scroll stops; ported below).
+    val lastReadReceiptId = remember(thread) { mutableStateOf<String?>(null) }
+    LaunchedEffect(thread, shown, unreadChecked, unreadSettled, list, seen) {
+        val t = thread ?: return@LaunchedEffect
+        // The settled list only: before, the newest end is not what the user looks at; no role, no write.
+        if (!shown || !unreadChecked || !unreadSettled || !isReadyForAction(context)) return@LaunchedEffect
+        val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
+        sendReadReceiptIfNeeded(listState.firstVisibleItemIndex - before, rows.asReversed(), lastReadReceiptId, seen) { newest ->
+            // Read exactly up to the newest message seen (Messages.markRead with upToDate), all of it at the bottom.
+            val unread = list.filter { it.box == MessageBox.RECEIVED && !it.read }
+            if (unread.isNotEmpty()) {
+                if (newest == null) messages.markRead(t) else messages.markRead(t, newest.date)
+            }
+            // The provider's markRead cancels the notification once nothing is unread; in its bubble it is only quieted.
+            if (bubble) MessageNotifier(context).settle(t) else if (unread.isEmpty()) MessageNotifier(context).cancel(t)
+        }
+    }
     // The incoming messages below the view that were not seen: unread when the conversation opened, or come in since.
     // Signal's count is the thread's unread messages (ConversationViewModel.scrollButtonStateStore, unreadCount); the
     // list is in reverse, so "below" is a smaller item index than the first visible one.
@@ -718,7 +803,7 @@ private fun ThreadContent(
     // The message a sister app asked for is lit for a moment once reached, as Signal pulses a message jumped to
     // (ConversationAdapter.pulseAtPosition marks it for one bind; here a wash of the accent that fades).
     var lit by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(showUid, rows, thread) {
+    LaunchedEffect(showUid, rows, thread, rowsOfList, loadedWindow) {
         val uid = showUid ?: return@LaunchedEffect
         // A starred message of this conversation, or the one a sister app asked for here (SHOW_MESSAGE, checked in MainActivity).
         val asked = requests.showIn.value == thread
@@ -726,6 +811,12 @@ private fun ThreadContent(
         val row = rows.indexOfFirst { it.key == "m/$uid" }
         if (row < 0) {
             if (window < 5000) window = 5000
+            // Read as far back as it goes and still not there: said, and the request cleared.
+            else if (loadedWindow >= 5000 && rowsOfList === list) {
+                say("Message not found")
+                requests.showMessage.value = null
+                if (asked) requests.showIn.value = null
+            }
             return@LaunchedEffect
         }
         val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
@@ -765,7 +856,10 @@ private fun ThreadContent(
                 }
                 row = find()
             }
-            if (row < 0) return@LaunchedEffect
+            if (row < 0) {
+                say("Original message not found")
+                return@LaunchedEffect
+            }
             val before = scheduled.count { it.to.toSet() == people.toSet() } + waiting.size
             runCatching { listState.animateScrollToItem(before + rows.size - 1 - row) }
             lit = rows[row].key.removePrefix("m/")
@@ -791,7 +885,7 @@ private fun ThreadContent(
         store.update { s -> s.copy(silenced = if (until == null) s.silenced - t else s.silenced.filterValues { it > System.currentTimeMillis() } + (t to until)) }
         if (until != null) com.yaz.sms.core.sms.MessageNotifier(context).cancel(t)
     }) { silenceOpen = false }
-    if (choosingVanish && encrypted) VanishDialog(vanish, onPick = { seconds -> scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds } }) { choosingVanish = false }
+    if (choosingVanish && encrypted) VanishDialog(vanish, onPick = { seconds -> scope.launch { if (chat.setTimer(people, seconds)) vanish = seconds else say("Could not change it") } }) { choosingVanish = false }
     if (encryptionOpen) EncryptionDialog(to) { encryptionOpen = false }
     // The group's picture as the chat has it, read when its page is open and after any change of the chat.
     val groupPicture by androidx.compose.runtime.produceState<String?>(null, personOpen, group, encrypted, chatChanges, groupsNow) {
@@ -828,9 +922,9 @@ private fun ThreadContent(
             picture = groupPicture,
             mentionsOn = thread?.let { it !in mentionsOff } ?: true,
             onMentions = { on -> thread?.let { mentionSetting.set(it, on) } },
-            onPicture = { jpeg -> scope.launch { if (chat.setGroupPicture(people, jpeg)) haptics.done() else haptics.reject() } },
-            onRemove = { who -> scope.launch { if (chat.removeMember(people, who.phone)) haptics.done() else haptics.reject() } },
-            onLeave = { scope.launch { if (chat.leaveGroup(people)) haptics.done() else haptics.reject() } }
+            onPicture = { jpeg -> scope.launch { if (chat.setGroupPicture(people, jpeg)) haptics.done() else { haptics.reject(); say("Could not change the picture") } } },
+            onRemove = { who -> scope.launch { if (chat.removeMember(people, who.phone)) haptics.done() else { haptics.reject(); say("Could not remove them") } } },
+            onLeave = { scope.launch { if (chat.leaveGroup(people)) haptics.done() else { haptics.reject(); say("Could not leave the group") } } }
         ) else null,
         onClose = { showPerson(false) }
     )
@@ -840,6 +934,24 @@ private fun ThreadContent(
         LaunchedEffect(Unit) { if (window < 5000) window = 5000 }
         SharedPage(if (group) title else entry?.name ?: Numbers.format(context, to), list, stranger = { m -> index.find(T9.clean(m.address)) == null },
             holdMedia = { m -> !prefs.showStrangerMedia && m.box == MessageBox.RECEIVED && index.find(T9.clean(m.address)) == null }) { sharedOpen = false }
+    }
+    // A tap on a message that failed: Signal's ConversationFragment.onMessageWithErrorClicked (a terminated group says so,
+    // else the message is sent again; its Details tell why), with AOSP Messaging's retrySend check of the SMS role.
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversation/v2/ConversationFragment.kt#onMessageWithErrorClicked
+    fun onMessageWithErrorClicked(messageRecord: Message) {
+        if (left) {
+            say("You left this group")
+        } else if (!isReadyForAction(context)) {
+            missingRole = true
+        } else {
+            scope.launch {
+                val sent = withContext(Dispatchers.IO) {
+                    if (!messageRecord.mms) SmsSender.retry(context, messageRecord.id, messageRecord.address, messageRecord.body, messageRecord.subId)
+                    else MmsTransport.resend(context, messageRecord.id)
+                }
+                if (sent) MessageNotifier(context).cancelFailed(messageRecord.threadId) else say("Could not send, try again later")
+            }
+        }
     }
     // The keyboard lifts the conversation with the field, the message being answered kept in sight.
     val keyboard = WindowInsets.ime.exclude(WindowInsets.navigationBars).asPaddingValues().calculateBottomPadding()
@@ -981,6 +1093,17 @@ private fun ThreadContent(
                   .onSizeChanged { composerHeight = with(density) { it.height.toDp() } }
                   .onGloballyPositioned { composerTop = it.boundsInWindow().top }
           ) {
+            // The messages could not be read: the list stays, a tap reads them again.
+            if (loadFailed) FloatingPane(shape = CircleShape, accent = true, onClick = {
+                haptics.tick()
+                loadTry++
+            }) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Text("Could not read messages", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Retry", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                }
+            }
             ReplyChips(if (usedFor == newest?.uid) emptyList() else replies) { reply ->
                 haptics.tick()
                 usedFor = newest?.uid
@@ -989,7 +1112,7 @@ private fun ThreadContent(
             // The live location of the others, then ours while shared (a pill with Stop), over the field.
             liveSpots.take(3).forEach { LiveCard(it, group, liveNow) }
             if (sharingLive && liveEnd != null) LivePill(liveEnd) {
-                scope.launch { if (locator.stopSharing(people)) haptics.done() else haptics.reject() }
+                scope.launch { if (locator.stopSharing(people)) haptics.done() else { haptics.reject(); say("Could not stop sharing") } }
             }
             // A group the user left can be read, not written to (Delta Chat's chat that can no longer send).
             // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
@@ -1017,7 +1140,7 @@ private fun ThreadContent(
                 onEdit = { typed ->
                     val e = editing
                     editing = null
-                    if (e != null && typed.isNotBlank() && typed != e.second) scope.launch { if (!chat.edit(e.first, typed)) haptics.reject() }
+                    if (e != null && typed.isNotBlank() && typed != e.second) scope.launch { if (!chat.edit(e.first, typed)) { haptics.reject(); say("Could not edit it") } }
                 },
                 onSendEffect = { text, sub, effect, attachments -> if (people.isNotEmpty()) queue(text, sub, attachments, quote, effect) },
                 onDraft = { typed ->
@@ -1036,9 +1159,14 @@ private fun ThreadContent(
                 plainSms = !encrypted && people.none { '@' in it } &&
                     (!group || (thread != null && thread in broadcastThreads)),
                 onPoll = if (encrypted) ({ pollOpen = true }) else null,
-                onLive = if (encrypted) ({ seconds -> scope.launch { if (locator.share(people, seconds)) haptics.done() else haptics.reject() } }) else null,
+                onLive = if (encrypted) ({ seconds -> scope.launch { if (locator.share(people, seconds)) haptics.done() else { haptics.reject(); say("Could not share your location") } } }) else null,
                 onSend = { typed, sub, attachments ->
                     if (people.isEmpty()) return@Composer false
+                    // Without the SMS role the text stays in the field and the dialog offers the role.
+                    if (!isReadyForAction(context)) {
+                        missingRole = true
+                        return@Composer false
+                    }
                     queue(typed, sub, attachments, quote)
                     true
                 }
@@ -1209,7 +1337,9 @@ private fun ThreadContent(
                             val removed = emoji in row.smsMine
                             val style = com.yaz.sms.core.sms.SmsReactions.styleFor(prefs.reactionFormat, list)
                             val text = com.yaz.sms.core.sms.SmsReactions.compose(style, emoji, reactWords, removed, reactMedia)
-                            scope.launch(Dispatchers.IO) {
+                            if (!isReadyForAction(context)) {
+                                missingRole = true
+                            } else scope.launch(Dispatchers.IO) {
                                 if (group) MmsTransport.send(context, people, text, emptyList(), row.message.subId, thread)
                                 else SmsSender.send(context, to, text, row.message.subId, thread)
                             }
@@ -1218,7 +1348,12 @@ private fun ThreadContent(
                         reactionBar = reactionBar,
                         onReactionUsed = { emoji -> reactionStore.used(emoji) },
                         onPickEmoji = { target -> emojiPick = target },
-                        onReact = { emoji -> scope.launch { chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) } } },
+                        onReact = { emoji ->
+                            scope.launch {
+                                val sent = chat.refs.value.entries.firstOrNull { it.value.mms == row.message.mms && it.value.id == row.message.id }?.let { chat.react(it.key.toLong(), emoji) }
+                                if (sent == false) { haptics.reject(); say("Could not react") }
+                            }
+                        },
                         onPollShown = { scope.launch { chat.recount(row.message.mms, row.message.id) } },
                         sender = if (group && row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null,
                         // A group's member: a colour of their own for the name, their face beside the run's last bubble.
@@ -1227,27 +1362,26 @@ private fun ThreadContent(
                             val who = index.find(T9.clean(row.message.address))
                             com.yaz.sms.feature.conversations.FaceAvatar(who?.name?.takeIf { it.isNotBlank() }, who?.photo, who?.look, emptyList(), GroupFaceSize)
                         }) else null,
-                        onRetry = {
-                            if (!row.message.mms) {
-                                scope.launch(Dispatchers.IO) { SmsSender.retry(context, row.message.id, row.message.address, row.message.body, row.message.subId) }
-                            } else {
-                                // A failed picture message goes again (AOSP Messaging's ResendMessageAction).
-                                scope.launch(Dispatchers.IO) { com.yaz.sms.core.mms.MmsTransport.resend(context, row.message.id) }
-                            }
-                        },
+                        // A failed picture message goes again too (AOSP Messaging's ResendMessageAction).
+                        onRetry = { onMessageWithErrorClicked(row.message) },
                         onDelete = {
-                            // A message that is gone loses its star (zulip-flutter handleDeleteMessageEvent).
-                            starStore.remove(row.message.uid)
-                            val gone = messages.deleteMessage(row.message)
-                            scope.launch {
-                                gone.join()
-                                chat.prune()
+                            // Asked and confirmed in the bubble (DeleteDialog); the provider's answer decides.
+                            if (!isReadyForAction(context)) {
+                                missingRole = true
+                            } else {
+                                scope.launch {
+                                    if (withContext(Dispatchers.IO) { messages.deleteMessage(row.message) }) {
+                                        // A message that is gone loses its star (zulip-flutter handleDeleteMessageEvent).
+                                        starStore.remove(row.message.uid)
+                                        chat.prune()
+                                    } else say("Could not delete")
+                                }
                             }
                         },
                         onQuote = { quoteFrom = if (row.message.box == MessageBox.RECEIVED) row.message.address.let { index.find(T9.clean(it))?.name ?: Numbers.format(context, it) } else null; quote = QuoteForm.quotable(row.message) },
                         onEdit = { id -> editing = id to row.message.body },
-                        onDeleteForAll = { id -> scope.launch { if (!chat.deleteForAll(id)) haptics.reject() } },
-                        onPin = { id, on -> scope.launch { chat.pin(id, on) } },
+                        onDeleteForAll = { id -> scope.launch { if (!chat.deleteForAll(id)) { haptics.reject(); say("Could not delete for everyone") } } },
+                        onPin = { id, on -> scope.launch { if (!chat.pin(id, on)) { haptics.reject(); say(if (on) "Could not pin it" else "Could not unpin it") } } },
                         chatId = chat.chatIdOf(row.message.mms, row.message.id).also { refs.size },
                         stranger = row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
                         holdMedia = !prefs.showStrangerMedia && row.message.box == MessageBox.RECEIVED && index.find(T9.clean(row.message.address)) == null,
@@ -1290,6 +1424,51 @@ private fun ThreadContent(
             )
         }
     }
+}
+
+/**
+ * Whether the thread may write to the provider: this app holds the SMS role (AOSP Messaging's isReadyForAction,
+ * UiUtils.isReadyForAction: the default SMS app), https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/conversation/ConversationFragment.java#isReadyForAction
+ * not ported: isReadyForDeleteAction (the same check here), warnOfMissingActionConditions (the dialog in ThreadContent).
+ */
+private fun isReadyForAction(context: android.content.Context): Boolean =
+    context.getSystemService(android.app.role.RoleManager::class.java)?.isRoleHeld(android.app.role.RoleManager.ROLE_SMS) == true
+
+/**
+ * Element X's TimelinePresenter.sendReadReceiptIfNeeded: at the bottom of the conversation everything is marked read;
+ * higher up, only up to the newest message the user saw, once per message. [timelineItems] are the rows, newest
+ * first; [markAsRead] gets that message, or null at the bottom.
+ * https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/messages/impl/src/main/kotlin/io/element/android/features/messages/impl/timeline/TimelinePresenter.kt#sendReadReceiptIfNeeded
+ */
+private fun sendReadReceiptIfNeeded(
+    firstVisibleIndex: Int,
+    timelineItems: List<Row>,
+    lastReadReceiptId: MutableState<String?>,
+    seen: Set<String>,
+    markAsRead: (Message?) -> Unit
+) {
+    // If we are at the bottom of the conversation, we mark it as read.
+    if (firstVisibleIndex <= 0) {
+        markAsRead(null)
+    } else {
+        // Get the last valid message seen by the user, as the first index might refer to a day heading
+        val eventId = getLastEventIdBeforeOrAt(firstVisibleIndex, timelineItems, seen)
+        if (eventId != null && eventId.uid != lastReadReceiptId.value) {
+            lastReadReceiptId.value = eventId.uid
+            markAsRead(eventId)
+        }
+    }
+}
+
+/** TimelinePresenter.getLastEventIdBeforeOrAt: from [index] on (older), the first message that was seen. */
+private fun getLastEventIdBeforeOrAt(index: Int, items: List<Row>, seen: Set<String>): Message? {
+    for (i in index until items.count()) {
+        val item = items[i]
+        if (item is Row.Bubble && item.message.uid in seen) {
+            return item.message
+        }
+    }
+    return null
 }
 
 /**
@@ -1593,6 +1772,8 @@ private fun Bubble(
     val ringGround = MaterialTheme.colorScheme.surface
     val ringTrack = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
     var confirmDeleteAll by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    if (confirmDelete) DeleteDialog(m, onDeletionCompleted = onDelete, onDismiss = { confirmDelete = false })
     var selecting by remember { mutableStateOf(false) }
     var sendingAgain by remember { mutableStateOf(false) }
     // A reaction chosen in the bar or picked: sent the way this conversation sends one (the chat, or SMS in Google's or
@@ -1715,10 +1896,22 @@ private fun Bubble(
             }
         } else MessageFooter(clock, delivery, starred, onMedia = onMedia, mismatched = mismatched)
     }
+    // TalkBack: Reply, Copy, Delete and Try again as actions of the bubble, and where a sent message stands.
+    val failed = mine && m.box == MessageBox.FAILED
+    val accessibilityActions = rememberTimelineItemAccessibilityActions(
+        isEnabled = true, canReply = true, canCopy = canBeCopied(said), canRetry = failed,
+        onLongClick = { menuOpen = true }, onSwipeToReply = onQuote,
+        onCopy = { copy(context, "Message", said) }, onDelete = { confirmDelete = true }, onRetry = onRetry
+    )
+    val progress = if (failed) "Not sent" else if (mine && m.box == MessageBox.SENDING) "Sending" else null
     Column(
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
         modifier = Modifier
             .fillMaxWidth()
+            .semantics {
+                customActions = accessibilityActions
+                progress?.let { stateDescription = it }
+            }
             .graphicsLayer {
                 val d = drop.value
                 translationY = (1f - d) * -60f
@@ -1753,7 +1946,10 @@ private fun Bubble(
                 modifier = Modifier.clip(ShapeDefaults.ExtraLarge).clickable(enabled = !fetching) {
                     haptics.tick()
                     Thread {
-                        if (!com.yaz.sms.core.mms.MmsTransport.downloadStored(context, m.id)) {
+                        // An expired announcement is told by downloadStored itself: no second Toast then.
+                        val expiry = com.yaz.sms.core.mms.MmsStore.expiryOf(context, m.id)
+                        val expired = expiry > 0 && expiry < System.currentTimeMillis() / 1000
+                        if (!com.yaz.sms.core.mms.MmsTransport.downloadStored(context, m.id) && !expired) {
                             android.os.Handler(android.os.Looper.getMainLooper()).post {
                                 android.widget.Toast.makeText(context, "Could not download", android.widget.Toast.LENGTH_SHORT).show()
                             }
@@ -1981,9 +2177,10 @@ private fun Bubble(
                     } else null,
                     // Only the user's own messages of the encrypted chat change for both sides.
                     if (chatId != null && rich?.mine == true && said.isNotBlank()) MessageAction(AppIcons.Create, "Edit") { onEdit(chatId) } else null,
-                    if (said.isNotBlank()) MessageAction(AppIcons.Copy, "Copy") { copy(context, "Message", said) } else null,
+                    if (canBeCopied(said)) MessageAction(AppIcons.Copy, "Copy") { copy(context, "Message", said) } else null,
                     if (said.length > 12) MessageAction(AppIcons.SelectAll, "Select") { selecting = true } else null,
-                    if (said.isNotBlank()) MessageAction(AppIcons.Forward, "Forward") { forward(context, said) } else null,
+                    // Forward for words and for a message with parts too (ActionListPresenter's canBeForwarded).
+                    if (canBeForwarded(m, said)) MessageAction(AppIcons.Forward, "Forward") { forward(context, said, m.parts) } else null,
                     // Translate, or switch a translated bubble: WhatsApp's and iOS 26 Messages' long press Translate; the call is
                     // Keyboard's TranslateActivity.kt (Translator.Session) on offline-translator's AidlTranslationService
                     // (https://github.com/DavidVentura/offline-translator/blob/main/app/src/main/java/dev/davidv/translator/AidlTranslationService.kt).
@@ -2012,7 +2209,7 @@ private fun Bubble(
                     if (chatId != null) MessageAction(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin") { onPin(chatId, rich?.pinned != true) } else null,
                     if (m.box == MessageBox.FAILED) MessageAction(AppIcons.Send, "Try again") { onRetry() } else null,
                     if (chatId != null && rich?.mine == true) MessageAction(AppIcons.Delete, "Delete for everyone", danger = true) { confirmDeleteAll = true } else null,
-                    MessageAction(AppIcons.Delete, if (chatId != null && rich?.mine == true) "Delete for me" else "Delete", danger = true) { onDelete() }
+                    MessageAction(AppIcons.Delete, if (chatId != null && rich?.mine == true) "Delete for me" else "Delete", danger = true) { confirmDelete = true }
                 ),
                 onReact = { emoji -> react(emoji) },
                 onDismiss = { menuOpen = false },
@@ -2141,22 +2338,117 @@ private fun Bubble(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp, end = 14.dp, bottom = 6.dp)) {
                 Icon(AppIcons.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(if (m.mms) "Not sent" else "Not sent, tap to try again", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                Text("Not sent, tap to try again", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             }
         }
     }
 }
 
-/** The text handed to this app's own new message screen, to choose who gets it. */
-private fun forward(context: android.content.Context, text: String) {
-    runCatching {
-        context.startActivity(
-            android.content.Intent(android.content.Intent.ACTION_SEND)
-                .setPackage(context.packageName)
-                .setType("text/plain")
-                .putExtra(android.content.Intent.EXTRA_TEXT, text)
-        )
+/**
+ * Signal's DeleteDialog.show: a title, a message (none when there is nothing to warn of, isNoteToSelfDelete there), the
+ * positive button that deletes and a cancel; onDeletionCompleted is [onDeletionCompleted] here. An SMS or an MMS stays on
+ * the other phone, a chat message of the user's own is deleted for everyone through its own menu item.
+ * https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/util/DeleteDialog.kt#show
+ * (and Signal's fragment, https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversation/v2/ConversationFragment.kt#onMessageWithErrorClicked)
+ * not ported: show (this composable is the dialog itself), onMessageWithErrorClicked (ported in ThreadContent), handleAdminDeleteForEveryone (Signal's remote delete), handleDeleteForEveryone (same), deleteForEveryone (the chat has its own item), doInBackground (one row, the answer decides)
+ */
+@Composable
+internal fun DeleteDialog(
+    messageRecord: Message,
+    title: String = "Delete this message?",
+    message: String? = if (messageRecord.rich) null else "It stays on their phone",
+    onDeletionCompleted: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ZoneAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = message?.let { @Composable { Text(it) } },
+        confirmButton = { BoldButton(filled = true, onClick = { onDismiss(); onDeletionCompleted() }) { Text("Delete") } },
+        dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * Element X's rememberTimelineItemAccessibilityActions: the gestures of a message (the long press menu, the swipe to
+ * reply) as TalkBack actions, since neither is reachable with a screen reader; here also Copy, Delete and Try again.
+ * https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/messages/impl/src/main/kotlin/io/element/android/features/messages/impl/timeline/components/TimelineItemEventRow.kt#rememberTimelineItemAccessibilityActions
+ * not ported: hiddenFromAccessibilityWhile (no selection mode here), TimelineItemEventRow (the rows are ThreadContent's Bubble).
+ */
+@Composable
+private fun rememberTimelineItemAccessibilityActions(
+    isEnabled: Boolean,
+    canReply: Boolean,
+    canCopy: Boolean,
+    canRetry: Boolean,
+    onLongClick: () -> Unit,
+    onSwipeToReply: () -> Unit,
+    onCopy: () -> Unit,
+    onDelete: () -> Unit,
+    onRetry: () -> Unit,
+): List<CustomAccessibilityAction> {
+    val latestOnLongClick by rememberUpdatedState(onLongClick)
+    val latestOnSwipeToReply by rememberUpdatedState(onSwipeToReply)
+    val latestOnCopy by rememberUpdatedState(onCopy)
+    val latestOnDelete by rememberUpdatedState(onDelete)
+    val latestOnRetry by rememberUpdatedState(onRetry)
+    return remember(isEnabled, canReply, canCopy, canRetry) {
+        buildList {
+            if (!isEnabled) return@buildList
+            add(CustomAccessibilityAction("Message actions") {
+                latestOnLongClick()
+                true
+            })
+            if (canReply) {
+                add(CustomAccessibilityAction("Reply") {
+                    latestOnSwipeToReply()
+                    true
+                })
+            }
+            if (canCopy) {
+                add(CustomAccessibilityAction("Copy") {
+                    latestOnCopy()
+                    true
+                })
+            }
+            add(CustomAccessibilityAction("Delete") {
+                latestOnDelete()
+                true
+            })
+            if (canRetry) {
+                add(CustomAccessibilityAction("Try again") {
+                    latestOnRetry()
+                    true
+                })
+            }
+        }
     }
+}
+
+/**
+ * The words and the parts (pictures, films, files) handed to this app's own new message screen, to choose who gets
+ * them: ACTION_SEND for one, ACTION_SEND_MULTIPLE for several, each part a copy (sharedCopy) the FileProvider grants to
+ * this app only. Copied off the main thread; a word says it when nothing could be handed on.
+ */
+private fun forward(context: android.content.Context, text: String, parts: List<com.yaz.sms.core.mms.MmsPart> = emptyList()) {
+    Thread {
+        val copies = parts.mapIndexedNotNull { i, part -> sharedCopy(context, part, "forward-$i") }
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            runCatching {
+                check(copies.isNotEmpty() || text.isNotBlank())
+                val intent = android.content.Intent(if (copies.size > 1) android.content.Intent.ACTION_SEND_MULTIPLE else android.content.Intent.ACTION_SEND)
+                    .setPackage(context.packageName)
+                    .setType(if (copies.size > 1) "*/*" else copies.firstOrNull()?.second ?: "text/plain")
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                if (text.isNotBlank()) intent.putExtra(android.content.Intent.EXTRA_TEXT, text)
+                if (copies.size > 1) intent.putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, ArrayList(copies.map { it.first }))
+                else if (copies.isNotEmpty()) intent.putExtra(android.content.Intent.EXTRA_STREAM, copies.first().first)
+                context.startActivity(intent)
+            }.onFailure {
+                android.widget.Toast.makeText(context, "Could not forward it", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }.start()
 }
 
 /** A group's name, written by hand; empty gives back the list of its members. */

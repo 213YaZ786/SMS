@@ -96,8 +96,21 @@ import com.yaz.sms.ui.component.ZoneAlertDialog
 import com.yaz.sms.ui.component.ZoneSurface
 import com.yaz.sms.ui.component.rememberHaptics
 import com.yaz.sms.ui.component.rememberSparklePress
+import com.yaz.sms.data.sms.Message
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+
+/**
+ * Element X's ActionListPresenter.buildActions chooses what one event offers: Forward when its content canBeForwarded,
+ * Copy when it canBeCopied. Here a message with words or with parts (pictures, films, files) can be forwarded, and
+ * one with words copied.
+ * https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/messages/impl/src/main/kotlin/io/element/android/features/messages/impl/actionlist/ActionListPresenter.kt#buildActions
+ * not ported: present, handleEvent, computeForMessage (the menu opens at once, nothing to load), postFilter (no redacted or
+ * state events here), TimelineItemActionComparator (the menu keeps its own order), canRedact (any message can be deleted here).
+ */
+internal fun canBeForwarded(timelineItem: Message, content: String): Boolean = content.isNotBlank() || timelineItem.parts.isNotEmpty()
+
+internal fun canBeCopied(content: String): Boolean = content.isNotBlank()
 
 /** One action of a message's menu: its icon, its word, red when it takes something away. */
 data class MessageAction(val icon: ImageVector, val label: String, val danger: Boolean = false, val run: () -> Unit)

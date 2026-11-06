@@ -69,21 +69,33 @@ import org.koin.compose.koinInject
 @Composable
 fun EncryptionDialog(phone: String, onDismiss: () -> Unit) {
     val chat: RichChat = koinInject()
-    val info by produceState<EncryptionInfo?>(null, phone) { value = chat.encryptionInfo(phone) }
+    // Null before the engine answers and null if it could not (no chat, no keys): [asked] tells which.
+    var asked by remember(phone) { mutableStateOf(false) }
+    val info by produceState<EncryptionInfo?>(null, phone) {
+        value = chat.encryptionInfo(phone)
+        asked = true
+    }
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
         title = { Text("Encryption") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Messages and calls with them are end-to-end encrypted: only your two phones can read or hear them.")
-                Text(
-                    "Messages: OpenPGP keys (Autocrypt). Calls: DTLS-SRTP. The relays only pass sealed messages.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // The words follow the engine's answer: encrypted or not; keys it could not read are said so.
+                if (asked && info == null) Text("Could not read the keys")
                 info?.let { i ->
-                    if (i.mine != null && i.theirs != null) {
+                    if (i.encrypted) Text("Messages and calls with them are end-to-end encrypted: only your two phones can read or hear them.")
+                    else Text("Messages with them are not end-to-end encrypted.")
+                    if (i.encrypted) Text(
+                        "Messages: OpenPGP keys (Autocrypt). Calls: DTLS-SRTP. The relays only pass sealed messages.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (i.mine == null || i.theirs == null) {
+                        Text("Could not read the keys")
+                        // What the engine said, as it is.
+                        if (i.text.isNotBlank()) Text(i.text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
                         Text("To be sure it is them, compare these on both phones:", style = MaterialTheme.typography.labelLarge)
                         Fingerprint("Yours", i.mine)
                         Fingerprint("Theirs", i.theirs)

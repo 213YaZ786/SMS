@@ -109,8 +109,12 @@ fun PersonPage(
             val received = com.yaz.sms.data.settings.Spams.received(messages)
             if (spam) store.report(senderKey, received) else store.notSpam(senderKey, received)
             if (block) {
-                NumberActions.block(context, address)
+                val done = NumberActions.block(context, address)
                 blocked = NumberActions.isBlocked(context, address)
+                // On the IO thread: the word goes up through the main looper.
+                if (!done) android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(context, "Could not block", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -135,7 +139,8 @@ fun PersonPage(
     // The shared confirmation (ui/component/BlockConfirm), from AOSP Dialer's BlockReportSpamDialogs.
     if (confirmBlock) BlockConfirm(name, onDismiss = { confirmBlock = false }) {
         confirmBlock = false
-        NumberActions.block(context, address)
+        // Only the default SMS or phone app may write the blocked numbers: a refusal is said.
+        if (!NumberActions.block(context, address)) android.widget.Toast.makeText(context, "Could not block", android.widget.Toast.LENGTH_SHORT).show()
         blocked = NumberActions.isBlocked(context, address)
     }
 
@@ -238,7 +243,7 @@ fun PersonPage(
                             }
                             if (!group && NumberActions.canBlock(context)) Row(AppIcons.Block, if (blocked) "Unblock" else "Block", danger = !blocked) {
                                 if (blocked) {
-                                    NumberActions.unblock(context, address)
+                                    if (!NumberActions.unblock(context, address)) android.widget.Toast.makeText(context, "Could not unblock", android.widget.Toast.LENGTH_SHORT).show()
                                     blocked = NumberActions.isBlocked(context, address)
                                 } else confirmBlock = true
                             }
