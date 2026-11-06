@@ -22,6 +22,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import com.yaz.sms.core.mms.Attachment
 import com.yaz.sms.ui.component.FloatingPane
 import androidx.compose.foundation.clickable
 import com.yaz.sms.ui.component.rememberHaptics
@@ -138,3 +142,109 @@ private fun Tile(drop: Drop, order: Int, modifier: Modifier, onClick: () -> Unit
         )
     }
 }
+
+// What goes in the message, kept as AOSP Messaging's DraftMessageData keeps its attachments:
+// https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/datamodel/data/DraftMessageData.java#addOneAttachmentNoNotify
+// not ported: addAttachment (isSinglePartOnly clears the others; none of our attachments stands alone),
+// addPendingAttachment and addOnePendingAttachmentNoNotify (nothing is pending: a pick is a Uri at once),
+// hasPendingAttachments, removeExistingAttachments, destroyAsync (the files are the cache's, not ours to delete).
+
+/** DraftMessageData.getAttachmentLimit: how many the message holds (AOSP's default is 10; this app keeps 5). */
+internal fun getAttachmentLimit(): Int = 5
+
+/** MmsUtils.MAX_VIDEO_ATTACHMENT_COUNT of AOSP's sms/MmsUtils.java: one film in a picture message. */
+internal const val MAX_VIDEO_ATTACHMENT_COUNT = 1
+
+/** What is said when the limit is reached, AOSP's onDraftAttachmentLimitReached. */
+internal const val LIMIT_REACHED_SAID = "Up to 5 at a time"
+
+/** What is said when a second film is refused (DraftMessageData.checkDraftForSend, at pick time here). */
+internal const val VIDEO_LIMIT_SAID = "Only one video in a message"
+
+/** DraftMessageData.getAttachmentCount. */
+internal fun getAttachmentCount(mAttachments: List<Attachment>): Int = mAttachments.size
+
+/** DraftMessageData.getVideoAttachmentCount. */
+internal fun getVideoAttachmentCount(mAttachments: List<Attachment>): Int =
+    mAttachments.count { it.contentType.startsWith("video/", ignoreCase = true) }
+
+/** DraftMessageData.containsAttachment. */
+internal fun containsAttachment(mAttachments: List<Attachment>, contentUri: android.net.Uri): Boolean =
+    mAttachments.any { it.uri == contentUri }
+
+/** DraftMessageData.removeAttachment. */
+internal fun removeAttachment(mAttachments: MutableList<Attachment>, attachment: Attachment) {
+    val existingAttachment = mAttachments.firstOrNull { it.uri == attachment.uri } ?: return
+    mAttachments.remove(existingAttachment)
+}
+
+/** How many more can come in before the limit. */
+internal fun attachmentRoom(mAttachments: List<Attachment>): Int = (getAttachmentLimit() - getAttachmentCount(mAttachments)).coerceAtLeast(0)
+
+/**
+ * Tries to add one attachment, guarding against duplicates and going over the limit; [oneVideoOnly] is true outside
+ * the encrypted chat, where a picture message holds one film. Returns what to say when it was refused (the limit or
+ * the second film), null when it came in. A duplicate replaces the earlier one in its place, as AOSP does.
+ */
+internal fun addOneAttachmentNoNotify(mAttachments: MutableList<Attachment>, attachment: Attachment, oneVideoOnly: Boolean): String? {
+    // Check duplication.
+    val existingAttachment = mAttachments.indexOfFirst { it.uri == attachment.uri }
+    if (existingAttachment >= 0) {
+        mAttachments[existingAttachment] = attachment
+        return null
+    }
+    val reachedLimit = getAttachmentCount(mAttachments) >= getAttachmentLimit()
+    if (reachedLimit) {
+        // Never go over the limit.
+        return LIMIT_REACHED_SAID
+    }
+    if (oneVideoOnly && attachment.contentType.startsWith("video/", ignoreCase = true) &&
+        getVideoAttachmentCount(mAttachments) >= MAX_VIDEO_ATTACHMENT_COUNT
+    ) return VIDEO_LIMIT_SAID
+    mAttachments.add(attachment)
+    return null
+}
+
+// https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/util/UriUtil.java#getContentSize
+// https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/datamodel/data/DraftMessageData.java#getIsMessageOverLimit
+// not ported: UriUtil's isLocalResourceUri (any Uri the pickers returned is read here), getMediaDurationMs (the sender
+// reads the length), persistContent and copyContent (nothing is copied at pick time), and DraftMessageData's
+// CheckDraftForSendTask (the sender checks again; this is the same test made when the file is picked).
+
+/**
+ * UriUtil.getContentSize: the size in bytes of what [uri] holds, 0 when it cannot be told. The provider's own
+ * OpenableColumns.SIZE first (no open needed), else the file descriptor's stat size as AOSP reads it.
+ */
+internal fun getContentSize(context: Context, uri: Uri): Long {
+    val fromColumn = runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else 0L
+        }
+    }.getOrNull() ?: 0L
+    if (fromColumn > 0) return fromColumn
+    return runCatching {
+        context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd -> Math.max(pfd.statSize, 0) }
+    }.getOrNull() ?: 0L
+}
+
+/**
+ * DraftMessageData.getIsMessageOverLimit: the size the attachments could be made as small as before sending, added
+ * up, against the carrier's [maxMessageSize]. A picture is shrunk and a film cut down by the sender, so these count
+ * for nothing here; a sound, a file or a card goes as it is, so it counts whole (getMinimumSizeInBytesForSending).
+ */
+internal fun getIsMessageOverLimit(context: Context, mAttachmentsCopy: List<Attachment>, maxMessageSize: Int): Boolean {
+    if (mAttachmentsCopy.size > getAttachmentLimit()) {
+        return true
+    }
+    // Aggregate the size from all the attachments.
+    var totalSize = 0L
+    for (attachment in mAttachmentsCopy) {
+        totalSize += getMinimumSizeInBytesForSending(context, attachment)
+    }
+    return totalSize > maxMessageSize
+}
+
+/** MessagePartData.getMinimumSizeInBytesForSending: nothing for what the sender shrinks, the whole size otherwise. */
+internal fun getMinimumSizeInBytesForSending(context: Context, attachment: Attachment): Long =
+    if (attachment.contentType.startsWith("image/") || attachment.contentType.startsWith("video/")) 0L
+    else getContentSize(context, attachment.uri)

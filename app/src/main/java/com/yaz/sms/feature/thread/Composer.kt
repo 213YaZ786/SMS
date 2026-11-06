@@ -77,10 +77,29 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import android.content.Context
+import android.net.Uri
+import android.provider.ContactsContract
+import android.provider.OpenableColumns
+import android.widget.Toast
+import androidx.compose.runtime.State
+import androidx.compose.runtime.produceState
+import androidx.activity.compose.ManagedActivityResultLauncher
+import androidx.compose.runtime.MutableState
+import androidx.core.content.FileProvider
+import java.io.File
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
+import com.yaz.sms.core.mms.MmsTransport
+import com.yaz.sms.core.security.MediaCheck
 import com.yaz.sms.ui.component.FloatingPane
 import com.yaz.sms.ui.component.rememberHaptics
 import com.yaz.sms.ui.icon.AppIcons
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The message being written, floating over the conversation: the text in
@@ -88,7 +107,7 @@ import kotlinx.coroutines.launch
  * two, how many SMS it makes once it is long, and Send on its own pane.
  */
 // contentReceiver is marked experimental, as in Android's recipe (@OptIn(ExperimentalFoundationApi::class)).
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun Composer(
     initial: String,
@@ -177,9 +196,23 @@ fun Composer(
     }
     val sims = remember { activeSims(context) }
     var simIndex by rememberSaveable { mutableIntStateOf(sims.indexOfFirst { it.subscriptionId == SubscriptionManager.getDefaultSmsSubscriptionId() }.coerceAtLeast(0)) }
-    var attachments by remember { mutableStateOf<List<Attachment>>(emptyList()) }
-    fun add(more: List<Attachment>) {
-        attachments = (attachments + more).distinctBy { it.uri }.take(5)
+    // What goes with the text survives the screen being recreated: saved as each Uri and type.
+    var attachments by rememberSaveable(stateSaver = AttachmentsSaver) { mutableStateOf<List<Attachment>>(emptyList()) }
+    // DraftMessageData.addAttachments: each one through addOneAttachmentNoNotify (duplicates, the limit, one film),
+    // the loop not stopped at the limit, which is said once (dispatchAttachmentLimitReached) in a Toast.
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/datamodel/data/DraftMessageData.java#addOneAttachmentNoNotify
+    fun add(attachmentsToAdd: List<Attachment>) {
+        val mAttachments = attachments.toMutableList()
+        var reachedLimit: String? = null
+        for (data in attachmentsToAdd) {
+            // Don't break out of loop even if limit has been reached.
+            addOneAttachmentNoNotify(mAttachments, data, oneVideoOnly = !effectsCarried)?.let { reachedLimit = it }
+        }
+        attachments = mAttachments
+        reachedLimit?.let {
+            haptics.reject()
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
     LaunchedEffect(incoming) {
         if (!incoming.isNullOrEmpty()) {
@@ -187,34 +220,96 @@ fun Composer(
             onIncomingTaken()
         }
     }
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
-        add(uris.map { Attachment(it, context.contentResolver.getType(it) ?: "image/jpeg") })
+    // A Toast that shows with text already typed too (the field's hint only shows while it is empty): UiUtils.showToastAtBottom.
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/conversation/ComposeMessageView.java#onDraftAttachmentLimitReached
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/datamodel/data/DraftMessageData.java#getIsMessageOverLimit
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/mediapicker/AudioRecordView.java#onRecordButtonTouchDown
+    // not ported: onDraftAttachmentLimitReached (add() reports the limit itself, once, as AOSP does)
+    // not ported: onRecordButtonTouchDown (VoiceTake starts the recorder; only its maxSize argument is read here)
+    fun showToastAtBottom(words: String) {
+        Toast.makeText(context, words, Toast.LENGTH_SHORT).show()
     }
-    // A photo taken now, by the phone's camera app, into this app's cache.
-    var shot by remember { mutableStateOf<android.net.Uri?>(null) }
-    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
-        val uri = shot
-        if (taken && uri != null) add(listOf(Attachment(uri, "image/jpeg")))
+    // MmsConfig.get(subId).getMaxMessageSize() of the SIM the message goes from.
+    fun getMaxMessageSize(): Int {
+        val selfSubId = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+        val subId = if (selfSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) selfSubId else SubscriptionManager.getDefaultSmsSubscriptionId()
+        return MmsTransport.maxSize(context, subId)
+    }
+    // What a pick or the keyboard brings goes in with the type its bytes prove (MediaCheck.typeFor, as keepFromKeyboard
+    // does), not the provider's claim. Outside the encrypted chat a sound or a file that would take the message over the
+    // carrier's size is refused now, not after the undo delay (getIsMessageOverLimit; a picture is shrunk and a film
+    // cut down by the sender), and a GIF over it is said to go as a still picture (MmsTransport.send keeps a GIF whole
+    // only when it fits).
+    fun addPickedAttachments(attachmentsPicked: List<Pair<Uri, String?>>) {
+        val attachmentsToAdd = ArrayList<Attachment>()
+        val mAttachments = attachments.toMutableList()
+        val maxMessageSize = getMaxMessageSize() - 2 * 1024
+        for ((contentUri, contentType) in attachmentsPicked) {
+            val attachment = Attachment(contentUri, MediaCheck.typeFor(context, contentUri, contentType ?: "application/octet-stream"))
+            if (!effectsCarried && getAttachmentCount(mAttachments) < getAttachmentLimit()) {
+                if (getIsMessageOverLimit(context, mAttachments + attachment, maxMessageSize)) {
+                    haptics.reject()
+                    showToastAtBottom("Too large for a message")
+                    continue
+                }
+                if (attachment.contentType == "image/gif" && getContentSize(context, contentUri) > maxMessageSize) {
+                    showToastAtBottom("This GIF is too large, it will go as a still picture")
+                }
+            }
+            mAttachments.add(attachment)
+            attachmentsToAdd.add(attachment)
+        }
+        add(attachmentsToAdd)
+    }
+    // ComposeMessageView's host.warnOfExceedingMessageLimit, said before a picker opens that could add nothing.
+    fun warnOfExceedingMessageLimit(sending: Boolean, tooManyVideos: Boolean) {
+        haptics.reject()
+        showToastAtBottom(if (tooManyVideos) VIDEO_LIMIT_SAID else LIMIT_REACHED_SAID)
+    }
+    // The pickers of the + (photos, the camera, a file, a contact), each result through addPickedAttachments or add.
+    // https://raw.githubusercontent.com/element-hq/element-x-android/develop/libraries/mediapickers/impl/src/main/kotlin/io/element/android/libraries/mediapickers/impl/DefaultPickerProvider.kt#registerCameraPhotoPicker
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/datamodel/data/DraftMessageData.java#addOneAttachmentNoNotify
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_Messaging/lineage-23.0/src/com/android/messaging/ui/conversation/ComposeMessageView.java#onDraftAttachmentLimitReached
+    // not ported: addOneAttachmentNoNotify (AttachArc.kt, called by add)
+    // not ported: onDraftAttachmentLimitReached (warnOfExceedingMessageLimit above)
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // The picker holds what is still free of the 5 (PickMultipleVisualMedia needs at least 2: the extra is dropped
+    // below with the limit said); remembered by that number so the launcher is not registered again at each frame.
+    val pickRoom = attachmentRoom(attachments)
+    val pickContract = remember(pickRoom) { ActivityResultContracts.PickMultipleVisualMedia(maxOf(2, pickRoom)) }
+    val pick = rememberLauncherForActivityResult(pickContract) { uris ->
+        val room = attachmentRoom(attachments)
+        if (uris.size > room) warnOfExceedingMessageLimit(sending = false, tooManyVideos = false)
+        addPickedAttachments(uris.take(room).map { it to context.contentResolver.getType(it) })
+    }
+    val camera = registerCameraPhotoPicker { uri ->
+        if (uri != null) scope.launch {
+            val photo = withContext(Dispatchers.IO) { keepPhoto(context) }
+            if (photo != null) add(listOf(photo)) else showToastAtBottom("Could not keep the photo")
+        }
     }
     val file = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) add(listOf(Attachment(uri, context.contentResolver.getType(uri) ?: "application/octet-stream")))
+        if (uri != null) addPickedAttachments(listOf(uri to context.contentResolver.getType(uri)))
     }
-    // A contact, sent as its card.
     val person = rememberLauncherForActivityResult(ActivityResultContracts.PickContact()) { uri ->
-        val card = uri?.let { contactCard(context, it) }
-        if (card != null) add(listOf(Attachment(card, "text/x-vcard")))
+        if (uri != null) {
+            val card = contactCard(context, uri)
+            if (card != null) add(listOf(Attachment(card, "text/x-vcard"))) else showToastAtBottom("Could not read this contact")
+        }
     }
     // Where the phone is, once, into the words: the user sends it or not.
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var locating by remember { mutableStateOf(false) }
     var lost by remember { mutableStateOf(false) }
     fun placeHere() {
         locating = true
+        // The hint says it while the field is empty; with words typed it does not show, so a Toast says it too.
+        if (state.text.isNotEmpty()) showToastAtBottom("Finding where you are…")
         scope.launch {
             val here = com.yaz.sms.core.sms.HereNow.find(context)
             locating = false
             if (here == null) {
                 haptics.reject()
+                if (state.text.isNotEmpty()) showToastAtBottom("Not found: is location on?")
                 // Said in the field a moment: location off, or no fix within the time.
                 lost = true
                 kotlinx.coroutines.delay(3000)
@@ -236,17 +331,25 @@ fun Composer(
     ) { placeHere() }
     // The live location's durations; the location permission is asked first, as for a place (HereNow).
     var choosingLive by remember { mutableStateOf(false) }
+    // Live location needs a location source on: every provider off is said, never a silent nothing.
+    val chooseLive: () -> Unit = {
+        if (context.getSystemService(android.location.LocationManager::class.java)?.isLocationEnabled == true) {
+            choosingLive = true
+        } else {
+            haptics.reject()
+            showToastAtBottom("Location is off")
+        }
+    }
     val askLive = com.yaz.sms.ui.component.rememberPermissionAsk(
         arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
         title = "Location is off",
         message = "To share your live location, allow location for SMS in the app's settings.",
         onRefused = { haptics.reject() }
-    ) { choosingLive = true }
+    ) { chooseLive() }
     var arcOpen by remember { mutableStateOf(false) }
-    // A voice message being recorded, and how far the finger has slid to cancel or to lock.
-    var take by remember { mutableStateOf<VoiceTake?>(null) }
-    // The effect picked from the + before writing, and its chooser.
-    var armed by remember { mutableStateOf<com.yaz.sms.core.sms.Effects.Effect?>(null) }
+    // How far the finger has slid to cancel or to lock a voice message (the take itself is the delegate's, below).
+    // The effect picked from the + before writing, and its chooser; kept when the screen is recreated.
+    var armed by rememberSaveable(stateSaver = EffectSaver) { mutableStateOf<com.yaz.sms.core.sms.Effects.Effect?>(null) }
     var choosingEffect by remember { mutableStateOf(false) }
     // What a pick of the + does, set where the launchers are known.
     val pickDrop = remember { mutableStateOf<((Drop) -> Unit)?>(null) }
@@ -258,17 +361,134 @@ fun Composer(
         message = "To record a voice message, allow the microphone for SMS in the app's settings.",
         onRefused = { haptics.reject() }
     ) { }
+    // The voice message: Voice.kt's delegate holds the take, and this handler is what the finger on the mic calls, as
+    // Signal's InputPanel answers MicrophoneRecorderView (a release under the minimum says how to record; a release
+    // after it ends the take and sends it; sliding away throws it away; anything else keeps it in the bar).
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/components/InputPanel.java#onRecordReleased
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/components/MicrophoneRecorderView.java#onTouch
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversation/v2/VoiceMessageRecordingDelegate.kt#VoiceMessageRecordingDelegate
+    // not ported: onTouch (Voice.kt)
+    // not ported: hasActiveSession (Voice.kt)
+    // not ported: onRecorderStarted (Voice.kt)
+    // not ported: onRecorderLocked (Voice.kt)
+    // not ported: onRecorderFinished (Voice.kt)
+    // not ported: onRecorderCanceled (Voice.kt)
+    // not ported: onRecordSaveDraft (Voice.kt)
+    // not ported: vibrateAndResetOrientation (Voice.kt)
+    // not ported: beginRecording (Voice.kt)
+    // not ported: Session (Voice.kt, no Rx here)
+    // not ported: onSubscribe (Voice.kt, no Rx here)
+    // not ported: onSuccess (Voice.kt, no Rx here)
+    // not ported: onError (Voice.kt, no Rx here)
+    // not ported: dispose (Voice.kt, no Rx here)
+    // not ported: isDisposed (Voice.kt, no Rx here)
+    // not ported: savePeriodicDraftSnapshot (Voice.kt)
+    // not ported: completeRecording (Voice.kt)
+    // not ported: discardRecording (Voice.kt)
+    // not ported: saveDraft (Voice.kt)
+    val onSendNow by rememberUpdatedState(onSend)
+    val askMicNow by rememberUpdatedState(askMic)
+    val addNow by rememberUpdatedState(::add)
+    val inEncryptedChat by rememberUpdatedState(effectsCarried)
+    val recordingDelegate = remember {
+        VoiceMessageRecordingDelegate(context, haptics, object : VoiceMessageRecordingDelegate.SessionCallback {
+            override fun onSessionWillBegin() {
+                haptics.tick()
+            }
+
+            override fun sendVoiceNote(file: File) {
+                val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                val uri = runCatching { FileProvider.getUriForFile(context, context.packageName + ".mms", file) }.getOrNull() ?: return
+                if (onSendNow("", sub, listOf(Attachment(uri, "audio/mp4")))) haptics.done() else haptics.reject()
+            }
+
+            override fun cancelEphemeralVoiceNoteDraft(file: File) {
+                file.delete()
+            }
+
+            override fun saveEphemeralVoiceNoteDraft(file: File) {
+                val uri = runCatching { FileProvider.getUriForFile(context, context.packageName + ".mms", file) }.getOrNull() ?: return
+                addNow(listOf(Attachment(uri, "audio/mp4")))
+            }
+
+            override fun onRecorderUnavailable() {
+                haptics.reject()
+                showToastAtBottom("Could not start the microphone")
+            }
+
+            override fun onRecorderFailed() {
+                haptics.reject()
+                showToastAtBottom("Recording stopped, try again")
+            }
+
+            override fun onMaximumSize() {
+                showToastAtBottom("Longest voice message for MMS reached")
+            }
+        }, maxBytes = { if (inEncryptedChat) 0L else (getMaxMessageSize() - 2 * 1024).toLong() })
+    }
+    val take = recordingDelegate.session
+    val recordingHandler = remember(recordingDelegate) {
+        object : AudioRecordingHandler {
+            override fun onRecordPermissionRequired() {
+                askMicNow()
+            }
+
+            override fun onRecorderAlreadyInUse() {
+                haptics.reject()
+                showToastAtBottom("The microphone is in use")
+            }
+
+            override fun onRecordPressed() {
+                recordingDelegate.onRecorderStarted()
+            }
+
+            override fun onRecordReleased() {
+                if (!recordingDelegate.hasActiveSession()) return
+                val elapsedTime = recordingDelegate.elapsedTime()
+                if (elapsedTime >= VoiceTake.MIN_MS) {
+                    recordingDelegate.onRecorderFinished()
+                } else {
+                    showToastAtBottom("Hold to record, let go to send")
+                    recordingDelegate.onRecorderCanceled(true)
+                }
+            }
+
+            override fun onRecordMoved(offsetX: Float, offsetY: Float) {
+                slide = offsetX
+                rise = offsetY
+            }
+
+            override fun onRecordCanceled(byUser: Boolean) {
+                recordingDelegate.onRecorderCanceled(byUser)
+            }
+
+            override fun onRecordLocked() {
+                recordingDelegate.onRecorderLocked()
+            }
+
+            override fun onRecordSaved() {
+                recordingDelegate.onRecordSaveDraft()
+            }
+        }
+    }
+    // The screen pausing keeps the take as a chip, never sent and never lost; its end throws it away (Element X's
+    // handleLifecycleEvent, in the delegate).
+    val recordingLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(recordingLifecycle, recordingDelegate) {
+        val watcher = androidx.lifecycle.LifecycleEventObserver { _, event -> recordingDelegate.handleLifecycleEvent(event) }
+        recordingLifecycle.lifecycle.addObserver(watcher)
+        onDispose {
+            recordingLifecycle.lifecycle.removeObserver(watcher)
+            recordingDelegate.onRecorderCanceled(byUser = true)
+        }
+    }
     // A photo needs the camera allowed when the app declares it, or the phone's camera app is refused
     // https://developer.android.com/media/camera/camera-intents
     fun takePhoto() {
-        val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
-        val out = java.io.File(dir, "${System.currentTimeMillis()}.jpg")
-        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".mms", out)
-        shot = uri
         // startActivity throws ActivityNotFoundException when no app handles ACTION_IMAGE_CAPTURE; said, never silent.
         // https://developer.android.com/media/camera/camera-intents
         try {
-            camera.launch(uri)
+            camera.launch()
         } catch (e: android.content.ActivityNotFoundException) {
             android.util.Log.w("Composer", "camera: " + e.javaClass.simpleName)
             haptics.reject()
@@ -285,7 +505,6 @@ fun Composer(
         message = "To take a photo, allow the camera for SMS in the app's settings.",
         onRefused = { haptics.reject() }
     ) { takePhoto() }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { take?.finish(keep = false) } }
     val veil by animateFloatAsState(if (arcOpen) 0.35f else 1f, label = "veil")
     // Google Messages counts only a plain SMS (one SMS is 160 characters; an MMS or a chat message has no such limit):
     // nothing is counted over a group MMS or the encrypted chat.
@@ -370,7 +589,8 @@ fun Composer(
             onDismiss = { choosingEffect = false }
         )
         // The styles: a tap wraps the selection (or the word) in one. Shown on MentionLine's row, beside the clock.
-        val styleButtons: (@Composable () -> Unit)? = if (formatting && text.isNotEmpty() && take == null) ({
+        // Only in the encrypted chat (effectsCarried): over SMS and MMS the marks would reach the other phone as symbols.
+        val styleButtons: (@Composable () -> Unit)? = if (effectsCarried && formatting && text.isNotEmpty() && take == null) ({
             listOf(
                 com.yaz.sms.core.sms.Markup.Style.BOLD to AppIcons.FormatBold,
                 com.yaz.sms.core.sms.Markup.Style.ITALIC to AppIcons.FormatItalic,
@@ -450,9 +670,7 @@ fun Composer(
             if (recording != null && recording.locked) {
                 // Locked: the hand is free; this throws the recording away.
                 FloatingPane(shape = CircleShape, onClick = {
-                    haptics.reject()
-                    recording.finish(keep = false)
-                    take = null
+                    recordingHandler.onRecordCanceled(true)
                 }, modifier = Modifier.size(52.dp)) {
                     Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
                         Icon(AppIcons.Delete, contentDescription = "Discard the recording", tint = MaterialTheme.colorScheme.error)
@@ -460,22 +678,35 @@ fun Composer(
                 }
             } else if (recording == null) {
                 pickDrop.value = { drop ->
-                runCatching {
+                // The cap of 5 is said when a tile that adds something is tapped with no room left.
+                val full = attachmentRoom(attachments) == 0
+                // A + tile whose app is missing says so (startActivity throws ActivityNotFoundException).
+                try {
                     when (drop) {
                         // An effect is chosen, then sits in the bar: the message goes only on Send.
                         Drop.EFFECTS -> choosingEffect = true
-                        Drop.PHOTOS -> pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                        Drop.PHOTOS -> if (full) warnOfExceedingMessageLimit(sending = false, tooManyVideos = false)
+                            else pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
                         Drop.CAMERA ->
-                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) takePhoto()
+                            if (full) warnOfExceedingMessageLimit(sending = false, tooManyVideos = false)
+                            else if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) takePhoto()
                             else askCamera()
-                        Drop.FILE -> file.launch(arrayOf("*/*"))
-                        Drop.CONTACT -> person.launch(null)
+                        Drop.FILE -> if (full) warnOfExceedingMessageLimit(sending = false, tooManyVideos = false)
+                            else file.launch(arrayOf("*/*"))
+                        Drop.CONTACT -> if (full) warnOfExceedingMessageLimit(sending = false, tooManyVideos = false)
+                            else person.launch(null)
                         Drop.POLL -> onPoll?.invoke()
                         Drop.PLACE -> if (com.yaz.sms.core.sms.HereNow.allowed(context)) placeHere()
                             else askPlace()
-                        Drop.LIVE -> if (com.yaz.sms.core.sms.HereNow.allowed(context)) choosingLive = true
+                        Drop.LIVE -> if (com.yaz.sms.core.sms.HereNow.allowed(context)) chooseLive()
                             else askLive()
                     }
+                } catch (e: android.content.ActivityNotFoundException) {
+                    android.util.Log.w("Composer", "pick: " + e.javaClass.simpleName)
+                    haptics.reject()
+                    showToastAtBottom("No app to pick this")
+                } catch (e: RuntimeException) {
+                    android.util.Log.w("Composer", "pick: " + e.javaClass.simpleName)
                 }
             }
                 AttachArc(open = arcOpen, onOpen = { arcOpen = it }, drops = drops) { }
@@ -523,35 +754,47 @@ fun Composer(
                 }
                 // What goes with the text, inside the bar it leaves with, each with its cross.
                 if (attachments.isNotEmpty()) {
-                    Row(
+                    // Wrapped, never sideways: five chips with names do not fit one line of a phone.
+                    FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 10.dp)
                     ) {
                         attachments.forEach { a ->
                             val picture by rememberPicture(a.uri, 240)
-                            Box(Modifier.size(72.dp)) {
+                            val label by rememberReturnCursor(a)
+                            Box {
+                                // A picture is its square; a file, a card or a sound grows to hold its name and size.
                                 Box(
-                                    Modifier.padding(top = 6.dp, end = 6.dp).size(66.dp).clip(ShapeDefaults.Large)
+                                    Modifier.padding(top = 6.dp, end = 6.dp).widthIn(min = 66.dp, max = 132.dp).heightIn(min = 66.dp).clip(ShapeDefaults.Large)
                                         .background(MaterialTheme.colorScheme.surfaceVariant),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     picture?.let { Image(it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(66.dp)) }
-                                        ?: Icon(
-                                            when {
-                                                a.contentType.contains("vcard") -> AppIcons.ContactPage
-                                                a.contentType.startsWith("video") -> AppIcons.Play
-                                                a.contentType.startsWith("audio") -> AppIcons.Mic
-                                                else -> AppIcons.AttachFile
-                                            },
-                                            contentDescription = null
-                                        )
+                                        ?: Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                            Icon(
+                                                when {
+                                                    a.contentType.contains("vcard") -> AppIcons.ContactPage
+                                                    a.contentType.startsWith("video") -> AppIcons.Play
+                                                    a.contentType.startsWith("audio") -> AppIcons.Mic
+                                                    else -> AppIcons.AttachFile
+                                                },
+                                                contentDescription = null,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                            // A voice message made here is named "voice-<time>.m4a": it is just a voice message.
+                                            val shownName = label?.first?.let { if (it.startsWith("voice-")) "Voice message" else it }
+                                            shownName?.let { Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+                                            val shownSize = label?.second ?: 0L
+                                            if (shownSize > 0) Text(android.text.format.Formatter.formatShortFileSize(context, shownSize), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                        }
                                 }
                                 Box(
                                     Modifier.align(Alignment.TopEnd).size(26.dp).clip(CircleShape)
                                         .background(MaterialTheme.colorScheme.inverseSurface)
                                         .clickable(onClickLabel = "Remove") {
                                             haptics.tick()
-                                            attachments = attachments - a
+                                            attachments = attachments.toMutableList().also { removeAttachment(it, a) }
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -566,7 +809,7 @@ fun Composer(
                 // (conversation_input_panel.xml: quick_camera_toggle).
                 // https://github.com/signalapp/Signal-Android/blob/main/app/src/main/res/layout/conversation_input_panel.xml
                 val quickCamera = text.isEmpty() && attachments.isEmpty() && editing == null
-                Box(Modifier.padding(start = 18.dp, end = if (text.isNotEmpty() || quickCamera) 44.dp else 18.dp, top = 15.dp, bottom = 15.dp)) {
+                Box(Modifier.padding(start = 18.dp, end = if ((effectsCarried && text.isNotEmpty()) || quickCamera) 44.dp else 18.dp, top = 15.dp, bottom = 15.dp)) {
                     val hint = if (locating) "Finding where you are…" else if (lost) "Not found: is location on?" else if (attachments.isNotEmpty()) "Add a message, or send" else if (armed != null) "Your message, with its effect" else "Message"
                     if (text.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val faded = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
@@ -608,13 +851,21 @@ fun Composer(
                                 content.consume { item ->
                                     val uri = item.uri
                                     if (uri != null) {
-                                        if (attachments.size >= 5) {
-                                            haptics.reject()
+                                        if (attachmentRoom(attachments) == 0) {
+                                            warnOfExceedingMessageLimit(sending = false, tooManyVideos = false)
                                         } else {
                                             val claimed = context.contentResolver.getType(uri)
                                                 ?: content.clipMetadata.clipDescription.filterMimeTypes("image/*")?.firstOrNull()
-                                            val kept = claimed?.let { keepFromKeyboard(context, uri, it) }
-                                            if (kept != null) add(listOf(kept)) else haptics.reject()
+                                            val kept = if (claimed == null) Pair(null, "Not a picture") else keepFromKeyboard(context, uri, claimed)
+                                            // Why it was refused is said (too large, not a picture); a GIF too big for the
+                                            // message is said to go as a still picture (addPickedAttachments).
+                                            val attachment = kept.first
+                                            if (attachment != null) {
+                                                addPickedAttachments(listOf(attachment.uri to attachment.contentType))
+                                            } else {
+                                                haptics.reject()
+                                                showToastAtBottom(kept.second ?: "Not a picture")
+                                            }
                                         }
                                     }
                                     uri != null
@@ -649,8 +900,9 @@ fun Composer(
                     arcOpen = false
                     pickDrop.value?.invoke(Drop.CAMERA)
                 }
-                // Aa: the styles, shown or put away.
-                if (text.isNotEmpty()) PressedIconTap(
+                // Aa: the styles, shown or put away; only in the encrypted chat (over SMS and MMS the marks would reach
+                // the other phone as symbols).
+                if (effectsCarried && text.isNotEmpty()) PressedIconTap(
                     icon = AppIcons.TextFormat,
                     label = "Text styles",
                     tint = if (formatting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -662,11 +914,6 @@ fun Composer(
               }
               }
             }
-            fun sendVoice(file: java.io.File) {
-                val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
-                val uri = runCatching { androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".mms", file) }.getOrNull() ?: return
-                if (onSend("", sub, listOf(Attachment(uri, "audio/mp4")))) haptics.done() else haptics.reject()
-            }
             // With nothing written, Send is a microphone: held, it records.
             val micMode = !canSend && editing == null && (take == null || take?.locked == false)
             val density = androidx.compose.ui.platform.LocalDensity.current
@@ -674,9 +921,9 @@ fun Composer(
             val lockAt = with(density) { 90.dp.toPx() }
             // A tap sends; held, Send offers to send later.
             fun send() {
-                take?.let { t ->
-                    take = null
-                    t.finish(keep = true)?.let(::sendVoice)
+                // A locked take: Send is its release (one too short says how to record).
+                if (take != null) {
+                    recordingHandler.onRecordReleased()
                     return
                 }
                 if (!canSend) return
@@ -707,49 +954,9 @@ fun Composer(
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
             // Send later's clock is in the row above (MentionLine), over Send.
-            Box(if (micMode) Modifier.pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown()
-                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                        askMic()
-                        return@awaitEachGesture
-                    }
-                    val t = VoiceTake.start(context) ?: return@awaitEachGesture
-                    take = t
-                    haptics.tick()
-                    var cancelled = false
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) break
-                        val moved = change.position - down.position
-                        slide = moved.x.coerceAtMost(0f)
-                        rise = moved.y.coerceAtMost(0f)
-                        change.consume()
-                        if (moved.x < -cancelAt) {
-                            cancelled = true
-                            break
-                        }
-                        if (moved.y < -lockAt) {
-                            t.locked = true
-                            haptics.tick()
-                            break
-                        }
-                    }
-                    slide = 0f
-                    rise = 0f
-                    when {
-                        cancelled -> {
-                            t.finish(keep = false)
-                            take = null
-                            haptics.reject()
-                        }
-                        !t.locked -> {
-                            take = null
-                            t.finish(keep = true)?.let(::sendVoice)
-                        }
-                    }
-                }
+            // The finger on the mic: Voice.kt's onTouch (Signal's MicrophoneRecorderView), answered by recordingHandler.
+            Box(if (micMode) Modifier.pointerInput(cancelAt, lockAt) {
+                onTouch(context, recordingDelegate, recordingHandler, cancelAt, lockAt)
             } else Modifier.pointerInput(text, attachments, canSend, editing, take, laterReady) {
                 detectTapGestures(
                     onTap = { send() },
@@ -867,15 +1074,16 @@ private fun PressedIconTap(
  * ShareIntentActivity, which refuses file:// and takes content:// only): content of another app only, never one of
  * our own providers (https://developer.android.com/privacy-and-security/risks/content-resolver), the real type by
  * MediaCheck.typeFor, and the picture itself is decoded only by the isolated DecoderService when shown. The grant:
- * https://developer.android.com/develop/ui/views/touch-and-input/image-keyboard. Null when it cannot be kept.
+ * https://developer.android.com/develop/ui/views/touch-and-input/image-keyboard. The attachment, or why it was refused.
  */
-private fun keepFromKeyboard(context: android.content.Context, uri: android.net.Uri, claimed: String): Attachment? = runCatching {
-    if (uri.scheme != android.content.ContentResolver.SCHEME_CONTENT) return@runCatching null
-    val owner = context.packageManager.resolveContentProvider(uri.authority ?: return@runCatching null, 0)?.packageName
-    if (owner == null || owner == context.packageName) return@runCatching null
+private fun keepFromKeyboard(context: android.content.Context, uri: android.net.Uri, claimed: String): Pair<Attachment?, String?> = runCatching {
+    if (uri.scheme != android.content.ContentResolver.SCHEME_CONTENT) return@runCatching Pair(null, "Could not read this picture")
+    val owner = context.packageManager.resolveContentProvider(uri.authority ?: return@runCatching Pair(null, "Could not read this picture"), 0)?.packageName
+    if (owner == null || owner == context.packageName) return@runCatching Pair(null, "Could not read this picture")
     val dir = java.io.File(context.cacheDir, "keyboard-in").apply { mkdirs() }
     val file = java.io.File(dir, "kb-${System.nanoTime()}")
     var kept = 0L
+    var tooLarge = false
     val copied = context.contentResolver.openInputStream(uri)?.use { input ->
         file.outputStream().use { out ->
             val buffer = ByteArray(64 * 1024)
@@ -884,7 +1092,10 @@ private fun keepFromKeyboard(context: android.content.Context, uri: android.net.
                 if (n < 0) break
                 kept += n
                 // Copied on the main thread inside the grant: a keyboard's GIF is small, more than this is dropped.
-                if (kept > 16L * 1024 * 1024) return@use false
+                if (kept > 16L * 1024 * 1024) {
+                    tooLarge = true
+                    return@use false
+                }
                 out.write(buffer, 0, n)
             }
             true
@@ -892,11 +1103,17 @@ private fun keepFromKeyboard(context: android.content.Context, uri: android.net.
     } ?: false
     if (!copied) {
         file.delete()
-        return@runCatching null
+        return@runCatching Pair(null, if (tooLarge) "Too large to send" else "Could not read this picture")
     }
     val copy = android.net.Uri.fromFile(file)
-    Attachment(copy, com.yaz.sms.core.security.MediaCheck.typeFor(context, copy, claimed))
-}.getOrNull()
+    val type = com.yaz.sms.core.security.MediaCheck.typeFor(context, copy, claimed)
+    // The bytes are not a picture whatever the keyboard claims: not kept.
+    if (!type.startsWith("image/")) {
+        file.delete()
+        return@runCatching Pair(null, "Not a picture")
+    }
+    Pair(Attachment(copy, type), null)
+}.getOrElse { Pair(null, "Could not read this picture") }
 
 /** The SIMs in use, when the phone may be asked; one or none otherwise. */
 private fun activeSims(context: android.content.Context): List<SubscriptionInfo> {
@@ -924,6 +1141,111 @@ private fun onWholeCharacters(text: String, at: Int): String {
     var end = at
     while (end < text.length && (text[end].isLowSurrogate() || !boundaries.isBoundary(end))) end++
     return if (end == at) text else text.removeRange(at, end)
+}
+
+// What goes with the text and the effect armed are saved with the screen (Compose's listSaver recipe): each
+// attachment as its Uri and type, the effect by its name.
+// https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/runtime/runtime-saveable/src/commonMain/kotlin/androidx/compose/runtime/saveable/ListSaver.kt#listSaver
+private val AttachmentsSaver: Saver<List<Attachment>, Any> = listSaver<List<Attachment>, String>(
+    save = { attachments -> attachments.flatMap { listOf(it.uri.toString(), it.contentType) } },
+    restore = { saved -> saved.chunked(2).map { (uri, type) -> Attachment(Uri.parse(uri), type) } }
+)
+
+private val EffectSaver: Saver<com.yaz.sms.core.sms.Effects.Effect?, String> = Saver(
+    save = { it?.name },
+    restore = { name -> com.yaz.sms.core.sms.Effects.Effect.entries.firstOrNull { it.name == name } }
+)
+
+// A photo taken with the camera app: Element X's fixed temporary file (cacheDir/camera/photo.jpg under the
+// FileProvider's camera/ path), its Uri recomputed the same way after the screen was recreated, and the pending
+// state saved with the screen so the result still finds its way back.
+// https://raw.githubusercontent.com/element-hq/element-x-android/develop/libraries/mediapickers/impl/src/main/kotlin/io/element/android/libraries/mediapickers/impl/DefaultPickerProvider.kt#registerCameraPhotoPicker
+// not ported: the LocalInspectionMode branch with NoOpPickerLauncher (the composer is not drawn in a preview)
+// not ported: rememberPickerLauncher (the launcher is made here with rememberLauncherForActivityResult)
+class CameraPhotoPicker(
+    private val launcher: ManagedActivityResultLauncher<Uri, Boolean>,
+    private val tmpFile: File,
+    private val tmpFileUri: Uri,
+    private val pending: MutableState<Boolean>
+) {
+    /** Opens the camera app for the fixed file; ActivityNotFoundException and SecurityException are the caller's to tell. */
+    fun launch() {
+        tmpFile.delete()
+        pending.value = true
+        try {
+            launcher.launch(tmpFileUri)
+        } catch (e: RuntimeException) {
+            pending.value = false
+            throw e
+        }
+    }
+}
+
+@Composable
+private fun registerCameraPhotoPicker(onResult: (Uri?) -> Unit): CameraPhotoPicker {
+    val context = LocalContext.current
+    val tmpFile = remember { getTemporaryFile(context, "photo.jpg") }
+    val tmpFileUri = remember(tmpFile) { getTemporaryUri(context, tmpFile) }
+    val pending = rememberSaveable { mutableStateOf(false) }
+    val managedLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        val wasPending = pending.value
+        pending.value = false
+        onResult(if (success && wasPending) tmpFileUri else null)
+    }
+    return remember(managedLauncher, tmpFile, tmpFileUri) { CameraPhotoPicker(managedLauncher, tmpFile, tmpFileUri, pending) }
+}
+
+private fun getTemporaryFile(context: Context, filename: String): File {
+    return File(File(context.cacheDir, "camera").apply { mkdirs() }, filename)
+}
+
+private fun getTemporaryUri(context: Context, file: File): Uri {
+    val authority = "${context.packageName}.mms"
+    return FileProvider.getUriForFile(context, authority, file)
+}
+
+/** The photo just taken, copied from the fixed file to a name of its own, so a second photo does not overwrite the first. */
+private fun keepPhoto(context: Context): Attachment? = runCatching {
+    val tmpFile = getTemporaryFile(context, "photo.jpg")
+    if (tmpFile.length() <= 0L) return@runCatching null
+    val photo = getTemporaryFile(context, "${System.currentTimeMillis()}.jpg")
+    tmpFile.copyTo(photo, overwrite = true)
+    tmpFile.delete()
+    val photoUri = getTemporaryUri(context, photo)
+    Attachment(photoUri, MediaCheck.typeFor(context, photoUri, "image/jpeg"))
+}.getOrNull()
+
+// What a chip says under its icon: a file's name and size from its provider (Android's recipe "Retrieve information
+// about a file": the OpenableColumns of a query), a contact's name from the contacts by the lookup key its card Uri ends with.
+// https://developer.android.com/training/secure-file-sharing/retrieve-info
+// https://developer.android.com/training/contacts-provider/retrieve-names
+private fun returnCursor(context: Context, uri: Uri): Pair<String?, Long> = runCatching {
+    context.contentResolver.query(uri, null, null, null, null)?.use { returnCursor ->
+        val nameIndex = returnCursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        val sizeIndex = returnCursor.getColumnIndex(OpenableColumns.SIZE)
+        returnCursor.moveToFirst()
+        val name = if (nameIndex >= 0) returnCursor.getString(nameIndex) else null
+        val size = if (sizeIndex >= 0 && !returnCursor.isNull(sizeIndex)) returnCursor.getLong(sizeIndex) else 0L
+        name to size
+    }
+}.getOrNull() ?: (null to 0L)
+
+private fun returnCursor(context: Context, attachment: Attachment): String? = runCatching {
+    val lookupUri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_LOOKUP_URI, attachment.uri.lastPathSegment ?: return@runCatching null)
+    context.contentResolver.query(lookupUri, arrayOf(ContactsContract.Contacts.DISPLAY_NAME), null, null, null)?.use { returnCursor ->
+        returnCursor.moveToFirst()
+        returnCursor.getString(0)
+    }
+}.getOrNull()
+
+@Composable
+private fun rememberReturnCursor(attachment: Attachment): State<Pair<String?, Long>?> {
+    val context = LocalContext.current
+    return produceState<Pair<String?, Long>?>(null, attachment) {
+        value = withContext(Dispatchers.IO) {
+            if (attachment.contentType.contains("vcard")) returnCursor(context, attachment) to 0L else returnCursor(context, attachment.uri)
+        }
+    }
 }
 
 /** The text being written with its styles shown and their marks faint, the marks kept in place. */

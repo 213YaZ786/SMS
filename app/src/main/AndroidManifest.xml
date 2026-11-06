@@ -122,7 +122,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|fontScale|locale|density|layoutDirection"
             android:windowSoftInputMode="adjustResize"
             android:launchMode="singleTask"
             android:theme="@style/Theme.Sms">
