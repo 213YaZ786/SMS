@@ -22,10 +22,12 @@ object InviteGate {
     /**
      * Whether the invite of [address] is acted on. [asked]: the number is proven or our own invite
      * went to it. [contact] and [sent] are asked only when the cheaper answers are no (they read
-     * Android's stores).
+     * Android's stores). [blocked] comes first and wins over all: a number in Android's blocked numbers
+     * is never accepted (Signal's RecipientUtil.shouldHaveProfileKey returns false for a blocked recipient
+     * before anything else), whatever else is known of it.
      */
-    fun accepted(asked: Boolean, contact: () -> Boolean, sent: () -> Boolean): Boolean =
-        asked || contact() || sent()
+    fun accepted(asked: Boolean, contact: () -> Boolean, sent: () -> Boolean, blocked: () -> Boolean = { false }): Boolean =
+        !blocked() && (asked || contact() || sent())
 
     /** Our invite may go back to this number now: none went in the last day. */
     fun mayAnswer(link: ChatLink?, now: Long): Boolean =

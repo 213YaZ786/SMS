@@ -111,7 +111,7 @@ class ChatConnection(private val context: Context) : Connection(), KoinComponent
     /** Telecom let go of it on its side (a failed answer, a time limit): it ends here too. */
     override fun onStateChanged(state: Int) {
         if (state == STATE_DISCONNECTED && CallBook.connection === this) {
-            CallBook.call.value?.msgId?.let { endInEngine(context, it) }
+            CallBook.call.value?.takeIf { !it.hasNotifiedBackend }?.msgId?.let { endInEngine(context, it) }
             CallBook.end()
             CallBook.set(null)
             CallLine.close(context)
@@ -134,7 +134,7 @@ class ChatConnection(private val context: Context) : Connection(), KoinComponent
     /** Ended here: the other side is told through the engine. */
     fun hangUp(cause: Int) {
         Ringer.stop()
-        CallBook.call.value?.msgId?.let { endInEngine(context, it) }
+        CallBook.call.value?.takeIf { !it.hasNotifiedBackend }?.msgId?.let { endInEngine(context, it) }
         finish(cause)
     }
 

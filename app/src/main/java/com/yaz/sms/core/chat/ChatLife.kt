@@ -4,6 +4,9 @@ import android.app.Activity
 import android.app.Application
 import android.app.NotificationManager
 import android.app.role.RoleManager
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Bundle
 import com.yaz.sms.core.call.CallBook
 import com.yaz.sms.data.settings.SettingsStore
@@ -69,6 +72,58 @@ object ChatLife : Application.ActivityLifecycleCallbacks, KoinComponent {
         if (app.getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS) != true) return
         scope.launch { if (chat.start()) chat.tend() }
     }
+
+    private var network: ConnectivityManager.NetworkCallback? = null
+
+    /**
+     * While the engine runs, the default network is watched and the engine told when it is unblocked, as
+     * Delta Chat's ApplicationContext registers its default network callback
+     * (registerDefaultNetworkCallback, onBlockedStatusChanged); RichChat.start calls it, RichChat.stop
+     * takes it away.
+     * https://github.com/deltachat/deltachat-android/blob/main/src/main/java/org/thoughtcrime/securesms/ApplicationContext.java#onAvailable
+     * not ported: getInstance (Koin)
+     * not ported: ensureInitialized (no Delta Chat accounts object)
+     * not ported: getDcAccounts (RichChat's engine)
+     * not ported: getRpc (RichChat's engine)
+     * not ported: getDcContext (one account)
+     * not ported: setDcContext (one account)
+     * not ported: getEventCenter (Engine.events)
+     * not ported: getNotificationCenter (MessageNotifier)
+     * not ported: onCreate (Application's own)
+     * not ported: onAvailable (it asks the engine only below API 29, minSdk is 31)
+     * not ported: onCapabilitiesChanged (it only logs)
+     * not ported: onLinkPropertiesChanged (it only logs)
+     * not ported: onReceive (the old CONNECTIVITY_ACTION receiver)
+     * not ported: registerReceiver (the old CONNECTIVITY_ACTION receiver)
+     * not ported: onTerminate (never called on a phone)
+     * not ported: getJobManager (no background jobs)
+     * not ported: initializeLogging (nothing is logged)
+     * not ported: initializeJobManager (no background jobs)
+     */
+    fun watchNetwork() {
+        synchronized(this) {
+            if (network != null || !::app.isInitialized) return
+            val connectivityManager = app.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+                    chat.onBlockedStatusChanged(network, blocked)
+                }
+            }
+            runCatching { connectivityManager.registerDefaultNetworkCallback(callback) }.onSuccess { network = callback }
+        }
+    }
+
+    /** The engine stopped: the network is no longer watched. */
+    fun unwatchNetwork() {
+        synchronized(this) {
+            val callback = network ?: return
+            network = null
+            runCatching { (app.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)?.unregisterNetworkCallback(callback) }
+        }
+    }
+
+    /** Whether an SMS screen is on show: toasts and the like are for then only. */
+    val isShown: Boolean get() = shown > 0
 
     /** Keeps the chat up [ms] longer off screen, for an invite's key exchange. */
     fun hold(ms: Long) {

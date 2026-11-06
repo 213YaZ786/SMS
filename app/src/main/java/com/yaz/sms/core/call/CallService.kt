@@ -44,6 +44,7 @@ class CallService : Service() {
 object CallNotices {
     const val ID = 4301
     private const val MISSED_ID = 4302
+    private const val FAILED_ID = 4303
     private const val RINGING = "encrypted-calls"
     private const val ONGOING = "encrypted-call-ongoing"
 
@@ -84,6 +85,26 @@ object CallNotices {
             .setSilent(true)
             .build()
         runCatching { context.getSystemService(NotificationManager::class.java).notify(MISSED_ID, notice) }
+    }
+
+    /**
+     * A call that could not start or be answered, with the engine's own words when it gave any, as Delta
+     * Chat's CallCoordinator.reportError says "Failed to initiate call: " + the exception's message. On the
+     * lock screen only the title shows.
+     * https://github.com/deltachat/deltachat-android/blob/main/src/main/java/org/thoughtcrime/securesms/calls/CallCoordinator.java#reportError
+     */
+    fun failed(context: Context, title: String, reason: String?) {
+        channels(context)
+        val notice = NotificationCompat.Builder(context, RINGING)
+            .setSmallIcon(R.drawable.ic_stat_sms)
+            .setContentTitle(title)
+            .apply { if (!reason.isNullOrBlank()) setContentText(reason.take(200)) }
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setAutoCancel(true)
+            .setSilent(true)
+            .build()
+        runCatching { context.getSystemService(NotificationManager::class.java).notify(FAILED_ID, notice) }
     }
 
     fun clear(context: Context) {

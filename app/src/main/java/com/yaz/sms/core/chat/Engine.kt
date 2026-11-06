@@ -6,13 +6,15 @@ import java.io.BufferedWriter
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,8 +50,21 @@ class Engine(private val context: Context, private val scope: CoroutineScope) {
     private val pending = ConcurrentHashMap<Int, CompletableDeferred<JsonElement>>()
     private val ids = AtomicInteger()
 
-    private val _events = MutableSharedFlow<ChatEvent>(extraBufferCapacity = 256)
-    val events: SharedFlow<ChatEvent> = _events.asSharedFlow()
+    /**
+     * The events kept for the one reader (RichChat), in order. Delta Chat's DcEventCenter.handleEvent passes
+     * every event on to its observers; here the log events nobody reads are not queued (LOG_KINDS) and the
+     * buffer is large, so the ones that matter (IncomingMsg, MsgDeleted, MsgDelivered, MsgFailed) are not
+     * pushed out. If a burst still overflows it, the oldest goes and [lost] counts it: the reader is told by an
+     * EventChannelOverflow event (the engine's own, jsonrpc types/events.rs EventChannelOverflow { n }) and
+     * catches up from the engine's database.
+     * https://github.com/deltachat/deltachat-android/blob/main/src/main/java/org/thoughtcrime/securesms/connect/DcEventCenter.java#handleEvent
+     * not ported: addObserver, addMultiAccountObserver, removeObserver, removeObservers, sendToObservers (the
+     * flow below is the one observer list), captureNextError, endCaptureNextError (no toast to hold back),
+     * handleLogging (nothing the engine says is logged here: it may carry addresses).
+     */
+    private val lost = AtomicLong()
+    private val queue = Channel<ChatEvent>(EVENT_BUFFER, BufferOverflow.DROP_OLDEST) { lost.incrementAndGet() }
+    val events: Flow<ChatEvent> = queue.receiveAsFlow()
 
     val running: Boolean get() = process?.isAlive == true
 
@@ -76,7 +91,14 @@ class Engine(private val context: Context, private val scope: CoroutineScope) {
                 if (event == null) { kotlinx.coroutines.delay(2000); continue }
                 val payload = event["event"] as? JsonObject ?: continue
                 val kind = payload["kind"]?.jsonPrimitive?.content ?: continue
-                _events.tryEmit(ChatEvent(event["contextId"]?.jsonPrimitive?.int ?: 0, kind, payload))
+                // Info, Imap*, Smtp*, Warning and the blob events are the engine's log: not queued.
+                if (kind in LOG_KINDS) continue
+                queue.trySend(ChatEvent(event["contextId"]?.jsonPrimitive?.int ?: 0, kind, payload))
+                // Something was pushed out of the queue: the reader is told, as the engine tells us when its own channel overflows.
+                val skipped = lost.getAndSet(0)
+                if (skipped > 0) {
+                    queue.trySend(ChatEvent(0, OVERFLOW, buildJsonObject { put("kind", OVERFLOW); put("n", skipped) }))
+                }
             }
         }
         return true
@@ -131,6 +153,17 @@ class Engine(private val context: Context, private val scope: CoroutineScope) {
         }
         pending.values.forEach { it.completeExceptionally(RpcException("engine stopped")) }
         pending.clear()
+    }
+
+    companion object {
+        /** Room for a long burst: a thread of messages arriving after days away. */
+        private const val EVENT_BUFFER = 2048
+        const val OVERFLOW = "EventChannelOverflow"
+        /** The engine's log events, jsonrpc types/events.rs: nothing here reads them. */
+        private val LOG_KINDS = setOf(
+            "Info", "Warning", "Error", "SmtpConnected", "ImapConnected", "SmtpMessageSent",
+            "ImapMessageDeleted", "ImapInboxIdle", "NewBlobFile", "DeletedBlobFile"
+        )
     }
 
     private fun element(value: Any?): JsonElement = when (value) {

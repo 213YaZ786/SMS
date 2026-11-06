@@ -44,9 +44,16 @@ class LiveLocator(private val context: Context, private val chat: RichChat, priv
         stop()
     }
 
-    /** The user starts sharing with [phones]; false when the permission, the engine or the chat refuses. */
+    /**
+     * The user starts sharing with [phones]; false when the permission, the engine or the chat refuses, or when
+     * every location provider is off (the fused one, GPS and network, as begin() reads them): then nothing is
+     * started in the engine either, and the screen says the location is off.
+     */
     suspend fun share(phones: List<String>, seconds: Int): Boolean {
-        if (!HereNow.allowed(context) || !chat.shareLocation(phones, seconds)) return false
+        if (!HereNow.allowed(context)) return false
+        val enabled = { provider: String -> runCatching { manager?.isProviderEnabled(provider) }.getOrNull() == true }
+        if (!enabled(LocationManager.FUSED_PROVIDER) && !enabled(LocationManager.GPS_PROVIDER) && !enabled(LocationManager.NETWORK_PROVIDER)) return false
+        if (!chat.shareLocation(phones, seconds)) return false
         begin()
         return true
     }

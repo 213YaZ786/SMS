@@ -1,9 +1,21 @@
 package com.yaz.sms.core.chat
 
+import android.app.Activity
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.provider.BlockedNumberContract
 import android.provider.OpenableColumns
 import android.telephony.SmsManager
+import android.text.TextUtils
+import android.util.Log
+import android.widget.Toast
+import androidx.core.content.ContextCompat
 import com.yaz.sms.core.common.writeTextAtomically
 import com.yaz.sms.core.dial.ContactLookup
 import com.yaz.sms.core.dial.T9
@@ -23,17 +35,21 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
@@ -41,6 +57,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 
 /**
  * A phone number known to have SMS too, and its encrypted chat; or a person
@@ -91,9 +108,17 @@ sealed class CallSignal {
  * thread); [gone] are those since removed from the chat or who left it, and [left] says the user
  * left it, which Delta Chat Android shows as a chat that can no longer send
  * (https://github.com/deltachat/deltachat-android, ConversationActivity.handleLeaveGroup).
+ * [complete] is false from the moment the chat is made until every member is added: a midway failure
+ * leaves a group the next send finishes, never a second chat.
  */
 @Serializable
-data class ChatGroup(val chatId: Int, val phones: List<String>, val gone: List<String> = emptyList(), val left: Boolean = false)
+data class ChatGroup(
+    val chatId: Int,
+    val phones: List<String>,
+    val gone: List<String> = emptyList(),
+    val left: Boolean = false,
+    val complete: Boolean = true
+)
 
 /** A message of Android's store that went over the rich chat: where it is, what the chat says of it. */
 @Serializable
@@ -238,6 +263,23 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private val _status = MutableStateFlow("Off")
     val status: StateFlow<String> = _status.asStateFlow()
 
+    private val _statusDetail = MutableStateFlow<String?>(null)
+    /** The engine's message for the last start that failed, null when the chat is up (for Settings). */
+    val statusDetail: StateFlow<String?> = _statusDetail.asStateFlow()
+
+    private val _connectivity = MutableStateFlow(0)
+    /** The engine's connectivity as last heard (DC_CONNECTIVITY_*, 1000 to 4000); 0 while the engine is off. */
+    val connectivity: StateFlow<Int> = _connectivity.asStateFlow()
+
+    /** Why a message failed, as the engine said it, by chat message id. */
+    private val failures = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+    /** One message in at a time: the events and the catch-up both bring them. */
+    private val incoming = Mutex()
+
+    /** The engine reaches its servers, or is at work on it (DC_CONNECTIVITY_WORKING and above). */
+    val serverConnected: Boolean get() = _connectivity.value >= DC_CONNECTIVITY_WORKING
+
     private val _outgoing = MutableStateFlow<Set<Int>>(emptySet())
     /** Messages handed to the engine and not yet sent or failed. */
     val outgoing: StateFlow<Set<Int>> = _outgoing.asStateFlow()
@@ -248,7 +290,7 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     val enabled: Boolean get() = settings.current.richChat
 
     init {
-        scope.launch { engine.events.collect { onEvent(it) } }
+        scope.launch { engine.events.collect { handleEvent(it) } }
         // A call coming in rings through Telecom; when it cannot (another call), it is missed and ended.
         scope.launch {
             calls.collect { signal ->
@@ -289,17 +331,79 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             // chatmail core src/peer_channels.rs, https://github.com/chatmail/core/blob/v2.66.0/src/peer_channels.rs
             engine.call("start_io", account)
             _ready.value = true
+            _statusDetail.value = null
+            // A network that comes back or is unblocked tells the running engine (ChatLife.watchNetwork).
+            ChatLife.watchNetwork()
             scope.launch {
                 trimRelays()
                 tend()
             }
             scope.launch { prune() }
-            _status.value = "Connected"
+            // What came in while no engine ran is read from its database, as after an overflow of its events.
+            scope.launch { _process_messages() }
+            // Where the connection stands now; ConnectivityChanged keeps it up to date.
+            _status.value = runCatching { getConnectivitySummary("Connected") }.getOrDefault("Connecting")
         }.onFailure { error ->
             _status.value = "Not connected"
+            // The engine's own words for the failure, for Settings.
+            _statusDetail.value = (error.message ?: error.javaClass.simpleName).take(300)
             // Debug builds keep the engine's last error in the app's own files, never in a log.
             if (com.yaz.sms.BuildConfig.DEBUG) runCatching { File(context.filesDir, "chat-error.txt").writeText(error.toString()) }
         }.isSuccess
+    }
+
+    /**
+     * The words for the engine's connectivity, as Delta Chat's getConnectivitySummary maps them: connected
+     * (4000 and above, [connectedString]), updating (3000, the engine is fetching or sending), connecting
+     * (2000), else not connected.
+     * https://github.com/deltachat/deltachat-android/blob/main/src/main/java/org/thoughtcrime/securesms/connect/DcHelper.java#getConnectivitySummary
+     */
+    private suspend fun getConnectivitySummary(connectedString: String): String {
+        // DcHelper's getContext(context).getConnectivity(), kept for those who watch it.
+        val connectivity = engine.call("get_connectivity", account).jsonPrimitive.int
+        _connectivity.value = connectivity
+        if (connectivity >= DC_CONNECTIVITY_CONNECTED) {
+            return connectedString
+        } else if (connectivity >= DC_CONNECTIVITY_WORKING) {
+            return "Updating"
+        } else if (connectivity >= DC_CONNECTIVITY_CONNECTING) {
+            return "Connecting"
+        } else {
+            return "Not connected"
+        }
+    }
+
+    private var debugOnBlockedStatusChangedCount = 0
+
+    /**
+     * A network unblocked under the running engine: it tries its connections again, as the network callback
+     * of Delta Chat's ApplicationContext does (getDcAccounts().maybeNetwork(), jsonrpc maybe_network). The
+     * callback itself is ChatLife's.
+     * https://github.com/deltachat/deltachat-android/blob/main/src/main/java/org/thoughtcrime/securesms/ApplicationContext.java#onBlockedStatusChanged
+     * not ported: getInstance (Koin)
+     * not ported: ensureInitialized (no Delta Chat accounts object)
+     * not ported: getDcAccounts (the engine)
+     * not ported: getRpc (the engine)
+     * not ported: getDcContext (one account)
+     * not ported: setDcContext (one account)
+     * not ported: getEventCenter (Engine.events)
+     * not ported: getNotificationCenter (MessageNotifier)
+     * not ported: onCreate (Application's own)
+     * not ported: onAvailable (ChatLife)
+     * not ported: onCapabilitiesChanged (it only logs)
+     * not ported: onLinkPropertiesChanged (it only logs)
+     * not ported: onReceive (the old CONNECTIVITY_ACTION receiver)
+     * not ported: registerReceiver (the old CONNECTIVITY_ACTION receiver)
+     * not ported: onTerminate (never called on a phone)
+     * not ported: getJobManager (no background jobs)
+     * not ported: initializeLogging (nothing is logged)
+     * not ported: initializeJobManager (no background jobs)
+     */
+    fun onBlockedStatusChanged(network: android.net.Network, blocked: Boolean) {
+        Log.i("DeltaChat", "++++++++++++++++++ NetworkCallback.onBlockedStatusChanged(" + blocked + ") #" + debugOnBlockedStatusChangedCount++)
+        if (!blocked && _ready.value && engine.running) {
+            scope.launch { runCatching { engine.call("maybe_network") } }
+        }
     }
 
     /** The relays the profile receives through, the one it sends through first. */
@@ -404,21 +508,23 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     }
 
     /** The relays' meeting points for calls (TURN), as the engine gives them, in WebRTC's JSON. */
+    /** Throws [RpcException] with the engine's own words when they cannot be read: no call goes on without them. */
     suspend fun iceServers(): String {
-        if (!start()) return "[]"
-        return runCatching { engine.call("ice_servers", account).jsonPrimitive.content }.getOrDefault("[]")
+        if (!start()) throw RpcException(statusDetail.value ?: "The chat is not connected.")
+        return engine.call("ice_servers", account).jsonPrimitive.content
     }
 
-    /** Calls [phone] with our [offer]; the call's id, or null when it cannot go. */
-    suspend fun placeCall(phone: String, offer: String, video: Boolean): Int? {
-        val link = linkFor(phone) ?: return null
-        if (!start()) return null
-        return runCatching { engine.call("place_outgoing_call", account, link.chatId, offer, video).jsonPrimitive.int }.getOrNull()
+    /** Calls [phone] with our [offer]; the call's id. Throws [RpcException] with the engine's own words when it cannot go. */
+    suspend fun placeCall(phone: String, offer: String, video: Boolean): Int {
+        val link = linkFor(phone) ?: throw RpcException("No encrypted chat with this number.")
+        if (!start()) throw RpcException(statusDetail.value ?: "The chat is not connected.")
+        return engine.call("place_outgoing_call", account, link.chatId, offer, video).jsonPrimitive.int
     }
 
-    suspend fun acceptCall(msgId: Int, answer: String): Boolean {
-        if (!start()) return false
-        return runCatching { engine.call("accept_incoming_call", account, msgId, answer) }.isSuccess
+    /** Sends our answer to the call [msgId]. Throws [RpcException] with the engine's own words when it cannot. */
+    suspend fun acceptCall(msgId: Int, answer: String) {
+        if (!start()) throw RpcException(statusDetail.value ?: "The chat is not connected.")
+        engine.call("accept_incoming_call", account, msgId, answer)
     }
 
     suspend fun endCall(msgId: Int) {
@@ -433,8 +539,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     }
 
     fun stop() {
+        ChatLife.unwatchNetwork()
         engine.stop()
         _ready.value = false
+        _connectivity.value = 0
     }
 
     /** The proven chat of [phone], or null: then SMS. */
@@ -488,16 +596,20 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private suspend fun chatOf(phones: List<String>): Int? {
         if (phones.size == 1) return linkFor(phones[0])?.chatId
         if (!groupReady(phones)) return null
-        _groups.value[groupKey(phones)]?.let { return it.chatId }
+        val kept = _groups.value[groupKey(phones)]
+        // A group whose members were not all added (a failure midway) is finished, never made a second time.
+        if (kept != null && kept.complete) return kept.chatId
         return runCatching {
             val named = runCatching { Telephony.Threads.getOrCreateThreadId(context, phones.toSet()) }.getOrNull()?.let { settings.current.groupNames[it] }
-            val chat = engine.call("create_group_chat", account, named ?: DEFAULT_GROUP_NAME, false).jsonPrimitive.int
+            // Saved before its members are added: a failure midway leaves this group to finish, not an orphan chat.
+            val chat = kept?.chatId ?: engine.call("create_group_chat", account, named ?: DEFAULT_GROUP_NAME, false).jsonPrimitive.int
+                .also { saveGroup(ChatGroup(it, phones, complete = false)) }
             phones.forEach { phone ->
                 val one = linkFor(phone)!!.chatId
                 val contact = engine.call("get_chat_contacts", account, one).jsonArray.map { it.jsonPrimitive.int }.first { it != SELF }
                 engine.call("add_contact_to_chat", account, chat, contact)
             }
-            saveGroup(ChatGroup(chat, phones))
+            saveGroup((_groups.value[groupKey(phones)] ?: ChatGroup(chat, phones)).copy(complete = true))
             chat
         }.getOrNull()
     }
@@ -548,9 +660,10 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         val nonce = ByteArray(Hello.NONCE_BYTES).also(random::nextBytes)
         val link = runCatching { engine.call("get_chat_securejoin_qr_code", account, null).jsonPrimitive.content }.getOrNull() ?: return
         val hello = Hello.fromLink(link, nonce) ?: return
-        val sent = runCatching {
-            context.getSystemService(SmsManager::class.java).sendDataMessage(phone, null, PORT, hello.encode(), null, null)
-        }.isSuccess
+        // Saved, to be asked again only a month later, once the radio says it left (sentIntent, RESULT_OK).
+        val sent = SendStatusReceiver.sent(context, INVITE_SENT_WAIT_MS) { sentIntent ->
+            context.getSystemService(SmsManager::class.java).sendDataMessage(phone, null, PORT, hello.encode(), sentIntent, null)
+        }
         if (sent) save(phone) { (it ?: ChatLink(phone)).copy(myNonce = hex(nonce), askedAt = System.currentTimeMillis()) }
     }
 
@@ -566,10 +679,12 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         val chat = runCatching { engine.call("secure_join", account, hello.link()).jsonPrimitive.int }.getOrNull() ?: return
         // The proof waits until the keys are exchanged: relays take only encrypted mail.
         proofs[chat] = hello.nonce
-        if (known?.proven == true && known.address != hello.address) {
-            // An SMS sender can be faked: a proven number never moves on an
-            // invite alone. Our own nonce goes to the number; whoever really
-            // holds it proves it, and only then does the chat change.
+        if (known?.proven == true) {
+            // An SMS sender can be faked: a proven number is not touched by an
+            // invite alone, whether its address is the known one or another (an
+            // equal address can be sent by anyone too, and the join may have
+            // made a chat of its own). Our own nonce goes to the number; whoever
+            // really holds it proves it, and only then does the chat change.
             answer(from, known)
             return
         }
@@ -578,11 +693,80 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         if (known == null || known.myNonce.isEmpty()) answer(from, known)
     }
 
+    /**
+     * One event to its observer, inside try/catch: under some circumstances a handler fails, and one that
+     * does must not stop the next. Delta Chat's sendToObservers wraps each observer.handleEvent(event) so:
+     * https://github.com/deltachat/deltachat-android/blob/main/src/main/java/org/thoughtcrime/securesms/connect/DcEventCenter.java#handleEvent
+     * Only the event's kind and the error's class are logged (a message may carry addresses).
+     * not ported: sendToObservers (its observer lists, only its try/catch is taken, below)
+     * not ported: addObserver (one observer, the flow)
+     * not ported: addMultiAccountObserver (one account)
+     * not ported: removeObserver (one observer)
+     * not ported: removeObservers (one observer)
+     * not ported: sendToMultiAccountObservers (one account)
+     * not ported: sendToCurrentAccountObservers (one account)
+     * not ported: runOnMain (the observer runs on the scope's thread)
+     * not ported: captureNextError (no toast to hold back)
+     * not ported: endCaptureNextError (no toast to hold back)
+     * not ported: handleLogging (nothing the engine says is logged, it may carry addresses)
+     * (handleError is ported below, for ErrorSelfNotInGroup)
+     */
+    private suspend fun handleEvent(event: ChatEvent) {
+        try {
+            onEvent(event)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Error calling observer.handleEvent() " + event.kind + " " + e.javaClass.simpleName)
+        }
+    }
+
+    /**
+     * An error the user is told of, only while SMS is on screen (Delta Chat shows the toast only when its
+     * ForegroundDetector says the app is in the foreground). The engine's own text is never shown.
+     * https://github.com/deltachat/deltachat-android/blob/main/src/main/java/org/thoughtcrime/securesms/connect/DcEventCenter.java#handleError
+     */
+    private fun handleError(event: String, string: String) {
+        var toastString: String? = null
+        if (event == "ErrorSelfNotInGroup") {
+            toastString = string
+        }
+        if (toastString != null && ChatLife.isShown) {
+            val shown: String = toastString
+            Handler(Looper.getMainLooper()).post { Toast.makeText(context, shown, Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    /**
+     * The old messages processed before the events, and again whenever events were lost: the chatmail client
+     * (Client.run_until) starts the I/O, then processes the messages that came while it was away, then loops
+     * over the events. Each fresh message of the engine (get_fresh_msgs, the replacement of the deprecated
+     * get_next_msgs) goes to _on_new_msg, here the handler of IncomingMsg, which skips our own messages as the
+     * client skips SpecialContactId.SELF and DEVICE, and the ones already kept.
+     * https://github.com/chatmail/core/blob/v2.66.0/deltachat-rpc-client/src/deltachat_rpc_client/client.py#_process_messages
+     * not ported: _handle_info_msg (a bot's commands)
+     * not ported: get_snapshot (the handler reads the message)
+     * not ported: mark_seen (the open conversation marks them seen, markSeen)
+     */
+    private suspend fun _process_messages() {
+        val _should_process_messages = enabled && _ready.value
+        if (_should_process_messages) {
+            for (message in engine.call("get_fresh_msgs", account).jsonArray) {
+                val snapshot = ChatEvent(account, "IncomingMsg", buildJsonObject { put("msgId", message.jsonPrimitive.int) })
+                _on_new_msg(snapshot)
+            }
+        }
+    }
+
+    private suspend fun _on_new_msg(snapshot: ChatEvent) = handleEvent(snapshot)
+
     /** Whether the invite of [from] is acted on: InviteGate, with Android's contacts and the messages sent. */
     private fun invitedBy(from: String, known: ChatLink?): Boolean {
         return InviteGate.accepted(
             asked = InviteGate.asked(known),
-            contact = { ContactLookup.isContact(context, from) }, sent = { InviteGate.sentTo(context, from) }
+            contact = { ContactLookup.isContact(context, from) }, sent = { InviteGate.sentTo(context, from) },
+            // BlockedNumberContract: this app may read the blocked numbers as the default SMS app.
+            blocked = { runCatching { BlockedNumberContract.isBlocked(context, from) }.getOrDefault(false) }
         )
     }
 
@@ -682,7 +866,22 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                     // Sent, its media is in Android's store: the engine's copy goes.
                     if (ref.mms && event.kind == "MsgDelivered") runCatching { engine.call("get_message", account, msgId).jsonObject["file"]?.jsonPrimitive?.contentOrNull?.let { f -> File(f).delete() } }
                 }
+                // Why it failed, in the engine's words: the message's error field (jsonrpc Message.error).
+                if (event.kind == "MsgFailed") {
+                    runCatching { engine.call("get_message", account, msgId).jsonObject["error"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+                        ?.takeIf { it.isNotBlank() }?.let { failures[msgId] = it.take(300) }
+                }
             }
+            // DC_EVENT_CONNECTIVITY_CHANGED: the words in Settings follow (DcHelper.getConnectivitySummary).
+            "ConnectivityChanged" -> if (_ready.value) _status.value = getConnectivitySummary("Connected")
+            // DC_EVENT_ERROR_SELF_NOT_IN_GROUP: DcEventCenter.handleError tells the user, who is then no longer in
+            // the group (the groups are read again, so the conversation stops sending).
+            "ErrorSelfNotInGroup" -> {
+                handleError(event.kind, "You are not a member of this group any more.")
+                _groups.value.values.forEach { syncGroup(it) }
+            }
+            // Events were pushed out of a queue: the fresh messages are read again from the engine's database.
+            Engine.OVERFLOW -> _process_messages()
             "MsgRead" -> if (msgId != null) _refs.value[msgId]?.let { saveRef(msgId, it.copy(seen = true)) }
             // Edited or pinned on the other side, or a vanishing message gone.
             "MsgsChanged" -> if (msgId != null) _refs.value[msgId]?.let { refresh(msgId, it) }
@@ -737,24 +936,43 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
      * A message in: a proof binds a number; anything else is kept in
      * Android's store with the number's conversation and shown as usual.
      */
-    private suspend fun onIncoming(msgId: Int) {
-        val message = runCatching { engine.call("get_message", account, msgId).jsonObject }.getOrNull() ?: return
+    private suspend fun onIncoming(msgId: Int) { incoming.withLock {
+        // The same message may come by its event and by the catch-up: once kept, it is not kept again.
+        if (_refs.value.containsKey(msgId)) return@withLock
+        val message = runCatching { engine.call("get_message", account, msgId).jsonObject }.getOrNull() ?: return@withLock
+        // Our own message (sent here or on another device of ours) is not an incoming one.
+        if (message["fromId"]?.jsonPrimitive?.intOrNull == SELF) return@withLock
+        // Nothing of a blocked number is answered, kept or shown, as InviteGate refuses its invite; a person
+        // met without a number has an address, which cannot be blocked.
+        val isBlocked: suspend (String) -> Boolean = { phone ->
+            '@' !in phone && withContext(Dispatchers.IO) { runCatching { BlockedNumberContract.isBlocked(context, phone) }.getOrDefault(false) }
+        }
         val text = message["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        val chat = message["chatId"]?.jsonPrimitive?.int ?: return
+        val chat = message["chatId"]?.jsonPrimitive?.int ?: return@withLock
         val proof = Hello.proofOf(text)
         if (proof != null) {
             // Whoever proves our nonce holds the number we sent it to.
             val from = (message["sender"] as? JsonObject)?.get("address")?.jsonPrimitive?.contentOrNull.orEmpty()
-            val match = _links.value.values.firstOrNull { it.myNonce == hex(proof) } ?: return
+            val match = _links.value.values.firstOrNull { it.myNonce == hex(proof) } ?: return@withLock
+            // A blocked number is heard no more, even to prove (Signal's RecipientUtil: a blocked recipient is never accepted).
+            if (isBlocked(match.phone)) {
+                runCatching { engine.call("delete_messages", account, listOf(msgId)) }
+                return@withLock
+            }
             save(match.phone) { it!!.copy(address = from, chatId = chat, proven = true, myNonce = "") }
             runCatching { engine.call("delete_messages", account, listOf(msgId)) }
-            return
+            return@withLock
         }
-        if (message["isInfo"]?.jsonPrimitive?.booleanOrNull == true) return
+        if (message["isInfo"]?.jsonPrimitive?.booleanOrNull == true) return@withLock
         val file = message["file"]?.jsonPrimitive?.contentOrNull
         val mime = message["fileMime"]?.jsonPrimitive?.contentOrNull ?: "application/octet-stream"
         // A number bound to the chat wins over the same person kept by their address.
         val link = _links.value.values.filter { it.proven && it.chatId == chat }.minByOrNull { if ('@' in it.phone) 1 else 0 }
+        // Nothing of a blocked number is kept or shown: no message, no notification (Signal's RecipientUtil).
+        if (link != null && isBlocked(link.phone)) {
+            runCatching { engine.call("delete_messages", account, listOf(msgId)) }
+            return@withLock
+        }
         val stored = (if (link != null) withContext(Dispatchers.IO) {
             if (file != null) {
                 val data = File(file).takeIf { it.canRead() } ?: return@withContext null
@@ -764,20 +982,24 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
             }
         } else {
             // A group: kept as a group message from its sender, to the others.
-            val group = _groups.value.values.firstOrNull { it.chatId == chat } ?: adopt(chat) ?: return
+            val group = _groups.value.values.firstOrNull { it.chatId == chat } ?: adopt(chat) ?: return@withLock
             val from = (message["sender"] as? JsonObject)?.get("address")?.jsonPrimitive?.contentOrNull
-            val sender = _links.value.values.firstOrNull { it.proven && it.address == from }?.phone ?: return
+            val sender = _links.value.values.firstOrNull { it.proven && it.address == from }?.phone ?: return@withLock
+            if (isBlocked(sender)) {
+                runCatching { engine.call("delete_messages", account, listOf(msgId)) }
+                return@withLock
+            }
             val others = group.phones.filter { key(it) != key(sender) }
             withContext(Dispatchers.IO) {
                 val data = file?.let { File(it).takeIf { f -> f.canRead() } }
                 MmsStore.saveReceivedParts(context, sender, text, if (data != null) mime else null, data, others)?.let { RichRef(true, it.second, chat = chat) to it.first }
             }
-        }) ?: return
+        }) ?: return@withLock
         saveRef(msgId, stored.first)
         // Kept in Android's store now, the media need not stay twice on the phone.
         if (file != null) runCatching { File(file).delete() }
         MessageNotifier(context).show(stored.second)
-    }
+    } }
 
     private fun mark(ref: RichRef, failed: Boolean) {
         if (ref.mms) {
@@ -828,6 +1050,9 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         val chatId = chatOf(phones) ?: return false
         val phone = phones[0]
         if (phones.size == 1) applyDefaultTimer(chatId)
+        // Each attachment alone: one that cannot be copied in or sent is skipped and the others still go, so a part
+        // that went is never lost with the rest (the caller sends nothing again by SMS). True only when all went.
+        var wentAll = true
         return runCatching {
             if (attachments.isEmpty()) {
                 val id = engine.call("send_msg", account, chatId, mapOf("text" to (wire ?: text), "quotedText" to quote)).jsonPrimitive.int
@@ -838,30 +1063,40 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
                     MmsStore.saveSendingParts(context, phones, text, null, null)?.let { saveRef(id, withExpiry(id, RichRef(true, it, mine = true, chat = chatId))) }
                 }
             } else {
-                attachments.forEachIndexed { i, a ->
-                    val copy = copyIn(a) ?: return@forEachIndexed
-                    val viewtype = when {
-                        ContentType.isImageType(a.contentType) -> "Image"
-                        ContentType.isVideoType(a.contentType) -> "Video"
-                        a.contentType.contains("vcard") -> "Vcard"
-                        // Recorded in the composer: a voice message; any other sound stays audio.
-                        ContentType.isAudioType(a.contentType) -> if (copy.name.startsWith("voice-")) "Voice" else "Audio"
-                        else -> "File"
+                // The text and the quote ride on the first attachment that goes.
+                var first = true
+                attachments.forEach { a ->
+                    val copy = copyIn(a)
+                    if (copy == null) {
+                        wentAll = false
+                        return@forEach
                     }
-                    val caption = if (i == 0) text else ""
-                    val sentCaption = if (i == 0) (wire ?: text) else ""
-                    val id = engine.call(
-                        "send_msg", account, chatId,
-                        mapOf("text" to sentCaption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (i == 0) quote else null)
-                    ).jsonPrimitive.int
-                    _outgoing.update { it + id }
-                    MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy)?.let { saveRef(id, withExpiry(id, RichRef(true, it, mine = true, chat = chatId))) }
+                    val went = runCatching {
+                        val viewtype = when {
+                            ContentType.isImageType(a.contentType) -> "Image"
+                            ContentType.isVideoType(a.contentType) -> "Video"
+                            a.contentType.contains("vcard") -> "Vcard"
+                            // Recorded in the composer: a voice message; any other sound stays audio.
+                            ContentType.isAudioType(a.contentType) -> if (copy.name.startsWith("voice-")) "Voice" else "Audio"
+                            else -> "File"
+                        }
+                        val caption = if (first) text else ""
+                        val sentCaption = if (first) (wire ?: text) else ""
+                        val id = engine.call(
+                            "send_msg", account, chatId,
+                            mapOf("text" to sentCaption.ifBlank { null }, "file" to copy.path, "viewtype" to viewtype, "quotedText" to if (first) quote else null)
+                        ).jsonPrimitive.int
+                        first = false
+                        _outgoing.update { it + id }
+                        MmsStore.saveSendingParts(context, phones, caption, a.contentType, copy)?.let { saveRef(id, withExpiry(id, RichRef(true, it, mine = true, chat = chatId))) }
+                    }.isSuccess
+                    if (!went) wentAll = false
                     // The engine keeps its own copy.
                     copy.parentFile?.deleteRecursively()
                 }
             }
             _changes.value++
-            true
+            wentAll
         }.getOrDefault(false)
     }
 
@@ -990,12 +1225,14 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
         }
     }
 
-    suspend fun react(messageId: Long, emoji: String?) {
-        if (!start()) return
-        runCatching { engine.call("send_reaction", account, messageId.toInt(), listOfNotNull(emoji)) }
+    /** The reaction sent (null takes it back); false when the engine refused it or does not run, for the screen to say so. */
+    suspend fun react(messageId: Long, emoji: String?): Boolean {
+        if (!start()) return false
+        val done = runCatching { engine.call("send_reaction", account, messageId.toInt(), listOfNotNull(emoji)) }.isSuccess
         // The user's own reaction counts at once, a vote included.
         readReactions(messageId.toInt())
         _changes.value++
+        return done
     }
 
     /** A poll shown: its votes read again from the engine, which keeps them whatever happened here. */
@@ -1160,13 +1397,28 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     }
 
     /** Pinned for both sides, to find it again at the top of the conversation. */
-    suspend fun pin(msgId: Int, on: Boolean) {
-        val ref = _refs.value[msgId] ?: return
-        if (!start()) return
-        if (runCatching { engine.call("set_pinned_message_state", account, msgId, on) }.isSuccess) {
+    suspend fun pin(msgId: Int, on: Boolean): Boolean {
+        val ref = _refs.value[msgId] ?: return false
+        if (!start()) return false
+        val done = runCatching { engine.call("set_pinned_message_state", account, msgId, on) }.isSuccess
+        if (done) {
             saveRef(msgId, ref.copy(pinned = on))
             _changes.value++
         }
+        return done
+    }
+
+    /**
+     * Why a message failed, in the engine's own words, or null when it did not fail or the engine gives none.
+     * Delta Chat's DcMsg.isFailed: failed when getState() is DC_STATE_OUT_FAILED or getError() is not empty;
+     * the words are getError() (jsonrpc Message.error). Kept when the MsgFailed event came, asked otherwise.
+     * https://github.com/deltachat/deltachat-android/blob/main/src/main/java/com/b44t/messenger/DcMsg.java#isFailed
+     */
+    suspend fun failureOf(msgId: Int): String? {
+        val getError = failures[msgId] ?: runCatching { engine.call("get_message", account, msgId).jsonObject["error"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+        val getState = if (TextUtils.isEmpty(getError)) runCatching { engine.call("get_message", account, msgId).jsonObject["state"]?.jsonPrimitive?.intOrNull }.getOrNull() else null
+        val isFailed = getState == DC_STATE_OUT_FAILED || !TextUtils.isEmpty(getError)
+        return if (isFailed) getError?.take(300) else null
     }
 
     /** How long messages with [phones] last before they vanish, in seconds; 0 for always. */
@@ -1292,6 +1544,15 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 
     companion object {
+        private const val TAG = "RichChat"
+        /** The engine's connectivity levels (deltachat.h DC_CONNECTIVITY_*). */
+        private const val DC_CONNECTIVITY_CONNECTING = 2000
+        private const val DC_CONNECTIVITY_WORKING = 3000
+        private const val DC_CONNECTIVITY_CONNECTED = 4000
+        /** The engine's message states, as Delta Chat's DcMsg names them; jsonrpc Message.state. */
+        private const val DC_STATE_OUT_FAILED = 24
+        /** How long the radio has to say an invite SMS left. */
+        private const val INVITE_SENT_WAIT_MS = 2 * 60 * 1000L
         /** The port the data SMS carrying an invite go to. */
         const val PORT: Short = 18471
         /** What a group is called in the chat until someone names it. */
@@ -1313,8 +1574,69 @@ class RichChat(private val context: Context, private val scope: CoroutineScope, 
 
 private fun kotlinx.serialization.json.JsonPrimitive.boolean(): Boolean = booleanOrNull ?: false
 
+/**
+ * The radio's report on a data SMS, read as AOSP Messaging's SendStatusReceiver.onReceive reads a sent intent: the
+ * action, then getResultCode(); Activity.RESULT_OK is out, anything else failed.
+ * https://github.com/LineageOS/android_packages_apps_Messaging/blob/lineage-23.0/src/com/android/messaging/receiver/SendStatusReceiver.java#onReceive
+ * not ported: setResult (one part, no tally)
+ * not ported: processMmsSent (the invite is a data SMS)
+ * not ported: processMessageDownloaded (the invite is a data SMS)
+ * not ported: getSmsMessageFromDeliveryReport (no delivery report asked)
+ * not ported: deliveryReportReceived (no delivery report asked)
+ */
+private class SendStatusReceiver(private val MESSAGE_SENT_ACTION: String, private val done: (Int) -> Unit) : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        // This will be called on the main thread (so it should exit quickly)
+        val action = intent.action
+        val resultCode = getResultCode()
+        if (MESSAGE_SENT_ACTION == action) {
+            done(resultCode)
+        }
+    }
+
+    companion object {
+        /**
+         * AOSP Messaging's SmsSender.sendMessage: the message sent with a sent intent, then a wait of
+         * smsSendTimeoutInMillis for the intent to come back, then the result. One part here, so the pending
+         * result is the one report; false when it is not RESULT_OK, when [send] fails, or when none came in time.
+         * https://github.com/LineageOS/android_packages_apps_Messaging/blob/lineage-23.0/src/com/android/messaging/sms/SmsSender.java#sendMessage
+         * not ported: setResult (one part, no tally)
+         * not ported: getSendErrorToastMessage (the invite is silent)
+         * not ported: sendInternal (SmsManager's sendDataMessage, called by [send])
+         * not ported: getSendStatusIntent (built here, explicit and immutable)
+         * not ported: sendMessage (ported as sent, without the email gateway, the dividing of the text and the number cleaning: a data SMS)
+         * not ported: hasPending (one part)
+         * not ported: setPartResult (one part)
+         * not ported: highestFailureLevel (one part)
+         * not ported: failureLevel (one part)
+         * not ported: toString (nothing is logged)
+         */
+        suspend fun sent(context: Context, smsSendTimeoutInMillis: Long, send: (PendingIntent) -> Unit): Boolean {
+            val MESSAGE_SENT_ACTION = "${context.packageName}.MESSAGE_SENT.${System.nanoTime()}"
+            val pendingResult = CompletableDeferred<Boolean>()
+            val receiver = SendStatusReceiver(MESSAGE_SENT_ACTION) { resultCode -> pendingResult.complete(resultCode == Activity.RESULT_OK) }
+            ContextCompat.registerReceiver(context, receiver, IntentFilter(MESSAGE_SENT_ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
+            try {
+                val intent = Intent(MESSAGE_SENT_ACTION).setPackage(context.packageName)
+                runCatching { send(PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT)) }
+                    .onFailure { pendingResult.complete(false) }
+                return withTimeoutOrNull(smsSendTimeoutInMillis) { pendingResult.await() } == true
+            } finally {
+                runCatching { context.unregisterReceiver(receiver) }
+            }
+        }
+    }
+}
+
 /** What the engine says of a chat's encryption, without its random addresses. */
-data class EncryptionInfo(val encrypted: Boolean, val mine: String?, val theirs: String?, val relays: List<String>) {
+data class EncryptionInfo(
+    val encrypted: Boolean,
+    val mine: String?,
+    val theirs: String?,
+    val relays: List<String>,
+    /** The engine's own text (get_contact_encryption_info), as it says it. */
+    val text: String = ""
+) {
     companion object {
         fun parse(text: String): EncryptionInfo {
             val lines = text.lines().map { it.trim() }
@@ -1334,7 +1656,8 @@ data class EncryptionInfo(val encrypted: Boolean, val mine: String?, val theirs:
                 encrypted = text.contains("end-to-end encrypted", ignoreCase = true),
                 mine = fingerprints.firstOrNull { it.first }?.second,
                 theirs = fingerprints.firstOrNull { !it.first }?.second,
-                relays = relays
+                relays = relays,
+                text = text
             )
         }
     }

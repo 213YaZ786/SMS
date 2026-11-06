@@ -29,7 +29,9 @@ data class ChatCall(
     val since: Long = 0,
     val muted: Boolean = false,
     val cameraOn: Boolean = true,
-    val speaker: Boolean = false
+    val speaker: Boolean = false,
+    /** The engine already knows the call ended (the other side ended it): it is not told again. */
+    val hasNotifiedBackend: Boolean = false
 )
 
 /**
@@ -98,6 +100,8 @@ object CallBook {
         val telecom = context.getSystemService(TelecomManager::class.java) ?: return false
         if (!telecom.isIncomingCallPermitted(handle(context))) return false
         set(ChatCall(phone, video, incoming = true, phase = Phase.RINGING, msgId = msgId, offer = offer))
+        // The line listens from the first ring: an end while ringing stops the ringer and posts the missed call.
+        CallLine.watch(context)
         val extras = Bundle().apply {
             putParcelable(TelecomManager.EXTRA_INCOMING_CALL_ADDRESS, Uri.fromParts(PhoneAccount.SCHEME_TEL, phone, null))
             putInt(TelecomManager.EXTRA_INCOMING_VIDEO_STATE, if (video) VideoProfile.STATE_BIDIRECTIONAL else VideoProfile.STATE_AUDIO_ONLY)
