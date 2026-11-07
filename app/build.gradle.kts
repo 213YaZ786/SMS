@@ -19,8 +19,8 @@ android {
         applicationId = "com.yaz.sms"
         minSdk = 31
         targetSdk = 37
-        versionCode = 72
-        versionName = "0.16.20"
+        versionCode = 73
+        versionName = "0.16.21"
     }
 
     signingConfigs {
