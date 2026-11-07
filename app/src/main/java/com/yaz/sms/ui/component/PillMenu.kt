@@ -1,6 +1,8 @@
 package com.yaz.sms.ui.component
 
 import com.yaz.sms.ui.glass.LocalGlass
+import com.yaz.sms.ui.glass.LocalGlassBackdrop
+import com.yaz.sms.ui.glass.glassFloating
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -38,6 +40,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -179,6 +182,7 @@ fun PillMenu(state: PillMenuState, items: List<PillItem>, @Suppress("UNUSED_PARA
                 )
             }
             val glass = LocalGlass.current
+            val backdrop = LocalGlassBackdrop.current
             // A pane on the screen: Material 3's extra large corner, 28 dp (ShapeDefaults,
             // https://developer.android.com/reference/kotlin/androidx/compose/material3/ShapeDefaults).
             val shape = androidx.compose.material3.ShapeDefaults.ExtraLarge
@@ -199,7 +203,15 @@ fun PillMenu(state: PillMenuState, items: List<PillItem>, @Suppress("UNUSED_PARA
                                 transformOrigin = TransformOrigin(spot.originX, spot.originY)
                             }
                             .shadow(10.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.2f), spotColor = Color.Black.copy(alpha = 0.2f))
-                            .then(if (glass != null) Modifier.dialogGlass(shape, glass, blur) else Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh, shape))
+                            // Floating glass over the screen's backdrop, as Kyant0's DialogContent draws its dialog with
+                            // drawBackdrop over the screen's backdrop (like the lifted item above, recorded in the main window):
+                            // https://github.com/Kyant0/AndroidLiquidGlass/blob/kmp/app/src/commonMain/kotlin/com/kyant/backdrop/catalog/destinations/DialogContent.kt#DialogContent
+                            // Quiet glass only; blur off stays opaque, for legibility.
+                            .then(
+                                if (glass != null && glass.quiet && blur && backdrop != null) Modifier.clip(shape).glassFloating(backdrop, shape, glass, tint = glass.floatTint)
+                                else if (glass != null) Modifier.dialogGlass(shape, glass, blur)
+                                else Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh, shape)
+                            )
                             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
                     ) {
                         Column(Modifier.verticalScroll(rememberScrollState()).padding(vertical = 6.dp)) {
