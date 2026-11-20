@@ -113,7 +113,7 @@ dependencies {
     implementation("com.airbnb.android:lottie-compose:6.7.1")
     // Numbers shown as the country writes them, offline: Google's libphonenumber (Apache-2.0),
     // with its own data, no network.
-    implementation("com.googlecode.libphonenumber:libphonenumber:9.0.42")
+    implementation("com.googlecode.libphonenumber:libphonenumber:9.0.43")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.process)
@@ -148,7 +148,7 @@ dependencies {
     // Guava comes in transitively at 33.3.1-android (GHSA-xxph-c9ww-hj94): forced to the fixed release
     // with a dependency constraint (https://docs.gradle.org/current/userguide/dependency_constraints.html).
     constraints {
-        implementation("com.google.guava:guava:33.7.2-android") {
+        implementation("com.google.guava:guava:33.8.0-android") {
             because("GHSA-xxph-c9ww-hj94")
         }
     }
