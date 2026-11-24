@@ -171,14 +171,14 @@ dependencies {
 // deltachat-rpc-server (MPL-2.0, github.com/chatmail/core), fetched at
 // its pinned version and checked against its SHA-256 before it is packed
 // as a native library, so the repository holds no binary.
-// Built by this repository's .github/workflows/engine.yml from core 2.66.0's sources with the dependencies
+// Built by this repository's .github/workflows/engine.yml from core 2.69.0's sources with the dependencies
 // whose known flaws have a compatible fix moved to it (event-listener, quinn-proto, OpenSSL 3.6.3): its release
-// engine-2.66.0-p1, the patched Cargo.lock beside the binaries.
-val chatmailVersion = "2.66.0"
-val chatmailRelease = "https://github.com/213YaZ786/SMS/releases/download/engine-2.66.0-p1"
+// engine-2.69.0-p1, the patched Cargo.lock beside the binaries.
+val chatmailVersion = "2.69.0"
+val chatmailRelease = "https://github.com/213YaZ786/SMS/releases/download/engine-2.69.0-p1"
 val chatmailBinaries = mapOf(
-    "arm64-v8a" to ("deltachat-rpc-server-arm64-v8a-android" to "bd1db0d0a2883b34136def478ecc85262c992fa0f03aca736968592c4da06f46"),
-    "armeabi-v7a" to ("deltachat-rpc-server-armeabi-v7a-android" to "d265b13f4390dc49fb392324cd7d4e1e08c92b19095f5d50ea308bd072c39942")
+    "arm64-v8a" to ("deltachat-rpc-server-arm64-v8a-android" to "5f2068d27ba95f30b8955e5d6a23c79d1865edc61913e366ff3288595bef9a4f"),
+    "armeabi-v7a" to ("deltachat-rpc-server-armeabi-v7a-android" to "c1ad83cbdd927df7061b54d5098bf4d748e6f24c51676afa0f04c095299f5880")
 )
 val chatmailDir = layout.buildDirectory.dir("chatmail/jniLibs")
 val fetchChatmail by tasks.registering {
