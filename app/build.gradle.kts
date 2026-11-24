@@ -113,7 +113,7 @@ dependencies {
     implementation("com.airbnb.android:lottie-compose:6.7.1")
     // Numbers shown as the country writes them, offline: Google's libphonenumber (Apache-2.0),
     // with its own data, no network.
-    implementation("com.googlecode.libphonenumber:libphonenumber:9.0.42")
+    implementation("com.googlecode.libphonenumber:libphonenumber:9.0.43")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.process)
@@ -129,6 +129,9 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.graphics.shapes)
     implementation(libs.androidx.navigation.compose)
+    // The links kit's LinkSheet harmonizes its caution colour with the theme's primary: MaterialKolor, MIT.
+    // https://raw.githubusercontent.com/jordond/MaterialKolor/main/README.md#Setup
+    implementation(libs.materialkolor.utilities)
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.koin.android)
@@ -145,11 +148,12 @@ dependencies {
     // https://github.com/androidx/androidx/tree/androidx-main/profileinstaller/profileinstaller).
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 
-    // Guava comes in transitively at 33.3.1-android (GHSA-xxph-c9ww-hj94): forced to the fixed release
+    // Guava comes in transitively at 33.3.1-android (GHSA-xxph-c9ww-hj94) and up to 33.7.2 has the hash flooding
+    // of HashBiMap and LinkedHashMultimap (GHSA-v5x9-67m3-7m56): forced to the fixed release
     // with a dependency constraint (https://docs.gradle.org/current/userguide/dependency_constraints.html).
     constraints {
-        implementation("com.google.guava:guava:33.7.2-android") {
-            because("GHSA-xxph-c9ww-hj94")
+        implementation("com.google.guava:guava:33.8.0-android") {
+            because("GHSA-xxph-c9ww-hj94, GHSA-v5x9-67m3-7m56")
         }
     }
 
