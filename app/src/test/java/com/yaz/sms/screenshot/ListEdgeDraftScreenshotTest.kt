@@ -15,16 +15,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.RoborazziOptions
@@ -32,9 +32,7 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import com.yaz.sms.core.sms.SwipeAction
 import com.yaz.sms.data.sms.Conversation
 import com.yaz.sms.feature.conversations.ConversationLine
-import com.yaz.sms.feature.conversations.Heading
 import com.yaz.sms.feature.conversations.LINE_WIDTH
-import com.yaz.sms.feature.conversations.ServicesStack
 import com.yaz.sms.ui.glass.LocalGlass
 import com.yaz.sms.ui.glass.glassGround
 import com.yaz.sms.ui.glass.rememberGlassLook
@@ -47,20 +45,23 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * The "People" heading (requests.md point 3), drawn with the app's own composables: HomeParts.kt's Heading (bold,
- * centred, titleMedium, the style of the "Services" card's title) between the Services stack and the people's cards.
+ * Requests.md point 14: the unread count on the message's first baseline. The cards are the app's own ConversationLine:
+ * the count (UnreadBadge, a Text with Modifier.alignByBaseline()) and the message block (FirstLine, which hands its
+ * first baseline up) are children of one Row aligned by their first baseline, whatever the font size, the script or a
+ * subject above the text. Pictures: list_edge_draft (right to left, 99+ asked as 120, a very long name, a subject)
+ * and list_edge_font200_draft (the same cards at the 200 % font). The case of a picture lead is not drawn: its part is
+ * read from a content Uri that Robolectric has none of.
  *
  * Ports:
- * https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Typography.kt#Typography
- * (the scale's titleMedium and titleSmall as MaterialTheme.typography gives them; Bold is a FontWeight on top, as
- * ServicesStack's own title does when something is unread)
- * not ported: Typography's copy, fromToken, the other styles of the scale (displayLarge to labelSmall and the emphasized
- * set: no other style is drawn here), the deprecated constructor
+ * https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/foundation/foundation-layout/src/commonMain/kotlin/androidx/compose/foundation/layout/Row.kt#alignByBaseline
+ * (used as is, in app/src/main: ConversationsScreen.kt's ConversationLine; this test draws it)
+ * not ported: RowScope.alignBy(alignmentLine) and alignBy(alignmentLineBlock) (no other line is aligned),
+ * RowScope.weight and align (called, not redeclared), Row itself (the library's)
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(application = android.app.Application::class, sdk = [36])
-class PeopleHeadingDraftScreenshotTest {
+class ListEdgeDraftScreenshotTest {
 
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
@@ -93,46 +94,44 @@ class PeopleHeadingDraftScreenshotTest {
         }
     }
 
-    private fun talk(id: Long, snippet: String, address: String, unread: Int = 0, fromMe: Boolean = false) =
-        Conversation(id, address, snippet, 1_600_000_000_000L + id * 86_400_000L, unread, fromMe, failed = false)
+    private var next = 200L
 
-    private val services = listOf(
-        talk(21, "Your parcel is out for delivery", "AMAZON", unread = 2),
-        talk(22, "Your code is 482913", "38600", unread = 1),
-        talk(23, "Balance: 1 204,50 EUR", "BNPPARIBAS")
-    )
+    /** One card, the app's own ConversationLine. */
+    @Composable
+    private fun Card(name: String, message: String, unread: Int, address: String, subject: String? = null) {
+        val id = remember(name) { next++ }
+        val talk = Conversation(id, address, message, 1_600_000_000_000L + id * 86_400_000L, unread, fromMe = false, failed = false, subject = subject)
+        Row(Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().height(IntrinsicSize.Min)) {
+            ConversationLine(
+                talk, name = name, holdMedia = false, photo = null, look = null, pinned = false,
+                onOpen = {}, onPeek = {}, encrypted = false,
+                left = SwipeAction.NONE, right = SwipeAction.NONE, archived = false,
+                note = null, onSwipe = {},
+                modifier = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().fillMaxHeight()
+            )
+        }
+    }
 
-    private val people: List<Pair<Conversation, String>> = listOf(
-        talk(1, "See you at eight", "+212661234567") to "Ahmed Benali",
-        talk(2, "The documents are ready, I left them at the reception desk, please come and take them before noon", "+33612345678", unread = 3) to "Joëlle Martin",
-        talk(3, "Thanks a lot", "+7916123456", unread = 1) to "Valentina Ivanova",
-        talk(4, "On my way", "+81901234567", fromMe = true) to "Akira Tanaka",
-        talk(5, "Call me back when you can, it is about the contract and the signature", "+2348031234567", unread = 12) to "Marie-Christine Delacroix-Beaumont and her whole family",
-        talk(6, "Dinner is booked for seven", "+966501234567") to "فاطمة الزهراء",
-        talk(7, "Meeting moved to Friday", "+34612345678") to "Sofía García"
-    )
-
-    // The heading is the app's own: HomeParts.kt's Heading, titleMedium, bold, centred, onSurface.
-    @Test
-    fun heading() = capture("list_people_heading_draft") {
-        Column(
-            Modifier.fillMaxSize().padding(top = 56.dp, start = 8.dp, end = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            ServicesStack(services, open = false, onToggle = {})
-            Heading("People")
-            people.forEach { (c, name) ->
-                Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-                    ConversationLine(
-                        c, name = name, holdMedia = false, photo = null, look = null, pinned = false,
-                        onOpen = {}, onPeek = {}, encrypted = false,
-                        left = SwipeAction.NONE, right = SwipeAction.NONE, archived = false,
-                        note = null, onSwipe = {},
-                        modifier = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().fillMaxHeight()
-                    )
-                }
+    @Composable
+    private fun Cases(fontScale: Float) {
+        val density = LocalDensity.current
+        CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
+            Column(
+                Modifier.fillMaxSize().padding(top = 56.dp, start = 8.dp, end = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Card("Ahmed Benali", "See you at eight", 1, "+212661234567")
+                Card("فاطمة الزهراء", "العشاء محجوز على الساعة السابعة، أحضري الأطفال والكعكة", 3, "+966501234567")
+                Card("Marie-Christine Delacroix-Beaumont and her whole family", "Call me back when you can, it is about the contract and the signature, I need it today", 120, "+2348031234567")
+                Card("Joëlle Martin", "On se voit demain à 14h devant la gare", 2, "+33612345678", subject = "Rendez-vous")
             }
         }
     }
+
+    @Test
+    fun edge() = capture("list_edge_draft") { Cases(1f) }
+
+    @Test
+    fun font200() = capture("list_edge_font200_draft") { Cases(2f) }
 }

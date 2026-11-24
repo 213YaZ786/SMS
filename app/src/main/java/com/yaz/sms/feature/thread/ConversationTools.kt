@@ -14,8 +14,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -336,60 +343,204 @@ internal val effectFaces = listOf(
 )
 
 /**
- * Send with an effect, or later: held, Send opens this pane of glass, the
- * bubble's effects first, then the screen's, each a tile that sends at once.
- * [carried]: the other side sees it too (the encrypted chat); an SMS shows
- * it to the user alone, unless its words bring one.
+ * A bubble's effect at [k] from 0 to 1, drawn on its layer: slammed down from above with a bounce, big and shaking, or
+ * small and quiet growing into place. The thread's bubble and the effect sheet's preview play the same one. Moved out
+ * of ThreadScreen's Bubble, where it stood inline
+ * (https://raw.githubusercontent.com/213YaZ786/SMS/main/app/src/main/java/com/yaz/sms/feature/thread/ThreadScreen.kt#Bubble).
+ */
+internal fun androidx.compose.ui.graphics.GraphicsLayerScope.playBubbleEffect(bubbleEffect: com.yaz.sms.core.sms.Effects.Effect?, k: Float, mine: Boolean) {
+    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (mine) 1f else 0f, 1f)
+    when (bubbleEffect) {
+        // Slammed down from above, the last bit with a bounce.
+        com.yaz.sms.core.sms.Effects.Effect.SLAM -> {
+            val drop = if (k < 0.4f) 1f - (k / 0.4f) * (k / 0.4f) else 0f
+            val bounce = if (k >= 0.4f) sin(((k - 0.4f) / 0.6f) * 3 * PI).toFloat() * (1f - (k - 0.4f) / 0.6f) * 0.08f else 0f
+            val sc = 1f + 1.3f * drop + bounce
+            scaleX = sc; scaleY = sc
+            translationY = -drop * 60.dp.toPx()
+        }
+        // Big and shaking, then settling.
+        com.yaz.sms.core.sms.Effects.Effect.LOUD -> {
+            val big = if (k < 0.65f) 1f else 1f - (k - 0.65f) / 0.35f
+            val sc = 1f + 0.55f * big
+            scaleX = sc; scaleY = sc
+            rotationZ = sin(k * 70f) * 4f * big
+        }
+        // Small and quiet, growing slowly into place.
+        com.yaz.sms.core.sms.Effects.Effect.GENTLE -> {
+            val sc = 0.55f + 0.45f * (if (k < 0.5f) 0f else (k - 0.5f) / 0.5f)
+            scaleX = sc; scaleY = sc
+            alpha = 0.6f + 0.4f * k
+        }
+        else -> Unit
+    }
+}
+
+/**
+ * Send with an effect, or later, as Telegram's MessageSendPreview: over the blurred conversation the typed [words] as
+ * a bubble at the top playing the effect chosen (a screen effect plays behind it), under it the effects as tiles in
+ * two groups, at the bottom Send later and the round Send. A tile only previews (setEffectId); Send sends.
+ * [carried]: the other side sees it too (the encrypted chat); an SMS shows it to the user alone, unless its words
+ * bring one. [canSend]: there is something to send.
+ *
+ * Ports:
+ * https://raw.githubusercontent.com/213YaZ786/SMS/main/app/src/main/java/com/yaz/sms/feature/thread/ConversationTools.kt#EffectSheet
+ * (this sheet's own tiles, groups, Send later and SMS line, kept; the single sheet of tiles that sent at once becomes the preview)
+ * https://raw.githubusercontent.com/DrKLO/Telegram/master/TMessagesProj/src/main/java/org/telegram/ui/MessageSendPreview.java#setEffectId
+ * (effectId kept, the chosen effect selected in effectSelector)
+ * https://raw.githubusercontent.com/DrKLO/Telegram/master/TMessagesProj/src/main/java/org/telegram/ui/MessageSendPreview.java#getSelectedEffect
+ * (the effect chosen, its sentEffect guard against a second send)
  */
 @Composable
-fun EffectSheet(carried: Boolean, onLater: (() -> Unit)?, onPick: (com.yaz.sms.core.sms.Effects.Effect) -> Unit, onDismiss: () -> Unit) {
+fun EffectSheet(carried: Boolean, words: String, canSend: Boolean, onLater: (() -> Unit)?, onSend: (com.yaz.sms.core.sms.Effects.Effect) -> Unit, onDismiss: () -> Unit) {
     val haptics = rememberHaptics()
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        com.yaz.sms.ui.component.DialogPane {
-            Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                if (onLater != null) FloatingPane(shape = CircleShape, onClick = {
-                    haptics.tick()
-                    onLater()
-                }) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                        Icon(AppIcons.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Send later", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-                listOf("Bubble" to false, "Screen" to true).forEach { (title, screen) ->
-                    Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
-                    // Names measured and balanced, wrapping between words, a tile at least 78 dp (BalancedFlow, MessageMenu.kt).
-                    val these = effectFaces.filter { it.first.screen == screen }
-                    BalancedFlow(
-                        labels = these.map { it.second.second },
-                        style = MaterialTheme.typography.labelMedium,
-                        floor = 78.dp,
-                        gap = 6.dp,
-                        rowGap = 8.dp,
-                        maxPerRow = if (screen) 3 else 2
-                    ) { i, tileModifier ->
-                        val (effect, face) = these[i]
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
-                            modifier = tileModifier.clip(ShapeDefaults.Large).clickable {
-                                haptics.firm()
-                                onPick(effect)
-                            }.padding(vertical = 6.dp)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var effectId by remember { mutableStateOf<com.yaz.sms.core.sms.Effects.Effect?>(null) }
+    var replays by remember { mutableStateOf(0) }
+    var inked by remember { mutableStateOf(false) }
+    var sentEffect by remember { mutableStateOf(false) }
+    // setEffectId: the tile chosen is selected and plays again on the message, nothing is sent.
+    fun setEffectId(effect: com.yaz.sms.core.sms.Effects.Effect) {
+        haptics.tick()
+        effectId = effect
+        inked = effect == com.yaz.sms.core.sms.Effects.Effect.INK
+        replays++
+    }
+    // getSelectedEffect: the effect to send, once (sentEffect), none when nothing is chosen or there is nothing to send.
+    fun getSelectedEffect(): com.yaz.sms.core.sms.Effects.Effect? {
+        if (sentEffect || !canSend) return null
+        val chosen = effectId ?: return null
+        sentEffect = true
+        return chosen
+    }
+    val fx = remember { androidx.compose.animation.core.Animatable(1f) }
+    val bubbleEffect = effectId?.takeIf { !it.screen }
+    val screenEffect = effectId?.takeIf { it.screen }
+    LaunchedEffect(replays) {
+        val e = bubbleEffect ?: return@LaunchedEffect
+        fx.snapTo(0f)
+        fx.animateTo(1f, tween(if (e == com.yaz.sms.core.sms.Effects.Effect.GENTLE) 1700 else 950, easing = LinearEasing))
+    }
+    LaunchedEffect(fx.value >= 0.35f) { if (bubbleEffect == com.yaz.sms.core.sms.Effects.Effect.SLAM && fx.value in 0.35f..0.5f) haptics.firm() }
+    // Back closes the window and sends nothing. Blur and dim behind it as MessageMenu (BlurBehind).
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        com.yaz.sms.ui.component.BlurBehind(radiusDp = 24, blur = com.yaz.sms.ui.component.rememberCrossWindowBlur())
+        Box(
+            Modifier.fillMaxSize().clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClick = onDismiss)
+        ) {
+            // The screen effect plays behind the message and the tiles, the effects kit's own.
+            if (screenEffect != null) androidx.compose.runtime.key(replays) {
+                com.yaz.sms.ui.effects.ScreenEffect(com.yaz.sms.ui.effects.ScreenKind.valueOf(screenEffect.name), words, null) {}
+            }
+            Column(
+                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // The message and the effectSelector scroll together when the words are long or the font is large.
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.widthIn(max = 420.dp).fillMaxWidth().padding(top = 24.dp), contentAlignment = Alignment.CenterEnd) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(0.82f)
+                                .graphicsLayer { playBubbleEffect(bubbleEffect, fx.value, true) }
+                                .then(
+                                    if (inked) Modifier.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { inked = false }
+                                    else Modifier
+                                ),
+                            contentAlignment = Alignment.CenterEnd
                         ) {
-                            Text(face.first, style = MaterialTheme.typography.headlineMedium)
-                            TileLabel(face.second, MaterialTheme.typography.labelMedium, MaterialTheme.colorScheme.onSurface)
+                            com.yaz.sms.ui.component.ZoneSurface(shape = Clusters.corners(Cluster.SINGLE, true), accent = true) {
+                                MessageBody(
+                                    words = androidx.compose.ui.text.AnnotatedString(words), plain = words, blurred = inked, poll = null,
+                                    visual = emptyList(), kinds = emptyList<com.yaz.sms.core.security.MediaCheck.Kind?>(), held = true,
+                                    footer = { mismatched, onMedia -> MessageFooter(clockOf(context, System.currentTimeMillis()), Delivery.Sending, false, onMedia = onMedia, mismatched = mismatched) },
+                                    onMore = null, interactive = false, mine = true
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(36.dp))
+                    ShowEffectSelector(carried, effectId) { setEffectId(it) }
+                }
+                // The quiet Send later, then the round Send, at the end.
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
+                    if (onLater != null) {
+                        QuietButton(onClick = {
+                            haptics.tick()
+                            onLater()
+                        }) {
+                            Icon(AppIcons.Schedule, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Send later", style = MaterialTheme.typography.labelLarge)
+                        }
+                        Spacer(Modifier.width(16.dp))
+                    }
+                    FloatingPane(
+                        shape = CircleShape, accent = true,
+                        modifier = Modifier.graphicsLayer { alpha = if (effectId != null && canSend && !sentEffect) 1f else 0.4f },
+                        onClick = {
+                            getSelectedEffect()?.let {
+                                haptics.done()
+                                onSend(it)
+                            }
+                        }
+                    ) {
+                        Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                            Icon(AppIcons.Send, contentDescription = "Send", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
                         }
                     }
                 }
-                if (!carried) Text(
-                    "By SMS only you see it, unless the words bring one.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 12.dp)
-                )
             }
         }
+    }
+}
+
+/**
+ * The effects as tiles in two groups, the chosen one accented: Telegram's showEffectSelector shows its effectSelector
+ * under the message cell
+ * (https://raw.githubusercontent.com/DrKLO/Telegram/master/TMessagesProj/src/main/java/org/telegram/ui/MessageSendPreview.java#showEffectSelector).
+ * [carried] false adds the line saying only the user sees it.
+ */
+@Composable
+internal fun ShowEffectSelector(carried: Boolean, effectId: com.yaz.sms.core.sms.Effects.Effect?, setEffectId: (com.yaz.sms.core.sms.Effects.Effect) -> Unit) {
+    Column(Modifier.widthIn(max = 420.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        listOf("Bubble" to false, "Screen" to true).forEach { (title, screen) ->
+            Text(
+                title, style = MaterialTheme.typography.titleSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
+            )
+            // Names measured and balanced, wrapping between words, a tile at least 78 dp (BalancedFlow, MessageMenu.kt).
+            val these = effectFaces.filter { it.first.screen == screen }
+            BalancedFlow(
+                labels = these.map { it.second.second },
+                style = MaterialTheme.typography.labelMedium,
+                floor = 78.dp,
+                gap = 6.dp,
+                rowGap = 6.dp,
+                maxPerRow = if (screen) 3 else 2
+            ) { i, tileModifier ->
+                val (effect, face) = these[i]
+                com.yaz.sms.ui.component.ZoneSurface(
+                    shape = ShapeDefaults.Large, accent = effect == effectId, modifier = tileModifier,
+                    onClick = { setEffectId(effect) }
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp)) {
+                        Text(face.first, style = MaterialTheme.typography.headlineMedium)
+                        TileLabel(face.second, MaterialTheme.typography.labelMedium, MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+            }
+        }
+        if (!carried) Text(
+            "By SMS only you see it, unless the words bring one.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(top = 10.dp)
+        )
     }
 }

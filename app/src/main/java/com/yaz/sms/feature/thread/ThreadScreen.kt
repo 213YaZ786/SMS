@@ -1997,34 +1997,8 @@ private fun Bubble(
         if (hasBubble) Box(
             Modifier
                 .fillMaxWidth(if (visual.isNotEmpty() || tiles.isNotEmpty()) 0.78f else 0.82f)
-                .graphicsLayer {
-                    val k = fx.value
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (mine) 1f else 0f, 1f)
-                    when (bubbleEffect) {
-                        // Slammed down from above, the last bit with a bounce.
-                        com.yaz.sms.core.sms.Effects.Effect.SLAM -> {
-                            val drop = if (k < 0.4f) 1f - (k / 0.4f) * (k / 0.4f) else 0f
-                            val bounce = if (k >= 0.4f) kotlin.math.sin(((k - 0.4f) / 0.6f) * 3 * PI).toFloat() * (1f - (k - 0.4f) / 0.6f) * 0.08f else 0f
-                            val sc = 1f + 1.3f * drop + bounce
-                            scaleX = sc; scaleY = sc
-                            translationY = -drop * 60.dp.toPx()
-                        }
-                        // Big and shaking, then settling.
-                        com.yaz.sms.core.sms.Effects.Effect.LOUD -> {
-                            val big = if (k < 0.65f) 1f else 1f - (k - 0.65f) / 0.35f
-                            val sc = 1f + 0.55f * big
-                            scaleX = sc; scaleY = sc
-                            rotationZ = kotlin.math.sin(k * 70f) * 4f * big
-                        }
-                        // Small and quiet, growing slowly into place.
-                        com.yaz.sms.core.sms.Effects.Effect.GENTLE -> {
-                            val sc = 0.55f + 0.45f * (if (k < 0.5f) 0f else (k - 0.5f) / 0.5f)
-                            scaleX = sc; scaleY = sc
-                            alpha = 0.6f + 0.4f * k
-                        }
-                        else -> Unit
-                    }
-                }
+                // The effect's own motion, shared with the effect sheet's preview (ConversationTools.kt).
+                .graphicsLayer { playBubbleEffect(bubbleEffect, fx.value, mine) }
                 // Swiped right, it follows the finger, ticks once past the
                 // point where it will be answered, and springs back.
                 // Swiped left, nothing: the move is not consumed, so the pager and the back gesture
@@ -2202,6 +2176,7 @@ private fun Bubble(
                     MessageAction(AppIcons.Delete, "Delete", danger = true) { confirmDelete = true }
                 ),
                 onReact = { emoji -> react(emoji) },
+                mine = mine,
                 onDismiss = { menuOpen = false },
                 // The picker lives in the screen, not in this list item (see ThreadScreen's emojiPick): the item leaves
                 // the composition when the keyboard shrinks the list.

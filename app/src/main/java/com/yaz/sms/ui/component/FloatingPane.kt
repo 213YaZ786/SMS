@@ -257,7 +257,7 @@ fun FloatingFrame(
     val backdrop = rememberGlassBackdrop()
     // The header's own height; with a large title, only the part above it (status bar and top row).
     val headerState = remember { mutableStateOf(0.dp) }
-    val collapse = if (largeTitle != null) rememberTitleCollapse() else null
+    val collapse = if (largeTitle != null) rememberTitleCollapse(scroll) else null
     // The header now: the part above the large title, plus the large title as far as it is open.
     val headerNow: () -> Dp = {
         headerState.value + if (collapse == null) 0.dp else with(density) { collapse.heightPx().toDp() }
@@ -385,12 +385,25 @@ private class TitleCollapse(val behavior: TopAppBarScrollBehavior, val expandedP
     fun heightPx(): Float = (expandedPx + behavior.state.heightOffset).coerceIn(0f, expandedPx)
 }
 
+/**
+ * The canScroll of Material 3's exitUntilCollapsedScrollBehavior (its connection ignores a scroll when
+ * this answers false): a page that fits keeps its large title on a drag, as Apple's Settings does; a page
+ * that scrolls folds it. [state] is whether the content can scroll either way, null where the frame has no
+ * scroll state: the title then folds as before.
+ * https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/AppBar.kt#exitUntilCollapsedScrollBehavior
+ */
+internal fun canScroll(state: Boolean?): Boolean = state != false
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun rememberTitleCollapse(): TitleCollapse {
+private fun rememberTitleCollapse(scroll: ScrollableState?): TitleCollapse {
     val expandedPx = with(LocalDensity.current) { largeTitleHeight().toPx() }
     val state = rememberTopAppBarState(initialHeightOffsetLimit = -expandedPx)
-    val behavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(state)
+    // Read at each drag, from the content's live state, not captured at composition.
+    val behavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
+        state,
+        canScroll = { canScroll(scroll?.let { it.canScrollForward || it.canScrollBackward }) }
+    )
     // LargeTopAppBar sets the limit from its own height, in its layout; a turn of the screen changes it here.
     SideEffect { if (state.heightOffsetLimit != -expandedPx) state.heightOffsetLimit = -expandedPx }
     return remember(behavior, expandedPx) { TitleCollapse(behavior, expandedPx) }

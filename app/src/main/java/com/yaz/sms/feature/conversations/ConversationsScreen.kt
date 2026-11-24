@@ -49,6 +49,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.AlignmentLine
+import androidx.compose.ui.layout.FirstBaseline
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -556,6 +559,8 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         title = if (archive) "Archive" else if (inTrash) "Trash" else null,
         onOpenSettings = onOpenSettings,
         scroll = listState,
+        // A selection taken or the search open keeps the top in place.
+        pinTop = picked != null || searching || query.isNotEmpty(),
         // Top left, facing Settings: back from the archive, the Trash or Spam (the filter menu leads there).
         leading = if (apart) ({
             com.yaz.sms.ui.component.FloatingAction(
@@ -811,9 +816,11 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                 val onFaces = faces.mapTo(HashSet()) { it.threadId }
                 // People first; every service (banks, deliveries, codes) in one stack.
                 val (services, people) = shown.filterNot { it.threadId in onFaces }.partition { Lists.isService(it) && filter == Filter.ALL && query.isBlank() }
-                if (services.isNotEmpty() && people.isNotEmpty()) item(key = "people") { Heading("People") }
                 cards(people) { it.threadId }
                 if (services.isNotEmpty()) {
+                    // No heading between the two groups (Google Messages, iOS and Signal show none): a wider gap
+                    // sets the Services card apart from the people's cards.
+                    if (people.isNotEmpty()) item(key = "people") { Spacer(Modifier.height(8.dp)) }
                     item(key = "services") {
                         ServicesStack(services, open = servicesOpen) { servicesOpen = !servicesOpen }
                     }
@@ -1504,28 +1511,26 @@ internal fun ConversationLine(
                     // conversation_list_item_view.xml: conversation_list_item_status_container at the parent's end,
                     // below the date, level with the summary's first line,
                     // https://github.com/signalapp/Signal-Android/blob/main/app/src/main/res/layout/conversation_list_item_view.xml).
-                    // The rule: the badge stands in a box as tall as one line of the message's style (bodyMedium, as
-                    // LastMessageBubble), at the top of the row, its centre on that first line's centre. A subject or a
-                    // media lead above the text keeps the rule: the badge meets the block's first line.
-                    Row(verticalAlignment = Alignment.Top) {
+                    // The rule: the count and the message block are both aligned by their first baseline
+                    // (alignByBaseline; the block hands its baseline up through FirstLine), so the two meet whatever
+                    // the font size or script. A subject above the text keeps the rule: the count meets the subject's
+                    // line; under a picture or a card, the first line of the words.
+                    Row {
                         if (found != null) Text(
                             remember(found, target) { foundSnippet(found, target) },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).heightIn(min = 20.dp)
+                            modifier = Modifier.weight(1f).alignByBaseline().heightIn(min = 20.dp)
                         ) else LastMessageBubble(
                             c, unread, who = if (c.fromMe) "you" else title, hold = holdMedia,
                             time = note ?: timeLabel(context, c.date),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f).alignByBaseline()
                         )
                         if (unread) {
                             Spacer(Modifier.width(8.dp))
-                            val line = with(androidx.compose.ui.platform.LocalDensity.current) {
-                                MaterialTheme.typography.bodyMedium.lineHeight.toDp()
-                            }
-                            Box(Modifier.height(line), contentAlignment = Alignment.Center) { UnreadBadge(c.unread) }
+                            UnreadBadge(c.unread, Modifier.alignByBaseline())
                         }
                     }
                 }
@@ -1571,25 +1576,56 @@ internal fun conversationTitle(name: String?, formatted: String): String =
  */
 @Composable
 internal fun UnreadBadge(count: Int, modifier: Modifier = Modifier) {
-    Box(
-        contentAlignment = Alignment.Center,
+    // The Text itself carries the disc, so its baseline reaches the Row: the caller passes Modifier.alignByBaseline()
+    // (a Row's scope alone offers it) and the count meets the message's first baseline at any font size or script.
+    Text(
+        unreadLabel(count),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onPrimary,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        maxLines = 1,
+        softWrap = false,
         modifier = modifier
             .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
             .background(MaterialTheme.colorScheme.primary, CircleShape)
             .padding(horizontal = 5.dp, vertical = 1.dp)
             .clearAndSetSemantics { contentDescription = "$count unread" }
-    ) {
-        Text(
-            unreadLabel(count),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimary,
-            maxLines = 1,
-            softWrap = false
-        )
-    }
+    )
 }
 
 internal fun unreadLabel(count: Int): String = if (count > 9) "9+" else count.toString()
+
+/**
+ * A stack that hands up the first baseline of its first child that has one, as a Text does (a Column does not), so a
+ * Row can align the unread count on it with alignByBaseline: a subject's first line, or under a picture or a card the
+ * first line of the words. The child's own offset is added.
+ * https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/foundation/foundation-layout/src/commonMain/kotlin/androidx/compose/foundation/layout/Row.kt#alignByBaseline
+ * not ported: RowScope.alignBy(alignmentLine) and alignBy(alignmentLineBlock) (only the first baseline is aligned),
+ * RowScope.weight and align (called, not redeclared), Row itself (the library's)
+ * https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/foundation/foundation-layout/src/commonMain/kotlin/androidx/compose/foundation/layout/Row.kt#alignByBaseline
+ */
+@Composable
+internal fun FirstLine(modifier: Modifier, content: @Composable () -> Unit) {
+    Layout(content, modifier) { measurables, constraints ->
+        val placeables = measurables.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+        var alignmentLine = AlignmentLine.Unspecified
+        var alignBy = 0
+        placeables.forEach {
+            val baseline = it[FirstBaseline]
+            if (alignmentLine == AlignmentLine.Unspecified && baseline != AlignmentLine.Unspecified) alignmentLine = alignBy + baseline
+            alignBy += it.height
+        }
+        val width = (placeables.maxOfOrNull { it.width } ?: 0).coerceIn(constraints.minWidth, constraints.maxWidth)
+        val lines: Map<AlignmentLine, Int> = if (alignmentLine == AlignmentLine.Unspecified) emptyMap() else mapOf<AlignmentLine, Int>(FirstBaseline to alignmentLine)
+        layout(width, alignBy.coerceIn(constraints.minHeight, constraints.maxHeight), lines) {
+            var alignBy = 0
+            placeables.forEach {
+                it.placeRelative(0, alignBy)
+                alignBy += it.height
+            }
+        }
+    }
+}
 
 /**
  * Where the user's own newest message stands, for the mark before the time; null when the newest message is not
@@ -1675,7 +1711,7 @@ private fun LastMessageBubble(c: Conversation, unread: Boolean, who: String, hol
     }
     val weight = if (unread) FontWeight.Medium else FontWeight.Normal
     // At least one line high, for a message with nothing to say.
-    Column(modifier.heightIn(min = 20.dp)) {
+    FirstLine(modifier.heightIn(min = 20.dp)) {
         if (subject != null) Text(
             "Subject: $subject",
             style = MaterialTheme.typography.bodyMedium,

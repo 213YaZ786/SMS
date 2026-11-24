@@ -130,12 +130,11 @@ fun MessageMenu(
     onReact: (String) -> Unit,
     onDismiss: () -> Unit,
     onMoreReactions: (() -> Unit)? = null,
+    mine: Boolean = false,
     held: @Composable () -> Unit
 ) {
     val haptics = rememberHaptics()
     val density = LocalDensity.current
-    val gap = with(density) { 10.dp.roundToPx() }
-    val edge = with(density) { 12.dp.roundToPx() }
     var rowSize by remember { mutableStateOf(IntSize.Zero) }
     var listSize by remember { mutableStateOf(IntSize.Zero) }
     // The pane's height with all its rows, reported by Palette, whatever room it is given.
@@ -169,84 +168,46 @@ fun MessageMenu(
         ) {
             var window by remember { mutableStateOf(IntSize.Zero) }
             Box(Modifier.fillMaxSize().onSizeChanged { window = it })
-            // The reaction bar and the actions are centred on the message's own bounds (see MenuPlacement), inside
-            // the conversation column, which on a tablet is narrower than the window.
-            val columnInset = with(density) { com.yaz.sms.navigation.LocalReadableInset.current.roundToPx() }
-            fun xFor(width: Int): Int =
-                MenuPlacement.x(bounds.left.roundToInt(), bounds.right.roundToInt(), width, window.width, columnInset, edge)
-            // The message itself, above the veil, lifted a little.
-            val rise = remember { Animatable(0f) }
-            LaunchedEffect(Unit) { rise.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 500f)) }
-            // The room is the window less the system bars (WindowInsets.safeDrawing, Android's inset types,
-            // https://developer.android.com/develop/ui/compose/system/insets) and the edge margin: the reactions
-            // bar, the lifted message and the pane all stay inside it. As long as the pane, whole, fits under the
-            // message or above it, everything hangs off the message's own place. Otherwise (the 200 % font, a tall
-            // message) the three are stacked by priority from the message's place: the reactions bar always whole,
-            // then the message, whole if it fits with a first part of the pane, else clipped to a quarter of the
-            // window with a soft fade at the cut (Signal's long press shows a clipped preview of a long message),
-            // then the pane takes the rest and its grid scrolls.
-            val bars = WindowInsets.safeDrawing
-            val top = bars.getTop(density) + edge
-            val bottomLimit = window.height - bars.getBottom(density) - edge
-            val msgTop = bounds.top.roundToInt()
-            val msgH = bounds.height.roundToInt()
-            // The lift below (scale 1.05 around the centre, 4 dp up) draws the message beyond its bounds: graphicsLayer
-            // changes only the drawing, never the layout (TransformOrigin.Center,
-            // https://developer.android.com/develop/ui/compose/graphics/draw/modifiers). Its top edge rises by half the
-            // growth plus 4 dp, its bottom edge drops by half the growth less 4 dp; the gaps are kept beyond those
-            // edges, else a tall bubble at 200 % touches the reactions bar.
-            val rise4 = with(density) { 4.dp.roundToPx() }
-            val liftTop = (msgH * 0.025f).roundToInt() + rise4
-            val liftBottom = ((msgH * 0.025f).roundToInt() - rise4).coerceAtLeast(0)
-            val reactionsH = if (reactions != null) rowSize.height + gap + liftTop else 0
-            val below = bounds.bottom.roundToInt() + liftBottom + gap
-            val roomBelow = bottomLimit - below
-            val roomAbove = msgTop - (if (reactions != null) reactionsH else liftTop) - gap - top
-            val fitsBelow = naturalPane <= roomBelow
-            val fitsAbove = naturalPane <= roomAbove
-            // What goes above the message's lifted top: the reactions bar and its gap, or only the lift.
-            val headH = if (reactions != null) reactionsH else liftTop
-            // A message partly scrolled out at the top or the bottom is brought fully on screen with the rest
-            // stacked around it, never with the bar pinned to the edge over it.
-            val offScreen = msgTop - headH < top || bounds.bottom.roundToInt() + liftBottom > bottomLimit
-            val stacked = window.height > 0 && (offScreen || (!fitsBelow && !fitsAbove))
-            val total = bottomLimit - top
-            val paneMin = minOf(naturalPane, with(density) { 220.dp.roundToPx() })
-            val shownH = if (!stacked || total - headH - gap - liftBottom - msgH >= paneMin) msgH else minOf(msgH, window.height / 4)
-            val paneRoom = total - headH - shownH - liftBottom - gap
-            val stackH = headH + shownH + liftBottom + gap + minOf(naturalPane, paneRoom).coerceAtLeast(0)
-            val stackTop = (msgTop - headH).coerceIn(top, maxOf(top, bottomLimit - stackH))
-            val msgY = if (stacked) stackTop + headH else msgTop
-            val listY = when {
-                stacked -> msgY + shownH + liftBottom + gap
-                fitsBelow -> below
-                reactions != null -> (msgTop - gap - reactionsH - listSize.height).coerceAtLeast(top)
-                else -> (msgTop - liftTop - gap - listSize.height).coerceAtLeast(top)
-            }
-            val rowY = when {
-                stacked -> stackTop
-                fitsBelow -> (msgTop - liftTop - gap - rowSize.height).coerceAtLeast(top)
-                else -> listY + listSize.height + gap
-            }
-            val paneMax = when {
-                window.height <= 0 -> Dp.Unspecified
-                stacked -> with(density) { paneRoom.coerceAtLeast(0).toDp() }
-                else -> with(density) {
-                    maxOf(roomBelow, roomAbove).coerceAtLeast(220.dp.roundToPx()).coerceAtMost(total - reactionsH).toDp()
-                }
-            }
-            // The message itself, above the veil, lifted a little; clipped with a fade when only part of it fits.
-            val clipped = shownH < msgH
+            // The placement as Signal's ChatReactionOverlay builds it (https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversation/v2/ChatReactionOverlay.kt#L181-L220):
+            // overlay size, status and navigation bars, the bar's and the menu's measured sizes into
+            // ReactionOverlayPlacement.of (see MenuPlacement). Bar, message and menu on one shared edge, the message
+            // where it stands, no scale.
+            val overlayWidthPx = window.width
+            val overlayHeightPx = window.height
+            val statusBarPx = WindowInsets.safeDrawing.getTop(density)
+            val navigationBarPx = WindowInsets.safeDrawing.getBottom(density)
+            val barHeightPx = if (reactions != null) rowSize.height else 0
+            val menuWidth = listSize.width
+            val menuHeight = naturalPane
+            val placement = if (overlayHeightPx > 0 && menuHeight > 0 && menuWidth > 0 && (reactions == null || rowSize.width > 0)) {
+                MenuPlacement.of(
+                    metrics = MenuPlacement.Metrics(
+                        overlayWidth = overlayWidthPx,
+                        overlayHeight = overlayHeightPx,
+                        statusBarHeight = statusBarPx,
+                        navigationBarHeight = navigationBarPx,
+                        bubbleX = bounds.left,
+                        bubbleY = bounds.top,
+                        bubbleWidth = bounds.width.roundToInt(),
+                        snapshotHeight = bounds.height.roundToInt(),
+                        reactionBarWidth = if (reactions != null) rowSize.width else 0,
+                        reactionBarHeight = barHeightPx,
+                        menuMaxWidth = menuWidth,
+                        menuMaxHeight = menuHeight,
+                        isMessageOnLeft = !mine,
+                        columnInset = with(density) { com.yaz.sms.navigation.LocalReadableInset.current.roundToPx() }
+                    ),
+                    dp = MenuPlacement.DpConverter { with(density) { it.dp.toPx() } }
+                )
+            } else null
+            val shownH = placement?.snapshotHeight ?: bounds.height.roundToInt()
+            val paneMax = placement?.menuHeight?.let { with(density) { it.toDp() } } ?: Dp.Unspecified
+            // The message itself, above the veil; clipped with a fade when only part of it fits.
+            val clipped = shownH < bounds.height.roundToInt()
             Box(
                 Modifier
-                    .offset { IntOffset(bounds.left.roundToInt(), msgY) }
+                    .offset { IntOffset(bounds.left.roundToInt(), placement?.snapshotY?.roundToInt() ?: bounds.top.roundToInt()) }
                     .size(with(density) { bounds.width.toDp() }, with(density) { shownH.toDp() })
-                    .graphicsLayer {
-                        val s = 1f + 0.05f * rise.value
-                        scaleX = s
-                        scaleY = s
-                        translationY = -4.dp.toPx() * rise.value
-                    }
                     // Cut short, the end fades out instead of ending on a hard line: the layer is drawn offscreen and a
                     // gradient from opaque to transparent is drawn over its last 48 dp with BlendMode.DstIn, the bottom
                     // edge of OuterTune's fadingEdge (GPL-3.0,
@@ -272,7 +233,7 @@ fun MessageMenu(
                     )
             ) {
                 if (clipped) {
-                    Box(Modifier.wrapContentSize(androidx.compose.ui.Alignment.TopStart, unbounded = true).size(with(density) { bounds.width.toDp() }, with(density) { msgH.toDp() })) { held() }
+                    Box(Modifier.wrapContentSize(androidx.compose.ui.Alignment.TopStart, unbounded = true).size(with(density) { bounds.width.toDp() }, with(density) { bounds.height.toDp() })) { held() }
                 } else held()
             }
 
@@ -281,7 +242,7 @@ fun MessageMenu(
                     shape = CircleShape,
                     shadowElevation = 6.dp,
                     modifier = Modifier
-                        .offset { IntOffset(xFor(rowSize.width), rowY) }
+                        .offset { placement?.let { IntOffset(it.reactionBarX.roundToInt(), it.reactionBarY.roundToInt()) } ?: IntOffset(-4000, 0) }
                         .onSizeChanged { rowSize = it }
                         .popIn(0)
                 ) {
@@ -341,7 +302,7 @@ fun MessageMenu(
                 actions,
                 onDismiss,
                 Modifier
-                    .offset { IntOffset(xFor(listSize.width), listY) }
+                    .offset { placement?.let { IntOffset(it.menuOffsetX.roundToInt(), it.menuOffsetY.roundToInt()) } ?: IntOffset(-4000, 0) }
                     .onSizeChanged { listSize = it },
                 maxHeight = paneMax,
                 onNatural = { naturalPane = it }

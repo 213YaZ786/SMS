@@ -580,11 +580,21 @@ fun Composer(
         }
         if (choosingEffect) EffectSheet(
             carried = effectsCarried,
-            onLater = null,
-            onPick = { effect ->
+            words = text,
+            canSend = onSendEffect != null && (text.isNotBlank() || attachments.isNotEmpty()),
+            // Send later: the typed words only, as the clock offers it (laterReady's own conditions).
+            onLater = if (onSchedule != null && editing == null && take == null && text.isNotBlank() && attachments.isEmpty()) ({
                 choosingEffect = false
-                armed = effect
-                haptics.done()
+                val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                onSchedule.invoke(text, sub)
+                state.clearText()
+            }) else null,
+            onSend = { effect ->
+                choosingEffect = false
+                val sub = sims.getOrNull(simIndex)?.subscriptionId ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                onSendEffect?.invoke(text, sub, effect, attachments)
+                state.clearText()
+                attachments = emptyList()
             },
             onDismiss = { choosingEffect = false }
         )

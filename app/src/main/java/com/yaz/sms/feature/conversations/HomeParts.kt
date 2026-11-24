@@ -53,23 +53,11 @@ import com.yaz.sms.ui.icon.AppIcons
 
 internal val LINE_WIDTH = 640.dp
 
-/**
- * A section's name above its conversations: titleMedium, bold, onSurface, centred, as the Services card's title
- * (Material 3's Typography.titleMedium, 16 sp; the small primary line on the left read as a caption).
- * https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Typography.kt#Typography
- * not ported: Typography's constructor and its other styles (the theme already holds the type scale)
- */
-@Composable
-internal fun Heading(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurface,
-        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-        modifier = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().padding(top = 8.dp)
-    )
-}
+// The "People" heading above the conversations is gone (point 10): Material 3's Typography
+// (https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Typography.kt#Typography)
+// gives a list no label; Google Messages, iOS Messages and Signal show none. The Services card and the cards are
+// set apart by a gap in ConversationsScreen.
+// not ported: Typography (the theme already holds the type scale, nothing of it is drawn here any more)
 
 /**
  * The newest code received, on top of everything for ten minutes: its
@@ -296,7 +284,8 @@ private fun PinnedFaceItem(c: Conversation, face: PinnedFace, selected: Boolean?
             ) {
                 Icon(AppIcons.Done, contentDescription = "Selected", tint = MaterialTheme.colorScheme.onPrimary)
             }
-            else FaceAvatar(face.name, face.photo, face.look, face.members, 64.dp)
+            // A pinned face sits on the page, not on a card: the group's ring takes the page's colour.
+            else FaceAvatar(face.name, face.photo, face.look, face.members, 64.dp, windowBackground = MaterialTheme.colorScheme.background)
             if (unread) {
                 Box(
                     contentAlignment = Alignment.Center,
