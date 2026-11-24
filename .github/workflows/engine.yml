@@ -23,9 +23,9 @@ permissions:
   contents: read
 
 env:
-  CORE_VERSION: "2.66.0"
-  # v2.66.0's commit, so a moved tag changes nothing.
-  CORE_COMMIT: "3ba231cd5ca358b9011cf79ad3ebf075595050ef"
+  CORE_VERSION: "2.69.0"
+  # v2.69.0's commit, so a moved tag changes nothing.
+  CORE_COMMIT: "189c007b9a343eb4639892fc3defafbf9f367da3"
   PATCH: "p1"
 
 jobs:
@@ -104,5 +104,5 @@ jobs:
           gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "Encrypted chat engine ${CORE_VERSION} (${PATCH})" \
-            --notes "chatmail core ${CORE_VERSION} built with rustls 0.23.46, rustls-webpki 0.103.16, tokio 1.53.3, webpki-roots 0.26.11, event-listener 5.4.2, quinn-proto 0.11.18, OpenSSL 3.6.3." \
+            --notes "chatmail core ${CORE_VERSION} built with rustls 0.23.46, rustls-webpki 0.103.16, tokio 1.54.1, webpki-roots 0.26.11, event-listener 5.4.2, quinn-proto 0.11.18, OpenSSL 3.6.3." \
             out/deltachat-rpc-server-* out/Cargo-*.lock out/SHA256-*.txt
