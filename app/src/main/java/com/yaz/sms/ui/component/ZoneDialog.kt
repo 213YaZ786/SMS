@@ -61,6 +61,8 @@ fun ZoneAlertDialog(
     confirmButton: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     dismissButton: (@Composable () -> Unit)? = null,
+    // AlertController's third button (BUTTON_NEUTRAL, setupButtons): none by default, so a dialog that does not pass it is unchanged.
+    neutralButton: (@Composable () -> Unit)? = null,
     icon: (@Composable () -> Unit)? = null,
     title: (@Composable () -> Unit)? = null,
     text: (@Composable () -> Unit)? = null,
@@ -83,6 +85,7 @@ fun ZoneAlertDialog(
         ZoneAlertContent(
             confirmButton = confirmButton,
             dismissButton = dismissButton,
+            neutralButton = neutralButton,
             icon = icon,
             title = title,
             text = text,
@@ -110,6 +113,7 @@ fun ZoneAlertDialog(
 private fun ZoneAlertContent(
     confirmButton: @Composable () -> Unit,
     dismissButton: (@Composable () -> Unit)?,
+    neutralButton: (@Composable () -> Unit)?,
     icon: (@Composable () -> Unit)?,
     title: (@Composable () -> Unit)?,
     text: (@Composable () -> Unit)?,
@@ -149,6 +153,9 @@ private fun ZoneAlertContent(
                 ProvideTextStyle(LocalTextStyle.current.merge(MaterialTheme.typography.labelLarge)) {
                     ZoneDialogButtons {
                         dismissButton?.let { slot -> Box(propagateMinConstraints = true) { slot() } }
+                        // AlertController.setupButtons shows positive, neutral and negative as three buttons of the
+                        // same bar, each only when it is given; the neutral one sits between the other two.
+                        neutralButton?.let { slot -> Box(propagateMinConstraints = true) { slot() } }
                         Box(propagateMinConstraints = true) { confirmButton() }
                     }
                 }
@@ -165,7 +172,7 @@ private fun ZoneAlertContent(
  * the whole width, the confirm button (the last child) first, as Material stacks long labels and
  * iOS's alerts do. The fit is the button's own one line width (maxIntrinsicWidth), so it follows
  * the language, the font scale and the width of the window; words are never cut.
- * Children are the dismiss button then the confirm button; a confirm alone takes the whole width.
+ * Children are the dismiss button, the neutral one when there is one, then the confirm button (stacked: confirm, neutral, dismiss); a confirm alone takes the whole width.
  */
 @Composable
 private fun ZoneDialogButtons(content: @Composable () -> Unit) {
@@ -359,7 +366,9 @@ fun DialogNameField(
     state: TextFieldState,
     label: String,
     onDone: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // The field's keyboard (androidx KeyboardOptions: type, capitalization, IME action); a name's by default.
+    keyboardOptions: KeyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done)
 ) {
     val requester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -374,7 +383,7 @@ fun DialogNameField(
         lineLimits = TextFieldLineLimits.SingleLine,
         label = { Text(label) },
         textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Start),
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+        keyboardOptions = keyboardOptions,
         onKeyboardAction = { onDone() },
         inputTransformation = InputTransformation.maxLength(255),
         modifier = modifier.fillMaxWidth().focusRequester(requester)

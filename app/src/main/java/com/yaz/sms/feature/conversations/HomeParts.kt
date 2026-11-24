@@ -53,14 +53,21 @@ import com.yaz.sms.ui.icon.AppIcons
 
 internal val LINE_WIDTH = 640.dp
 
-/** A section's name above its conversations. */
+/**
+ * A section's name above its conversations: titleMedium, bold, onSurface, centred, as the Services card's title
+ * (Material 3's Typography.titleMedium, 16 sp; the small primary line on the left read as a caption).
+ * https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Typography.kt#Typography
+ * not ported: Typography's constructor and its other styles (the theme already holds the type scale)
+ */
 @Composable
 internal fun Heading(text: String) {
     Text(
         text,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().padding(start = 8.dp, top = 8.dp)
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurface,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        modifier = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth().padding(top = 8.dp)
     )
 }
 

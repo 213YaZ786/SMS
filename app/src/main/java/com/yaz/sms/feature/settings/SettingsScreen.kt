@@ -159,12 +159,15 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
     // https://github.com/213YaZ786/Language/blob/main/app/src/main/java/com/yaz/language/feature/settings/SettingsScreen.kt#SettingsScreen
     val guideValue = rememberSetupTiles().leftText()
 
-    val tiles: Map<SettingsSection, List<SettingsSwitchTile>> = mapOf(
+    val tiles: Map<SettingsSection, List<SettingsTile>> = mapOf(
         CHAT to listOf(
+            // A switch tile (accent wash, switch role); its second line reads "On, connected", "On, connecting"
+            // or "Off" (the engine's status, lower-cased) in place of On / Off.
             SettingsSwitchTile(
                 id = "chat", name = "Encrypted chat", title = "Encrypted chat with SMS users", icon = AppIcons.Lock,
                 summary = if (settings.richChat) chatDetail?.let { "$chatStatus, $it" } ?: chatStatus else "Messages go as SMS and MMS only.",
                 checked = settings.richChat,
+                stateText = if (settings.richChat) "On, ${chatStatus.lowercase()}" else "Off",
                 onChange = { on ->
                     viewModel.setRichChat(on)
                     if (on) com.yaz.sms.core.chat.ChatLife.wake() else chat.stop()
@@ -386,10 +389,8 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 bottom = 0.dp,
                 scroll = if (wide) detailScroll else compactScroll,
                 top = { FloatingTop("Settings", leading = { FloatingAction(AppIcons.ArrowBack, "Back", onBack) }) },
-                largeTitle = LargeTitle(
-                    "Settings",
-                    status = if (settings.richChat) "Encrypted chat, ${chatStatus.lowercase()}" else "SMS and MMS only"
-                )
+                // The title alone, as Material 3's LargeTopAppBar holds a title only.
+                largeTitle = LargeTitle("Settings")
             ) { padding ->
                 if (wide) {
                     SettingsListDetail(
@@ -529,26 +530,33 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
  */
 @Composable
 private fun OwnNumberDialog(current: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
-    var number by remember { mutableStateOf(current) }
+    // The number already there is selected whole, as DocumentsUI's rename does
+    // https://raw.githubusercontent.com/LineageOS/android_packages_apps_DocumentsUI/lineage-23.0/src/com/android/documentsui/dirlist/RenameDocumentFragment.java#RenameDocumentFragment
+    val state = com.yaz.sms.ui.component.rememberDialogNameState(current, selectAll = current.isNotEmpty())
+    // Only the characters of a number are kept, 24 at most, when it is read (the kit's field takes any text).
+    val number = state.text.toString().filter { c -> c.isDigit() || c in "+ ()-." }.take(24)
     val valid = number.isBlank() || number.count { it.isDigit() } >= MIN_DIGITS
+    val save: () -> Unit = {
+        if (valid) {
+            onSave(number.trim())
+            onDismiss()
+        }
+    }
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("My number") },
         text = {
-            androidx.compose.material3.OutlinedTextField(
-                value = number,
-                onValueChange = { number = it.filter { c -> c.isDigit() || c in "+ ()-." }.take(24) },
-                singleLine = true,
-                isError = !valid,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone),
-                placeholder = { Text("+33 6 12 34 56 78") }
+            com.yaz.sms.ui.component.DialogNameField(
+                state = state, label = "Phone number", onDone = save,
+                // A phone keypad (Google Messages' number field); the digit filter above stays.
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone,
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                )
             )
         },
         confirmButton = {
-            BoldButton(filled = true, enabled = valid, onClick = {
-                onSave(number.trim())
-                onDismiss()
-            }) { Text("Save") }
+            BoldButton(filled = true, enabled = valid, onClick = save) { Text("Save") }
         },
         dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )

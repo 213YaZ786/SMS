@@ -97,6 +97,8 @@ class SettingsSwitchTile(
     override val summary: String,
     val checked: Boolean,
     val enabled: Boolean = true,
+    // The second line in place of On / Off (QSTileViewImpl's secondaryLabel, the tile state's text); null keeps On / Off.
+    val stateText: String? = null,
     val onChange: (Boolean) -> Unit
 ) : SettingsTile
 
@@ -336,7 +338,7 @@ fun SettingsTileGrid(tiles: List<SettingsTile>, onExplain: (SettingsTile) -> Uni
 private fun SwitchTileView(tile: SettingsSwitchTile, nameSize: TextUnit, modifier: Modifier = Modifier, onExplain: () -> Unit) {
     val haptics = rememberHaptics()
     val on = tile.checked
-    val state = if (on) "On" else "Off"
+    val state = tile.stateText ?: if (on) "On" else "Off"
     TileFace(
         nameSize = nameSize,
         icon = tile.icon,

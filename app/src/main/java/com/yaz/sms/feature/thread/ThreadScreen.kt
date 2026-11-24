@@ -1771,9 +1771,13 @@ private fun Bubble(
     val ringAccent = MaterialTheme.colorScheme.primary
     val ringGround = MaterialTheme.colorScheme.surface
     val ringTrack = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
-    var confirmDeleteAll by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
-    if (confirmDelete) DeleteDialog(m, onDeletionCompleted = onDelete, onDismiss = { confirmDelete = false })
+    if (confirmDelete) DeleteDialog(
+        m,
+        onDeletionCompleted = onDelete,
+        deleteForEveryone = { if (chatId != null) onDeleteForAll(chatId) },
+        onDismiss = { confirmDelete = false }
+    )
     var selecting by remember { mutableStateOf(false) }
     var sendingAgain by remember { mutableStateOf(false) }
     // A reaction chosen in the bar or picked: sent the way this conversation sends one (the chat, or SMS in Google's or
@@ -1801,20 +1805,6 @@ private fun Bubble(
         },
         onDismiss = { sendingAgain = false }
     )
-    if (confirmDeleteAll && chatId != null) {
-        ZoneAlertDialog(
-            onDismissRequest = { confirmDeleteAll = false },
-            title = { Text("Delete for everyone?") },
-            text = { Text("The message goes from this conversation, here and on the other phone.") },
-            confirmButton = {
-                BoldButton(filled = true, onClick = {
-                    confirmDeleteAll = false
-                    onDeleteForAll(chatId)
-                }) { Text("Delete") }
-            },
-            dismissButton = { QuietButton(onClick = { confirmDeleteAll = false }) { Text("Cancel") } }
-        )
-    }
     // Translate: the words in the user's language, in the same bubble, with a line to switch to the original. The idea is
     // WhatsApp's and iOS 26 Messages' (the translation in the bubble, a tap shows the original); in memory only, never
     // stored, never sent. Translator is DavidVentura/offline-translator, reached through its AidlTranslationService
@@ -2208,8 +2198,8 @@ private fun Bubble(
                     MessageAction(AppIcons.Info, "Details") { showingDetails = true },
                     if (chatId != null) MessageAction(AppIcons.PushPin, if (rich?.pinned == true) "Unpin" else "Pin") { onPin(chatId, rich?.pinned != true) } else null,
                     if (m.box == MessageBox.FAILED) MessageAction(AppIcons.Send, "Try again") { onRetry() } else null,
-                    if (chatId != null && rich?.mine == true) MessageAction(AppIcons.Delete, "Delete for everyone", danger = true) { confirmDeleteAll = true } else null,
-                    MessageAction(AppIcons.Delete, if (chatId != null && rich?.mine == true) "Delete for me" else "Delete", danger = true) { confirmDelete = true }
+                    // One Delete; a chat message of one's own then asks for me or for everyone (deleteChoices).
+                    MessageAction(AppIcons.Delete, "Delete", danger = true) { confirmDelete = true }
                 ),
                 onReact = { emoji -> react(emoji) },
                 onDismiss = { menuOpen = false },
@@ -2344,13 +2334,18 @@ private fun Bubble(
     }
 }
 
+// Signal's isNoteToSelfDelete runs `all` over the records, each isOutgoing; this one asks the same of a chat message.
+// https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/util/DeleteDialog.kt#isNoteToSelfDelete
+internal fun isValidRemoteDeleteSend(messageRecords: Set<Message>): Boolean =
+    messageRecords.all { messageRecord: Message -> messageRecord.rich && messageRecord.box != MessageBox.RECEIVED }
+
 /**
  * Signal's DeleteDialog.show: a title, a message (none when there is nothing to warn of, isNoteToSelfDelete there), the
  * positive button that deletes and a cancel; onDeletionCompleted is [onDeletionCompleted] here. An SMS or an MMS stays on
- * the other phone, a chat message of the user's own is deleted for everyone through its own menu item.
+ * the other phone, a chat message of the user's own also offers Delete for everyone (isValidRemoteDeleteSend).
  * https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/util/DeleteDialog.kt#show
  * (and Signal's fragment, https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversation/v2/ConversationFragment.kt#onMessageWithErrorClicked)
- * not ported: show (this composable is the dialog itself), onMessageWithErrorClicked (ported in ThreadContent), handleAdminDeleteForEveryone (Signal's remote delete), handleDeleteForEveryone (same), deleteForEveryone (the chat has its own item), doInBackground (one row, the answer decides)
+ * not ported: show (this composable is the dialog itself), onMessageWithErrorClicked (ported in ThreadContent), handleAdminDeleteForEveryone (Signal's remote delete), handleDeleteForEveryone (same), deleteForEveryone (the dialog's parameter, RichChat.deleteForAll answers it), doInBackground (one row, the answer decides)
  */
 @Composable
 internal fun DeleteDialog(
@@ -2358,13 +2353,26 @@ internal fun DeleteDialog(
     title: String = "Delete this message?",
     message: String? = if (messageRecord.rich) null else "It stays on their phone",
     onDeletionCompleted: () -> Unit,
+    deleteForEveryone: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/util/DeleteDialog.kt#show
+    // Signal's show: "Delete for me" the positive button and "Delete for everyone" the neutral one, only when
+    // isValidRemoteDeleteSend; here for everyone (red) is the confirm button, for me the other, a tap outside cancels.
+    val remote = isValidRemoteDeleteSend(setOf(messageRecord))
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = message?.let { @Composable { Text(it) } },
-        confirmButton = { BoldButton(filled = true, onClick = { onDismiss(); onDeletionCompleted() }) { Text("Delete") } },
+        confirmButton = {
+            if (remote) BoldButton(filled = true, onClick = { onDismiss(); deleteForEveryone() }) {
+                Text("Delete for everyone", color = MaterialTheme.colorScheme.error)
+            } else BoldButton(filled = true, onClick = { onDismiss(); onDeletionCompleted() }) { Text("Delete") }
+        },
+        // Delete for me is the neutral button (AlertController's third), Cancel the dismiss one.
+        neutralButton = if (remote) {
+            @Composable { QuietButton(onClick = { onDismiss(); onDeletionCompleted() }) { Text("Delete for me") } }
+        } else null,
         dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
@@ -2451,26 +2459,32 @@ private fun forward(context: android.content.Context, text: String, parts: List<
     }.start()
 }
 
-/** A group's name, written by hand; empty gives back the list of its members. */
+/**
+ * A group's name, written by hand; empty gives back the list of its members. Laid out as DocumentsUI's rename: the
+ * label floats on the border, the cursor at the start, a rename selects the whole name, the Done key saves.
+ * https://raw.githubusercontent.com/LineageOS/android_packages_apps_DocumentsUI/lineage-23.0/src/com/android/documentsui/dirlist/RenameDocumentFragment.java#RenameDocumentFragment
+ * not ported: the file extension kept out of the selection, the name clash check (a group has neither)
+ */
 @Composable
 internal fun GroupNameDialog(current: String, onDone: (String) -> Unit, onDismiss: () -> Unit) {
-    var name by remember { mutableStateOf(current) }
+    // A name already there is selected whole (RenameDocumentFragment's selectAll), a new one starts empty.
+    val state = com.yaz.sms.ui.component.rememberDialogNameState(current, selectAll = current.isNotEmpty())
+    // Cut on a whole grapheme at saving (Signal's BreakIteratorCompat, core/common/Graphemes.kt).
+    val save: () -> Unit = { onDone(state.text.toString().takeWhole(80)) }
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Name the group") },
         text = {
-            androidx.compose.material3.OutlinedTextField(
-                value = name,
-                // Cut on a whole grapheme (Signal's BreakIteratorCompat, core/common/Graphemes.kt); a name is capitalised
-                // by word, as AOSP Contacts' name fields are (KeyboardCapitalization.Words,
-                // https://developer.android.com/reference/kotlin/androidx/compose/ui/text/input/KeyboardCapitalization).
-                onValueChange = { name = it.takeWhole(80) },
-                singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Words),
-                placeholder = { Text("Family, Friday team…") }
+            com.yaz.sms.ui.component.DialogNameField(
+                state = state, label = "Group name", onDone = save,
+                // Each word capitalised, as Google Messages' group name field.
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Words,
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                )
             )
         },
-        confirmButton = { BoldButton(filled = true, onClick = { onDone(name) }) { Text("Save") } },
+        confirmButton = { BoldButton(filled = true, onClick = save) { Text("Save") } },
         dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

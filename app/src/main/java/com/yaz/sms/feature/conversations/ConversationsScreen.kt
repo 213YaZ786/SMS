@@ -49,6 +49,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.launch
@@ -83,6 +85,16 @@ import com.yaz.sms.feature.main.rememberSetup
 import com.yaz.sms.core.dial.People
 import com.yaz.sms.feature.thread.Delivery
 import com.yaz.sms.ui.component.ContactAvatar
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
+import com.yaz.sms.ui.component.DropdownMenuGroup
+import com.yaz.sms.ui.component.GlassMenu
+import com.yaz.sms.ui.component.MenuPill
+import com.yaz.sms.ui.component.HoldAction
+import com.yaz.sms.ui.component.HoldMenu
+import com.yaz.sms.ui.component.SelectableDropdownMenuItem
+import com.yaz.sms.ui.component.TopActionSize
 import com.yaz.sms.ui.component.EmptyZone
 import com.yaz.sms.ui.component.FloatingPane
 import com.yaz.sms.ui.component.LoadingMark
@@ -232,12 +244,18 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     val spamCount = remember(all, settings.archived, trashed, spamThreads) {
         all.count { it.threadId in spamThreads && !Lists.isArchived(it, settings.archived) && !Lists.isTrashed(it, trashed) }
     }
+    // What the Unread entry of the filter menu would show, the same rule as the list.
+    val unreadCount = remember(all, settings.pinned, settings.archived, trashed, spamThreads) {
+        Lists.shown(all, Filter.UNREAD, settings.pinned, settings.archived, trashed = trashed, spam = spamThreads).size
+    }
     // Conversations the store no longer holds leave the Trash's list.
     androidx.compose.runtime.LaunchedEffect(all) {
         if (all.isNotEmpty()) trash.keepThreads(all.mapTo(HashSet()) { it.threadId })
     }
     var servicesOpen by rememberSaveable { mutableStateOf(false) }
     var peeking by remember { mutableStateOf<Conversation?>(null) }
+    // The card held by a long press, with its bounds in the window: lifted in place over the blurred list (HoldMenu).
+    var holding by remember { mutableStateOf<Pair<Conversation, androidx.compose.ui.geometry.Rect>?>(null) }
     // Several conversations taken at once (AOSP Messaging's multi select,
     // MultiSelectActionModeCallback): archive, read, block or delete in one go.
     var picked by remember { mutableStateOf<Set<Long>?>(null) }
@@ -440,15 +458,22 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         if (taking == null && filter != Filter.TRASH) peeking = c
         else picked = (if (taking != null && c.threadId in taking) taking - c.threadId else (taking ?: emptySet()) + c.threadId).ifEmpty { null }
     }
+    // A long press on a card: its actions where it stands. In the Trash, or with a selection going, it selects as before.
+    val holdConversation: (Conversation, androidx.compose.ui.geometry.Rect) -> Unit = { c, at ->
+        if (picked == null && filter != Filter.TRASH) holding = c to at else peekConversation(c)
+    }
     // A group's people, up to four, for the cluster of their faces (Element X's AvatarCluster).
     fun membersOf(c: Conversation): List<PinnedFace> = if (!c.group) emptyList() else c.addresses.take(4).map { a ->
         val e = index.find(T9.clean(a))
         PinnedFace(e?.name ?: "", e?.photo, e?.look)
     }
-    val line: @Composable (Conversation, Modifier) -> Unit = { c, cardModifier ->
+    // [lifted] is the copy HoldMenu draws in its own window: it opens nothing, swipes nothing and holds nothing again.
+    val lineOf: @Composable (Conversation, Modifier, Boolean) -> Unit = { c, cardModifier, lifted ->
         ConversationLine(
             c,
             modifier = cardModifier,
+            onHold = if (lifted) null else ({ at -> holdConversation(c, at) }),
+            hidden = !lifted && holding?.first?.threadId == c.threadId,
             members = remember(c.addresses, index) { membersOf(c) },
             name = nameOf(c),
             // The thread's rule (ThreadScreen holdMedia): the media of a message received from a number not in the
@@ -459,11 +484,11 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             photo = if (c.group) null else index.find(T9.clean(c.address))?.photo,
             look = if (c.group) null else index.find(T9.clean(c.address))?.look,
             pinned = c.threadId in settings.pinned,
-            onOpen = { openConversation(c) },
-            onPeek = { peekConversation(c) },
+            onOpen = { if (!lifted) openConversation(c) },
+            onPeek = { if (!lifted) peekConversation(c) },
             encrypted = remember(links, c.threadId) { encrypted(c) },
-            left = if (picked != null || filter == Filter.TRASH) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE),
-            right = if (picked != null || filter == Filter.TRASH) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE),
+            left = if (lifted || picked != null || filter == Filter.TRASH) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeLeft, com.yaz.sms.core.sms.SwipeAction.ARCHIVE),
+            right = if (lifted || picked != null || filter == Filter.TRASH) com.yaz.sms.core.sms.SwipeAction.NONE else com.yaz.sms.core.sms.SwipeAction.of(settings.swipeRight, com.yaz.sms.core.sms.SwipeAction.DELETE),
             note = if (filter == Filter.TRASH) trashed[c.threadId]?.let { Trash.daysLabel(Trash.daysLeft(it, System.currentTimeMillis())) } else null,
             archived = Lists.isArchived(c, settings.archived),
             onSwipe = { action ->
@@ -486,6 +511,7 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             target = query.trim()
         )
     }
+    val line: @Composable (Conversation, Modifier) -> Unit = { c, cardModifier -> lineOf(c, cardModifier, false) }
 
     val archive = filter == Filter.ARCHIVED
     val inTrash = filter == Filter.TRASH
@@ -530,20 +556,21 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
         title = if (archive) "Archive" else if (inTrash) "Trash" else null,
         onOpenSettings = onOpenSettings,
         scroll = listState,
-        // Top left, facing Settings: the archive, and back from it or from the Trash.
-        leading = {
+        // Top left, facing Settings: back from the archive, the Trash or Spam (the filter menu leads there).
+        leading = if (apart) ({
             com.yaz.sms.ui.component.FloatingAction(
-                if (apart) AppIcons.ArrowBack else AppIcons.Archive,
-                if (apart) "Back to messages" else "Archive",
+                AppIcons.ArrowBack, "Back to messages",
                 {
                     searching = false
                     query = ""
                     picked = null
-                    filter = if (apart) Filter.ALL else Filter.ARCHIVED
+                    filter = Filter.ALL
                 }
             )
-        },
-        center = if (apart || !canFilter) null else ({
+        }) else null,
+        // One glass capsule (the user, 2026-11-24): the filter menu at its start, the search after it. A tap on the
+        // search part opens the field in its place, as before.
+        center = if (!canFilter) null else ({
             androidx.compose.animation.AnimatedContent(searching || query.isNotEmpty(), label = "search") { open ->
                 if (open) SearchPill(
                     query, { query = it }, hint = "Search",
@@ -551,39 +578,26 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
                     floating = true, autoFocus = searching && query.isEmpty(),
                     onClose = { searching = false }
                 )
-                else Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    com.yaz.sms.ui.component.FloatingAction(AppIcons.Search, "Search", {
-                        rememberedHaptics.tick()
-                        searching = true
-                    })
-                    val unreadOnly = filter == Filter.UNREAD
-                    FloatingPane(shape = CircleShape, accent = unreadOnly, onClick = {
-                        rememberedHaptics.tick()
-                        filter = if (unreadOnly) Filter.ALL else Filter.UNREAD
-                    }) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            Icon(AppIcons.MarkUnread, contentDescription = null, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Unread", style = MaterialTheme.typography.labelLarge)
-                        }
-                    }
+                else HomeHeaderLayoutMobile { widthStyle ->
+                    FilterCapsule(
+                        filter = filter,
+                        unreadCount = unreadCount,
+                        spamCount = spamCount,
+                        spamOn = settings.spamProtection,
+                        onFilter = {
+                            picked = null
+                            filter = it
+                        },
+                        onSearch = {
+                            rememberedHaptics.tick()
+                            searching = true
+                        },
+                        modifier = widthStyle
+                    )
                 }
             }
         }),
         controls = {
-            // In the archive and the Trash, the search stays on its own line under the name, with
-            // the way from one to the other beside it.
-            if (apart && canFilter) Filters(
-                query, { query = it }, filter,
-                listOfNotNull(
-                    Filter.ARCHIVED to "Archive",
-                    Filter.TRASH to "Trash",
-                    if (settings.spamProtection) Filter.SPAM to (if (spamCount > 0) "Spam $spamCount" else "Spam") else null
-                )
-            ) {
-                picked = null
-                filter = it
-            }
             // The starred messages of every conversation, where the search lives (Google Messages).
             if (!apart && canFilter && (searching || query.isNotEmpty())) Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
                 com.yaz.sms.feature.thread.StarredEntry { starredOpen = true }
@@ -907,6 +921,34 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
             dismissButton = if (isDefaultSmsApp) null else ({ QuietButton(onClick = { deleteFailed = 0 }) { Text("Close") } })
         )
     }
+    // A long press on a card: Element X's RoomListContextMenu, shown for the card held. The handlers are the list's own.
+    // https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/home/impl/src/main/kotlin/io/element/android/features/home/impl/roomlist/RoomListContextMenu.kt#RoomListContextMenu
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/conversationlist/ConversationListFragment.java#handlePin
+    // not ported: eventSink and RoomListEvent (the handlers are called), onRoomSettingsClick (no room settings page)
+    // not ported: handlePin (ported above in this function, its call is the favourite change)
+    // not ported: RoomListContextMenu (ported as the function of this name below in this file)
+    holding?.let { (c, at) ->
+        RoomListContextMenu(
+            contextMenu = RoomListState.ContextMenu.Shown(
+                roomName = nameOf(c),
+                hasNewContent = c.unread > 0,
+                isFavorite = c.threadId in settings.pinned,
+                isArchived = Lists.isArchived(c, settings.archived),
+                isSpam = c.threadId in spamThreads
+            ),
+            canReportRoom = canReport(c),
+            bounds = at,
+            onRoomMarkReadClick = { messages.markRead(c.threadId) },
+            onRoomMarkUnreadClick = { handleMarkAsUnread(listOf(c)) },
+            onFavoriteChange = { isFavorite -> if (isFavorite) handlePin(listOf(c)) else handleUnpin(listOf(c.threadId)) },
+            onArchiveChange = { isArchived -> onActionBarArchive(listOf(c), isArchived) },
+            onRoomSelectClick = { picked = setOf(c.threadId) },
+            onLeaveRoomClick = { onActionBarTrash(listOf(c)) },
+            onReportRoomClick = { reporting = c },
+            onNotSpamClick = { notSpam(c) },
+            onDismissRequest = { holding = null }
+        ) { lineOf(c, Modifier.fillMaxSize(), true) }
+    }
     peeking?.let { c ->
         Peek(
             c,
@@ -971,49 +1013,247 @@ fun ConversationsScreen(onOpenSettings: () -> Unit, onOpenThread: (Long, String)
     }
 }
 
-/** The search and, as in Dialer's calls, the places to switch between on the same line, in glass (the Archive and the Trash). */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun Filters(
-    query: String, onQuery: (String) -> Unit, filter: Filter, chips: List<Pair<Filter, String>>,
-    selected: (Filter) -> Boolean = { it == filter },
-    onFilter: (Filter) -> Unit
-) {
-    val haptics = rememberHaptics()
-    // Three places do not fit beside the search on a phone: the search takes its own line.
-    val stacked = chips.size > 2
-    if (stacked) Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
-        SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(), floating = true)
+/** RoomListState.ContextMenu.Shown: what the menu is shown for, with the archive and spam states this list also has. */
+internal object RoomListState {
+    object ContextMenu {
+        data class Shown(val roomName: String?, val hasNewContent: Boolean, val isFavorite: Boolean, val isArchived: Boolean, val isSpam: Boolean)
     }
-    val chipsRow: @Composable () -> Unit = {
-        chips.forEach { (value, label) ->
-            FloatingPane(
-                shape = CircleShape,
-                accent = selected(value),
-                onClick = {
-                    haptics.tick()
-                    onFilter(value)
-                }
-            ) {
-                Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp))
-            }
+}
+
+/**
+ * RoomListContextMenu: the menu of one room. Element X shows it in a ModalBottomSheet; HoldMenu lifts the card where it
+ * stands over the blurred list instead, the actions as round glass tiles under it. Each click does what the eventSink's
+ * event did, through the list's handlers.
+ * https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/home/impl/src/main/kotlin/io/element/android/features/home/impl/roomlist/RoomListContextMenu.kt#RoomListContextMenu
+ * not ported: ModalBottomSheet and scrollable (HoldMenu's own window), HideContextMenu and RoomListEvent (onDismiss and
+ * the handlers), onRoomSettingsClick (no room settings page in SMS), RoomListContextMenuPreview (a preview)
+ */
+@Composable
+internal fun RoomListContextMenu(
+    contextMenu: RoomListState.ContextMenu.Shown,
+    canReportRoom: Boolean,
+    bounds: Rect,
+    onRoomMarkReadClick: () -> Unit,
+    onRoomMarkUnreadClick: () -> Unit,
+    onFavoriteChange: (isFavorite: Boolean) -> Unit,
+    onArchiveChange: (isArchived: Boolean) -> Unit,
+    onRoomSelectClick: () -> Unit,
+    onLeaveRoomClick: () -> Unit,
+    onReportRoomClick: () -> Unit,
+    onNotSpamClick: () -> Unit,
+    onDismissRequest: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    HoldMenu(
+        bounds = bounds,
+        actions = RoomListModalBottomSheetContent(
+            contextMenu = contextMenu,
+            canReportRoom = canReportRoom,
+            onRoomMarkReadClick = onRoomMarkReadClick,
+            onRoomMarkUnreadClick = onRoomMarkUnreadClick,
+            onFavoriteChange = onFavoriteChange,
+            onArchiveChange = onArchiveChange,
+            onRoomSelectClick = onRoomSelectClick,
+            onLeaveRoomClick = onLeaveRoomClick,
+            onReportRoomClick = onReportRoomClick,
+            onNotSpamClick = onNotSpamClick
+        ),
+        onDismiss = onDismissRequest,
+        held = content
+    )
+}
+
+/**
+ * RoomListModalBottomSheetContent: the rows of the menu, as HoldMenu's actions, in Element X's steps: mark as read when
+ * the room has new content, else as unread; favourite named by its state (a plain action, the Switch row is not drawn);
+ * report and leave in the destructive style (leave is Delete, which moves to the Trash). Archive and Select take the
+ * place of the room's Settings row; in Spam the report row is Not spam.
+ * https://raw.githubusercontent.com/element-hq/element-x-android/develop/features/home/impl/src/main/kotlin/io/element/android/features/home/impl/roomlist/RoomListContextMenu.kt#RoomListModalBottomSheetContent
+ * not ported: the Column with verticalScroll and the ListItem rows (HoldPalette draws the tiles), the room name's
+ * ListItem and FontStyle.Italic (the card is the heading), ListItemContent.Switch and ListItemStyle, stringResource and
+ * CompoundIcons (Material Symbols of AppIcons)
+ */
+internal fun RoomListModalBottomSheetContent(
+    contextMenu: RoomListState.ContextMenu.Shown,
+    canReportRoom: Boolean,
+    onRoomMarkReadClick: () -> Unit,
+    onRoomMarkUnreadClick: () -> Unit,
+    onFavoriteChange: (isFavorite: Boolean) -> Unit,
+    onArchiveChange: (isArchived: Boolean) -> Unit,
+    onRoomSelectClick: () -> Unit,
+    onLeaveRoomClick: () -> Unit,
+    onReportRoomClick: () -> Unit,
+    onNotSpamClick: () -> Unit
+): List<HoldAction> = listOfNotNull(
+    if (contextMenu.isFavorite) HoldAction(AppIcons.PushPin, "Unpin") { onFavoriteChange(false) }
+    else HoldAction(AppIcons.PushPin, "Pin") { onFavoriteChange(true) },
+    if (contextMenu.isArchived) HoldAction(AppIcons.Unarchive, "Unarchive") { onArchiveChange(false) }
+    else HoldAction(AppIcons.Archive, "Archive") { onArchiveChange(true) },
+    if (contextMenu.hasNewContent) HoldAction(AppIcons.DoneAll, "Mark read") { onRoomMarkReadClick() }
+    else HoldAction(AppIcons.MarkUnread, "Mark unread") { onRoomMarkUnreadClick() },
+    HoldAction(AppIcons.SelectAll, "Select") { onRoomSelectClick() },
+    HoldAction(AppIcons.Delete, "Delete", danger = true) { onLeaveRoomClick() },
+    if (contextMenu.isSpam) HoldAction(AppIcons.ReportOff, "Not spam") { onNotSpamClick() }
+    else if (canReportRoom) HoldAction(AppIcons.Report, "Report spam") { onReportRoomClick() }
+    else null
+)
+
+/**
+ * HomeHeaderLayoutMobile: the list's one top row as Bluesky's home header lays it out: a slot at each side (TabFrame's
+ * Back and Settings), the children in the middle, their width kept to a centre column (`widthStyle`, CENTER_COLUMN_WIDTH
+ * on a tablet). The children are the capsule: the filter pill at its start, Search after it.
+ * https://raw.githubusercontent.com/bluesky-social/social-app/main/src/view/com/home/HomeHeaderLayoutMobile.tsx#HomeHeaderLayoutMobile
+ * not ported: StatusBarFade (the frame's own soft edge), the Animated.View with headerMinimalShellTransform and onLayout,
+ * the Logo and its PressableScale, the feeds Link, useSession, useNavigation, useAnalytics and the haptics of the logo
+ * (nothing of it exists here), IS_NATIVE and IS_LIQUID_GLASS (this is native glass)
+ */
+@Composable
+internal fun HomeHeaderLayoutMobile(children: @Composable (widthStyle: Modifier) -> Unit) {
+    val widthStyle = Modifier.widthIn(max = CENTER_COLUMN_WIDTH).fillMaxWidth()
+    children(widthStyle)
+}
+
+private val CENTER_COLUMN_WIDTH = 520.dp
+
+/**
+ * The filter menu of the capsule: Material 3 Expressive's grouped menu (DropdownMenuGroup of SelectableDropdownMenuItem),
+ * All and Unread with its count in the first group, Archive, Spam with its count and Trash in the second, the shown one
+ * checked. It opens under the pill, in a window of its own (GlassMenu).
+ * https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Menu.kt#SelectableDropdownMenuItem
+ * not ported: SelectableDropdownMenuItem itself, MenuItemShapes and SelectableMenuItemColors (they are the panes kit's
+ * GlassMenu.kt, which this function calls), supportingText, trailingContent, leadingIcon, enabled, interactionSource
+ */
+@Composable
+private fun FilterMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    filter: Filter,
+    unreadCount: Int,
+    spamCount: Int,
+    spamOn: Boolean,
+    onClick: (Filter) -> Unit
+) {
+    GlassMenu(expanded = expanded, onDismissRequest = onDismissRequest) {
+        DropdownMenuGroup(index = 0, count = 2) {
+            SelectableDropdownMenuItem(selected = filter == Filter.ALL, onClick = { onClick(Filter.ALL) }, text = "All")
+            SelectableDropdownMenuItem(
+                selected = filter == Filter.UNREAD, onClick = { onClick(Filter.UNREAD) }, text = "Unread",
+                count = unreadCount.takeIf { it > 0 }
+            )
+        }
+        DropdownMenuGroup(index = 1, count = 2) {
+            SelectableDropdownMenuItem(selected = filter == Filter.ARCHIVED, onClick = { onClick(Filter.ARCHIVED) }, text = "Archive")
+            if (spamOn) SelectableDropdownMenuItem(
+                selected = filter == Filter.SPAM, onClick = { onClick(Filter.SPAM) }, text = "Spam",
+                count = spamCount.takeIf { it > 0 }
+            )
+            SelectableDropdownMenuItem(selected = filter == Filter.TRASH, onClick = { onClick(Filter.TRASH) }, text = "Trash")
         }
     }
-    if (stacked) {
-        // Three places (Archive, Trash, Spam) wrap onto a second line when a phone is too narrow, never sideways
-        // (Jetpack Compose FlowRow, https://developer.android.com/develop/ui/compose/layouts/flow).
-        androidx.compose.foundation.layout.FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
-        ) { chipsRow() }
-    } else Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
-    ) {
-        SearchPill(query, onQuery, hint = "Search", modifier = Modifier.widthIn(max = 420.dp).weight(1f, fill = false).fillMaxWidth(), floating = true)
-        chipsRow()
+}
+
+/**
+ * The list's capsule as AppBarWithSearch's sample gives it: the navigation icon is the filter pill with its menu (the
+ * panes kit's MenuPill, a chevron after the filter's name), the input field the Search hint, whose tap opens the field.
+ * https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/SearchBar.kt#AppBarWithSearch
+ * not ported: AppBarWithSearch's state, colors, windowInsets, scrollBehavior and actions (see the function of this name)
+ */
+@Composable
+internal fun FilterCapsule(
+    filter: Filter,
+    unreadCount: Int,
+    spamCount: Int,
+    spamOn: Boolean,
+    onFilter: (Filter) -> Unit,
+    onSearch: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    AppBarWithSearch(
+        modifier = modifier,
+        navigationIcon = {
+            Box {
+                MenuPill(
+                    icon = when (filter) {
+                        Filter.UNREAD -> AppIcons.MarkUnread
+                        Filter.ARCHIVED -> AppIcons.Archive
+                        Filter.SPAM -> AppIcons.Report
+                        Filter.TRASH -> AppIcons.Delete
+                        Filter.ALL -> AppIcons.Message
+                    },
+                    label = when (filter) {
+                        Filter.UNREAD -> "Unread"
+                        Filter.ARCHIVED -> "Archive"
+                        Filter.SPAM -> "Spam"
+                        Filter.TRASH -> "Trash"
+                        Filter.ALL -> "All"
+                    },
+                    expanded = expanded,
+                    trailingIcon = AppIcons.ArrowDown,
+                    onClick = { expanded = true }
+                )
+                FilterMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false },
+                    filter = filter, unreadCount = unreadCount, spamCount = spamCount, spamOn = spamOn,
+                    onClick = {
+                        expanded = false
+                        onFilter(it)
+                    }
+                )
+            }
+        },
+        inputField = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = TopActionSize)
+                    .clip(CircleShape)
+                    .clickable(role = Role.Button, onClickLabel = "Search", onClick = onSearch)
+                    .padding(horizontal = 12.dp)
+            ) {
+                Icon(AppIcons.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Search", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    )
+}
+
+// The capsule's side padding and its vertical room, Material 3's AppBarWithSearchHorizontalPadding and
+// AppBarWithSearchVerticalPadding (4 dp each).
+private val AppBarWithSearchHorizontalPadding = 4.dp
+private val AppBarWithSearchVerticalPadding = 4.dp
+
+/**
+ * AppBarWithSearch: a bar with a navigation icon at its start, the input field taking the room left and actions at its
+ * end, here drawn as one glass capsule (FloatingPane) in the place of Material's Surface. The navigation icon is the
+ * filter pill, the input field the Search part that opens the real field in its place. The body is the source's
+ * AppBarWithSearchImpl: a Row, the icon in a Box padded at the start, the field in a Box with the weight.
+ * https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/SearchBar.kt#AppBarWithSearch
+ * not ported: AppBarWithSearchImpl (its body is this function's), SearchBarState and its expansion (the field opens
+ * through SearchPill), colors and AppBarWithSearchColors, the scrolled colours and animateColorAsState, tonalElevation
+ * and shadowElevation (the glass draws its own), windowInsets and scrollBehavior (TabFrame's top holds it), SearchBarImpl
+ * (the input field is drawn by the caller), the actions slot (Settings is TabFrame's trailing action)
+ */
+@Composable
+private fun AppBarWithSearch(
+    inputField: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    navigationIcon: @Composable (() -> Unit)? = null,
+    shape: androidx.compose.ui.graphics.Shape = CircleShape
+) {
+    FloatingPane(shape = shape, modifier = modifier) {
+        Row(
+            modifier = Modifier.heightIn(min = TopActionSize).padding(horizontal = AppBarWithSearchHorizontalPadding),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            navigationIcon?.let {
+                Box(Modifier.padding(start = AppBarWithSearchHorizontalPadding)) { it() }
+            }
+            Box(modifier = Modifier.weight(1f).padding(vertical = AppBarWithSearchVerticalPadding)) { inputField() }
+        }
     }
 }
 
@@ -1052,6 +1292,13 @@ internal fun ConversationLine(
     /** The words of an older message the search found here, shown in place of the last message, [target] in bold. */
     found: String? = null,
     target: String = "",
+    /**
+     * A long press lifts the card in place (the panes kit's HoldMenu) instead of a glance: called with the card's
+     * bounds in its window. Null keeps [onPeek], as the pinned faces do.
+     */
+    onHold: ((androidx.compose.ui.geometry.Rect) -> Unit)? = null,
+    /** The card is lifted in the menu's window: the original stays in place, drawn clear. */
+    hidden: Boolean = false,
     /** The card's outer size: a column's width by default, a grid cell's in the grid. */
     modifier: Modifier = Modifier.widthIn(max = LINE_WIDTH).fillMaxWidth()
 ) {
@@ -1072,7 +1319,8 @@ internal fun ConversationLine(
     var armed by remember { mutableStateOf(false) }
     val reach = with(androidx.compose.ui.platform.LocalDensity.current) { 88.dp.toPx() }
     val side = if (pull.value < 0f) left else right
-    Box(modifier.pointerInput(c.threadId, left, right) {
+    var bounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    Box(modifier.onGloballyPositioned { bounds = it.boundsInWindow() }.graphicsLayer { alpha = if (hidden) 0f else 1f }.pointerInput(c.threadId, left, right) {
         detectHorizontalDragGestures(
             onDragEnd = {
                 val action = if (pull.value < 0f) left else right
@@ -1157,14 +1405,14 @@ internal fun ConversationLine(
                 interactionSource = press,
                 indication = null,
                 onClickLabel = "Open",
-                onLongClickLabel = "Glance",
+                onLongClickLabel = if (onHold != null) "Actions" else "Glance",
                 onClick = {
                     haptics.tick()
                     onOpen()
                 },
                 onLongClick = {
                     haptics.firm()
-                    onPeek()
+                    if (onHold != null) onHold(bounds) else onPeek()
                 }
             )
         ) {

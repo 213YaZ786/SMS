@@ -12,23 +12,65 @@
 package com.yaz.sms.feature.main
 
 import android.app.role.RoleManager
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
-import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Matrix
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asComposePath
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.graphics.shapes.CornerRounding
+import androidx.graphics.shapes.Morph
+import androidx.graphics.shapes.RoundedPolygon
+import androidx.graphics.shapes.TransformResult
+import androidx.graphics.shapes.circle
+import androidx.graphics.shapes.star
+import androidx.graphics.shapes.toPath
+import com.yaz.sms.ui.component.rememberHaptics
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -48,14 +90,11 @@ import com.yaz.sms.core.chat.RichChat
 import com.yaz.sms.core.update.StoreLink
 import com.yaz.sms.core.update.Updates
 import com.yaz.sms.data.settings.SettingsStore
-import com.yaz.sms.ui.component.BoldButton
 import com.yaz.sms.ui.component.LoadingMark
 import com.yaz.sms.ui.component.SetupTile
 import com.yaz.sms.ui.component.SetupTileDialog
 import com.yaz.sms.ui.component.SetupTileGrid
-import com.yaz.sms.ui.component.leftText
 import com.yaz.sms.ui.component.requiredDone
-import com.yaz.sms.ui.component.requiredLeft
 import com.yaz.sms.ui.icon.AppIcons
 import org.koin.compose.koinInject
 
@@ -153,7 +192,7 @@ internal fun rememberSetupTiles(setup: Setup = rememberSetup()): List<SetupTile>
  * https://github.com/213YaZ786/Language/blob/main/app/src/main/java/com/yaz/language/feature/welcome/WelcomeScreen.kt#WelcomeScreen
  */
 @Composable
-fun WelcomeScreen(reopened: Boolean = false, onStart: () -> Unit) {
+fun WelcomeScreen(reopened: Boolean = false, onStart: (origin: Offset) -> Unit) {
     val context = LocalContext.current
     val setup = rememberSetup()
     val steps = rememberSetupTiles(setup)
@@ -170,12 +209,12 @@ fun WelcomeScreen(reopened: Boolean = false, onStart: () -> Unit) {
         }
     }
 
-    WelcomeContent(steps, reopened, onStart = {
+    WelcomeContent(steps, reopened, onStart = { origin ->
         // The role held: the chat engine wakes now, not at the next opening (ChatLife.wake checks the chat is on).
         if (context.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_SMS)) {
             ChatLife.wake()
         }
-        onStart()
+        onStart(origin)
     }) { explained = it.id }
 
     steps.firstOrNull { it.id == explained }?.let { tile ->
@@ -190,45 +229,165 @@ fun WelcomeScreen(reopened: Boolean = false, onStart: () -> Unit) {
  * https://github.com/213YaZ786/Language/blob/main/app/src/main/java/com/yaz/language/feature/welcome/WelcomeScreen.kt#WelcomeContent
  */
 @Composable
-internal fun WelcomeContent(tiles: List<SetupTile>, reopened: Boolean, onStart: () -> Unit, onExplain: (SetupTile) -> Unit = {}) {
+internal fun WelcomeContent(tiles: List<SetupTile>, reopened: Boolean, onStart: (origin: Offset) -> Unit, onExplain: (SetupTile) -> Unit = {}) {
     val steps = tiles
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-    ) {
+    // WhatsNewView's body: the scrolling content is a block centred in the window when shorter than it (the viewport
+    // is the minimum height of the block). Drawn over the whole window, so it keeps clear of the system bars itself.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val screen = maxHeight
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 8.dp)
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         ) {
-            Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-            Spacer(Modifier.height(40.dp))
-            // The app's own mark, large and ringing, as the guide before the tiles.
-            LoadingMark(size = 160.dp)
-            Spacer(Modifier.height(20.dp))
-            // Every title in the accent (the user, 2026-10-31), as Modules' SettingsSectionTitle.
-            Text("Welcome to SMS", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(8.dp))
-            Text(steps.leftText(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(24.dp))
-            SetupTileGrid(steps, onExplain)
-
-            Spacer(Modifier.height(32.dp))
-            // Without the SMS role the app cannot work: Start waits for it (the required tile), as AOSP Messaging's
-            // PermissionCheckActivity keeps its Next until the permissions are granted.
-            val ready = steps.requiredDone()
-            BoldButton(filled = true, enabled = ready, onClick = onStart) { Text(if (reopened) "Done" else "Start") }
-            if (!ready) {
-                Spacer(Modifier.height(12.dp))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .widthIn(max = 720.dp).fillMaxWidth().heightIn(min = screen)
+                    .windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 8.dp)
+            ) {
+                // The app's own mark, large and moving, then one sentence saying what the app is, the tiles, Start.
+                // No title, no count: each tile shows its own state, a refusal stands on its own tile.
+                LoadingMark(size = 160.dp)
+                Spacer(Modifier.height(20.dp))
                 Text(
-                    "Still needed: " + steps.requiredLeft().joinToString(", ") { it.name },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "Your messages, SMS and encrypted chat, on this phone only.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    modifier = Modifier.padding(horizontal = 24.dp)
                 )
+                Spacer(Modifier.height(24.dp))
+                SetupTileGrid(steps, onExplain)
+                Spacer(Modifier.height(32.dp))
+                // Without the SMS role the app cannot work: Start waits for it (the required tile), as AOSP Messaging's
+                // PermissionCheckActivity keeps its Next until the permissions are granted.
+                StartCookie(description = if (reopened) "Done" else "Start", enabled = steps.requiredDone(), onClick = onStart)
+                Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
             }
-            Spacer(Modifier.height(24.dp))
-            Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
         }
+    }
+}
+
+/*
+ * Start as a cookie. Ported from the snippets' ShapesSnippets.kt, whose MorphPolygonShape turns a Morph between two
+ * polygons into a clip shape at a progress, and from Material 3's MaterialShapes (Cookie9Sided and the circle).
+ * https://raw.githubusercontent.com/android/snippets/main/compose/snippets/src/main/java/com/example/compose/snippets/graphics/ShapesSnippets.kt#MorphPolygonShape
+ * https://raw.githubusercontent.com/androidx/androidx/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/MaterialShapes.kt#Cookie9Sided
+ * not ported: the snippets' other shapes and their previews, MaterialShapes' other polygons and customPolygon
+ */
+
+// FabMediumTokens: ContainerHeight 80 dp, IconSize 28 dp.
+private val FabMediumContainerSize: Dp = 80.dp
+private val FabMediumIconSize: Dp = 28.dp
+
+// Material Symbols Rounded arrow_forward 24px, viewport 960, mirrored in right-to-left.
+// https://raw.githubusercontent.com/google/material-design-icons/master/symbols/android/arrow_forward/materialsymbolsrounded/arrow_forward_24px.xml
+private val ArrowForward: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "ArrowForward",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 960f,
+        viewportHeight = 960f,
+        autoMirror = true
+    ).apply {
+        addPath(
+            pathData = PathParser().parsePathString(
+                "M647,520L200,520Q183,520 171.5,508.5Q160,497 160,480Q160,463 171.5,451.5Q183,440 200,440L647,440" +
+                    "L451,244Q439,232 439.5,216Q440,200 452,188Q464,177 480,176.5Q496,176 508,188L772,452" +
+                    "Q778,458 780.5,465Q783,472 783,480Q783,488 780.5,495Q778,502 772,508L508,772" +
+                    "Q497,783 480.5,783Q464,783 452,772Q440,760 440,743.5Q440,727 452,715L647,520Z"
+            ).toNodes(),
+            fill = SolidColor(Color.Black)
+        )
+    }.build()
+}
+
+// Material 3 Expressive's Cookie9Sided: a nine pointed star, inner radius .8, rounding .5, turned -90 degrees.
+private val Cookie9Sided: RoundedPolygon by lazy {
+    RoundedPolygon.star(numVerticesPerRadius = 9, innerRadius = .8f, rounding = CornerRounding(radius = .5f))
+        .transformed { x, y -> TransformResult(y, -x) }
+}
+
+// MaterialShapes' circle, ten vertices as its default.
+private val RoundCircle: RoundedPolygon by lazy { RoundedPolygon.circle(numVertices = 10) }
+
+private class MorphPolygonShape(private val morph: Morph, private val percentage: Float) : Shape {
+    private val matrix = Matrix()
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        matrix.reset()
+        matrix.scale(size.width / 2f, size.height / 2f)
+        matrix.translate(1f, 1f)
+        val path = morph.toPath(progress = percentage).asComposePath()
+        path.transform(matrix)
+        return Outline.Generic(path)
+    }
+}
+
+/**
+ * Start: an 80 dp cookie in the primary colour with the arrow in onPrimary. Pressed, the cookie morphs to the circle
+ * and sinks to 0.86 on springs; a tap turns it a quarter (the arrow turning back against it), then calls [onClick]
+ * with the button's centre in root coordinates, where the reveal starts. Not enabled, it is dimmed and does nothing.
+ */
+@Composable
+internal fun StartCookie(description: String, onClick: (origin: Offset) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    var centre by remember { mutableStateOf(Offset.Unspecified) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val haptics = rememberHaptics()
+    val morph = remember { Morph(Cookie9Sided, RoundCircle) }
+    val colors = MaterialTheme.colorScheme
+    val progress = remember { Animatable(0f) }
+    val scale = remember { Animatable(1f) }
+    val turn = remember { Animatable(0f) }
+    var quarterTurns by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(pressed) {
+        launch { progress.animateTo(if (pressed) 1f else 0f, spring(stiffness = Spring.StiffnessMedium)) }
+        launch {
+            scale.animateTo(
+                if (pressed) 0.86f else 1f,
+                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+            )
+        }
+    }
+    LaunchedEffect(quarterTurns) {
+        turn.animateTo(quarterTurns * 90f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))
+    }
+
+    Box(
+        modifier = modifier
+            .size(FabMediumContainerSize)
+            .onGloballyPositioned { centre = it.boundsInRoot().center }
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+                rotationZ = turn.value
+                alpha = if (enabled) 1f else 0.38f
+                shape = MorphPolygonShape(morph, progress.value.coerceIn(0f, 1f))
+                clip = true
+            }
+            .background(colors.primary)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = ripple(color = colors.onPrimary),
+                role = Role.Button,
+                onClickLabel = description,
+                onClick = {
+                    haptics.tick()
+                    quarterTurns++
+                    onClick(centre)
+                }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = rememberVectorPainter(ArrowForward),
+            contentDescription = description,
+            colorFilter = ColorFilter.tint(colors.onPrimary),
+            modifier = Modifier.size(FabMediumIconSize).graphicsLayer { rotationZ = -turn.value }
+        )
     }
 }

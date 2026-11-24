@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mms_notice_channel">Sending video</string>
+    <string name="mms_notice_sending">Sending video to %1$s</string>
+</resources>

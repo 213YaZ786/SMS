@@ -82,6 +82,9 @@ import com.yaz.sms.ui.glass.LocalGlass
 import com.yaz.sms.ui.glass.LocalGlassBackdrop
 import com.yaz.sms.ui.glass.glassFloating
 import com.yaz.sms.ui.glass.glassGround
+import com.yaz.sms.ui.component.StartRevealOverlay
+import com.yaz.sms.ui.component.StartRevealState
+import com.yaz.sms.ui.component.startRevealHole
 import com.yaz.sms.ui.glass.glassSource
 import com.yaz.sms.ui.glass.rememberGlassBackdrop
 import com.yaz.sms.ui.icon.AppIcons
@@ -302,6 +305,12 @@ private fun Main(wide: Boolean, open: OpenThread?, onClose: () -> Unit, onOpenSe
         UpdatePrompt(settings.updates, BuildConfig.VERSION_NAME, busy = { com.yaz.sms.core.update.AppBusy.busy(appContext) })
     }
 
+    val startReveal = remember { StartRevealState() }
+    var revealing by remember { mutableStateOf(false) }
+    LaunchedEffect(revealing) {
+        if (revealing) startReveal.startRipple { revealing = false }
+    }
+
     val look = LocalGlass.current
     val backdrop = rememberGlassBackdrop()
     val navigationBar = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -348,21 +357,33 @@ private fun Main(wide: Boolean, open: OpenThread?, onClose: () -> Unit, onOpenSe
                 }
             }
         }
-        if (showWelcome) {
+        // The guide stays drawn over the list while the app opens outward from Start, as MTGA's MainTabs holds it.
+        // Not saved: a turn of the screen ends the reveal.
+        if (showWelcome || revealing) {
             Surface(
-                Modifier.fillMaxSize().glassGround(LocalGlass.current, MaterialTheme.colorScheme.background),
+                Modifier
+                    .fillMaxSize()
+                    .then(if (revealing) Modifier.startRevealHole(startReveal) else Modifier)
+                    .glassGround(LocalGlass.current, MaterialTheme.colorScheme.background),
                 color = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.onBackground
             ) {
                 Readable {
-                    WelcomeScreen(reopened = reopened, onStart = {
+                    WelcomeScreen(reopened = reopened, onStart = { origin ->
                         showWelcome = false
                         reopened = false
                         store.update { it.copy(welcomeSeen = true) }
+                        if (origin != Offset.Unspecified) {
+                            startReveal.origin = origin
+                            startReveal.currentPlayTime = 0f
+                            revealing = true
+                        }
                     })
                 }
             }
         }
+        // The sparkle ripple over the guide and the list, gone with the reveal.
+        if (revealing) StartRevealOverlay(startReveal)
     }
 }
 

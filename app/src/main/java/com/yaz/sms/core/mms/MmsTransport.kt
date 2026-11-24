@@ -62,104 +62,116 @@ object MmsTransport {
     /** Writes and sends a picture message to [recipients]: text and attachments in one. */
     fun send(context: Context, recipients: List<String>, text: String, attachments: List<Attachment>, subId: Int, inThread: Long? = null): Uri? {
         val app = context.applicationContext
-        val sub = if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) subId else SubscriptionManager.getDefaultSmsSubscriptionId()
-        val budget = maxSize(app, sub) - 2 * 1024 - text.toByteArray().size
-        // The body as AOSP Messaging's MmsUtils.makePduBody lays it out (MmsBody): the attachments in order, named
-        // by what they are, the text after them, and a SMIL part describing them put first.
-        val items = ArrayList<MmsBody.Item>()
-        val unfit = ArrayList<Attachment>()
-        val share = if (attachments.isEmpty()) budget else budget / attachments.size
-        attachments.forEach { a ->
-            val claimed = a.contentType
-            var type = claimed
-            val data: ByteArray?
-            if (ContentType.isImageType(claimed)) {
-                // A GIF stays a GIF when it fits the carrier's size (MmsUtils.getResizedImageAsPart keeps image/gif
-                // for a GIF); the signature is checked, a file that claims to be one is decoded like any picture.
-                // Any other picture goes out as a JPEG shrunk to fit.
-                val gif = if (claimed.equals(ContentType.IMAGE_GIF, ignoreCase = true) || ContentType.isUnspecified(claimed))
-                    read(app, a.uri, share)?.takeIf(MmsBody::isGif) else null
-                data = gif ?: shrinkImage(app, a.uri, share)
-                type = if (gif != null) ContentType.IMAGE_GIF else ContentType.IMAGE_JPEG
-            } else if (ContentType.isVideoType(claimed)) {
-                // A film goes as it is when it fits; a bigger one is turned into an MP4 (H.264, AAC) that
-                // fits the carrier's size (MmsVideo, Media3 Transformer), or dropped as before when it cannot be.
-                val whole = read(app, a.uri, share)
-                if (whole != null) {
-                    data = whole
+        // The progress notice of a film being transcoded (MmsSendNotice) is taken away however the work ends:
+        // sent, refused, failed or thrown; the try closes at the end of this function.
+        var notice: MmsSendNotice? = null
+        var left = false
+        try {
+            val sub = if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) subId else SubscriptionManager.getDefaultSmsSubscriptionId()
+            val budget = maxSize(app, sub) - 2 * 1024 - text.toByteArray().size
+            // The body as AOSP Messaging's MmsUtils.makePduBody lays it out (MmsBody): the attachments in order, named
+            // by what they are, the text after them, and a SMIL part describing them put first.
+            val items = ArrayList<MmsBody.Item>()
+            val unfit = ArrayList<Attachment>()
+            val share = if (attachments.isEmpty()) budget else budget / attachments.size
+            attachments.forEach { a ->
+                val claimed = a.contentType
+                var type = claimed
+                val data: ByteArray?
+                if (ContentType.isImageType(claimed)) {
+                    // A GIF stays a GIF when it fits the carrier's size (MmsUtils.getResizedImageAsPart keeps image/gif
+                    // for a GIF); the signature is checked, a file that claims to be one is decoded like any picture.
+                    // Any other picture goes out as a JPEG shrunk to fit.
+                    val gif = if (claimed.equals(ContentType.IMAGE_GIF, ignoreCase = true) || ContentType.isUnspecified(claimed))
+                        read(app, a.uri, share)?.takeIf(MmsBody::isGif) else null
+                    data = gif ?: shrinkImage(app, a.uri, share)
+                    type = if (gif != null) ContentType.IMAGE_GIF else ContentType.IMAGE_JPEG
+                } else if (ContentType.isVideoType(claimed)) {
+                    // A film goes as it is when it fits; a bigger one is turned into an MP4 (H.264, AAC) that
+                    // fits the carrier's size (MmsVideo, Media3 Transformer), or dropped as before when it cannot be.
+                    val whole = read(app, a.uri, share)
+                    if (whole != null) {
+                        data = whole
+                    } else {
+                        // Only a film that is transcoded shows the progress notice, never an SMS or a small MMS.
+                        val shown = notice ?: MmsSendNotice(app, recipients, inThread).also { notice = it }
+                        data = MmsVideo.fit(app, a.uri, share, shown)
+                        if (data != null) type = ContentType.VIDEO_MP4
+                    }
                 } else {
-                    data = MmsVideo.fit(app, a.uri, share)
-                    if (data != null) type = ContentType.VIDEO_MP4
+                    data = read(app, a.uri, share)
                 }
-            } else {
-                data = read(app, a.uri, share)
+                if (data != null) {
+                    val kind = MmsBody.kindOf(type)
+                    // A film or a sound says how long it plays, which the SMIL needs (MmsUtils.getMediaDurationMs).
+                    val length = if (kind == MmsBody.Kind.VIDEO || kind == MmsBody.Kind.AUDIO) durationMs(app, a.uri) else MmsBody.DEFAULT_DURATION
+                    items += MmsBody.Item(type, data, ContentType.getExtensionFromMimeType(type), length)
+                } else {
+                    unfit += a
+                }
             }
-            if (data != null) {
-                val kind = MmsBody.kindOf(type)
-                // A film or a sound says how long it plays, which the SMIL needs (MmsUtils.getMediaDurationMs).
-                val length = if (kind == MmsBody.Kind.VIDEO || kind == MmsBody.Kind.AUDIO) durationMs(app, a.uri) else MmsBody.DEFAULT_DURATION
-                items += MmsBody.Item(type, data, ContentType.getExtensionFromMimeType(type), length)
-            } else {
-                unfit += a
+            // An attachment that could not be made to fit never makes the message vanish: it is kept as a failed message
+            // that holds the attachment as picked (a part read from its Uri), so the thread shows "Not sent" and the
+            // message goes again from its menu (AOSP Messaging keeps a failed message and its parts for ResendMessageAction,
+            // https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/datamodel/action/ResendMessageAction.java).
+            val body = MmsBody.build(items, text) ?: (if (unfit.isNotEmpty()) PduBody() else return null)
+            unfit.forEach { a ->
+                if (!keepable(app, a.uri)) return@forEach
+                body.addPart(PduPart().apply {
+                    setContentType(a.contentType.toByteArray())
+                    setContentLocation("unsent${body.partsNum}".toByteArray())
+                    setDataUri(a.uri)
+                })
             }
-        }
-        // An attachment that could not be made to fit never makes the message vanish: it is kept as a failed message
-        // that holds the attachment as picked (a part read from its Uri), so the thread shows "Not sent" and the
-        // message goes again from its menu (AOSP Messaging keeps a failed message and its parts for ResendMessageAction,
-        // https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/datamodel/action/ResendMessageAction.java).
-        val body = MmsBody.build(items, text) ?: (if (unfit.isNotEmpty()) PduBody() else return null)
-        unfit.forEach { a ->
-            if (!keepable(app, a.uri)) return@forEach
-            body.addPart(PduPart().apply {
-                setContentType(a.contentType.toByteArray())
-                setContentLocation("unsent${body.partsNum}".toByteArray())
-                setDataUri(a.uri)
-            })
-        }
-        val req = SendReq().apply {
-            recipients.forEach { addTo(EncodedStringValue(it)) }
-            date = System.currentTimeMillis() / 1000
-            setBody(body)
-            setContentType(ContentType.MMS_MULTIPART_MIXED.toByteArray())
-            messageClass = PduHeaders.MESSAGE_CLASS_PERSONAL_STR.toByteArray()
-            expiry = 7L * 24 * 60 * 60
-            runCatching {
-                priority = PduHeaders.PRIORITY_NORMAL
-                // A delivery report is always asked for, as the SMS path asks: AOSP Messaging's createMmsSendReq sets
-                // X-Mms-Delivery-Report from isDeliveryReportRequired (its delivery reports preference, on by default
-                // for SMS), https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/sms/MmsUtils.java
-                deliveryReport = PduHeaders.VALUE_YES
-                readReport = PduHeaders.VALUE_NO
+            val req = SendReq().apply {
+                recipients.forEach { addTo(EncodedStringValue(it)) }
+                date = System.currentTimeMillis() / 1000
+                setBody(body)
+                setContentType(ContentType.MMS_MULTIPART_MIXED.toByteArray())
+                messageClass = PduHeaders.MESSAGE_CLASS_PERSONAL_STR.toByteArray()
+                expiry = 7L * 24 * 60 * 60
+                runCatching {
+                    priority = PduHeaders.PRIORITY_NORMAL
+                    // A delivery report is always asked for, as the SMS path asks: AOSP Messaging's createMmsSendReq sets
+                    // X-Mms-Delivery-Report from isDeliveryReportRequired (its delivery reports preference, on by default
+                    // for SMS), https://android.googlesource.com/platform/packages/apps/Messaging/+/refs/heads/main/src/com/android/messaging/sms/MmsUtils.java
+                    deliveryReport = PduHeaders.VALUE_YES
+                    readReport = PduHeaders.VALUE_NO
+                }
+                messageSize = (0 until body.partsNum).sumOf { (body.getPart(it).data?.size ?: 0).toLong() }
             }
-            messageSize = (0 until body.partsNum).sumOf { (body.getPart(it).data?.size ?: 0).toLong() }
-        }
-        val uri = MmsStore.saveOutgoing(app, recipients, body, sub, inThread, deliveryReport = true) ?: return null
-        if (unfit.isNotEmpty()) {
-            MmsStore.setBox(app, uri, Telephony.Mms.MESSAGE_BOX_FAILED)
-            val what = if (unfit.all { ContentType.isVideoType(it.contentType) }) "video" else "attachment"
-            // A Toast from the sending thread through the main looper, as ThreadScreen's own "Not sent yet" notice.
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                android.widget.Toast.makeText(app, "Not sent: the $what is too large for MMS.", android.widget.Toast.LENGTH_LONG).show()
+            val uri = MmsStore.saveOutgoing(app, recipients, body, sub, inThread, deliveryReport = true) ?: return null
+            if (unfit.isNotEmpty()) {
+                MmsStore.setBox(app, uri, Telephony.Mms.MESSAGE_BOX_FAILED)
+                val what = if (unfit.all { ContentType.isVideoType(it.contentType) }) "video" else "attachment"
+                // A Toast from the sending thread through the main looper, as ThreadScreen's own "Not sent yet" notice.
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(app, "Not sent: the $what is too large for MMS.", android.widget.Toast.LENGTH_LONG).show()
+                }
+                return uri
             }
+            var rawStatus = PDU_HEADER_VALUE_UNDEFINED
+            val sent = runCatching {
+                val bytes = PduComposer(app, req).make() ?: error("compose")
+                // A PDU over the carrier's maximum is refused before it leaves (MmsSender.writePduToTempFile).
+                if (bytes.size > maxSize(app, sub)) {
+                    rawStatus = RAW_TELEPHONY_STATUS_MESSAGE_TOO_BIG
+                    error("too big")
+                }
+                val file = file(app, "send-${uri.lastPathSegment}")
+                file.writeBytes(bytes)
+                notice?.setSending()
+                manager(app, sub).sendMultimediaMessage(
+                    app, share(app, file), null, null,
+                    report(app, ACTION_SENT, uri, file, sub, null, null)
+                )
+            }.isSuccess
+            left = sent
+            if (!sent) processResult(app, uri, MMS_REQUEST_MANUAL_RETRY, rawStatus, sub, SmsManager.MMS_ERROR_UNSPECIFIED, 0)
             return uri
+        } finally {
+            notice?.remove(left)
         }
-        var rawStatus = PDU_HEADER_VALUE_UNDEFINED
-        val sent = runCatching {
-            val bytes = PduComposer(app, req).make() ?: error("compose")
-            // A PDU over the carrier's maximum is refused before it leaves (MmsSender.writePduToTempFile).
-            if (bytes.size > maxSize(app, sub)) {
-                rawStatus = RAW_TELEPHONY_STATUS_MESSAGE_TOO_BIG
-                error("too big")
-            }
-            val file = file(app, "send-${uri.lastPathSegment}")
-            file.writeBytes(bytes)
-            manager(app, sub).sendMultimediaMessage(
-                app, share(app, file), null, null,
-                report(app, ACTION_SENT, uri, file, sub, null, null)
-            )
-        }.isSuccess
-        if (!sent) processResult(app, uri, MMS_REQUEST_MANUAL_RETRY, rawStatus, sub, SmsManager.MMS_ERROR_UNSPECIFIED, 0)
-        return uri
     }
 
     /**

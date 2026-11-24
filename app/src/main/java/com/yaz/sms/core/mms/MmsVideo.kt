@@ -131,7 +131,7 @@ internal object MmsVideo {
      * The film at [uri] as bytes of at most [limit], or null: not a film, unreadable, too long for
      * the size, or still too big after [TRIES] tries, each asking less than the one before.
      */
-    fun fit(context: Context, uri: Uri, limit: Int): ByteArray? {
+    fun fit(context: Context, uri: Uri, limit: Int, notice: MmsSendNotice? = null): ByteArray? {
         if (MediaCheck.kind(context, uri) != MediaCheck.Kind.VIDEO) {
             log("not a film by its bytes")
             return null
@@ -154,7 +154,7 @@ internal object MmsVideo {
                 }
                 log("try ${attempt + 1}: limit $limit bytes, video ${asked.videoBitRate} bit/s, audio ${asked.audioBitRate} bit/s, short side ${asked.shortSide}")
                 out.delete()
-                val made = transcode(context, uri, asked, minOf(probe.width, probe.height), out) ?: return null
+                val made = transcode(context, uri, asked, minOf(probe.width, probe.height), out, notice) ?: return null
                 // A file that is empty or missing is a failed export, as Transformer's own docs treat an error:
                 // its output "is not deleted" but is not to be used.
                 val size = out.length()
@@ -232,7 +232,7 @@ internal object MmsVideo {
      * Runs the export on a thread of its own (a Transformer must be used from one thread with a Looper)
      * and waits for it here, cancelling it after [TIMEOUT_MS]. True when [out] holds the film.
      */
-    private fun transcode(context: Context, uri: Uri, plan: MmsVideoBudget.Plan, ownShortSide: Int, out: File): Made? {
+    private fun transcode(context: Context, uri: Uri, plan: MmsVideoBudget.Plan, ownShortSide: Int, out: File, notice: MmsSendNotice?): Made? {
         val thread = HandlerThread("MmsVideo").apply { start() }
         val handler = Handler(thread.looper)
         val done = CountDownLatch(1)
@@ -292,6 +292,8 @@ internal object MmsVideo {
                     .build()
                 running.set(transformer)
                 transformer.start(edited, out.path)
+                // Progress read on the transformer's own thread while the export runs.
+                notice?.watch(handler, transformer) { done.count > 0L }
             } catch (e: Exception) {
                 log("export could not start: ${causes(e)}")
                 done.countDown()
