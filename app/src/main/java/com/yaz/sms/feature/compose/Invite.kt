@@ -43,6 +43,7 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import com.yaz.sms.core.chat.Hello
 import com.yaz.sms.core.chat.RichChat
 import com.yaz.sms.core.security.ScreenGuard
+import com.yaz.sms.core.security.isSensitiveData
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
 import com.yaz.sms.ui.component.BoldButton
@@ -111,11 +112,13 @@ fun InviteDialog(onDismiss: () -> Unit, onJoined: (String) -> Unit) {
         onDismissRequest = onDismiss,
         // The code is not for a screenshot, a recording or another app's overlay.
         properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
+        refuseObscuredTaps = true,
         icon = { Icon(AppIcons.Lock, null) },
         title = { Text("Without a number") },
         text = {
             ScreenGuard()
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // The code reaches only an accessibility tool (TalkBack), as Compose's createNodeInfo gives sensitive data.
+            Column(Modifier.isSensitiveData(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     "They scan your code with their phone's camera, or open your link: an encrypted chat starts, no number given on either side.",
                     style = MaterialTheme.typography.bodyMedium,

@@ -492,6 +492,11 @@ object MmsTransport {
                     MessageNotifier(context).pictureFailed(from)
                 }
             }
+        } catch (e: Exception) {
+            // A bad answer (a PDU the parser or the store could not take) is dropped here, as MmsReceiver drops a
+            // bad push: nothing of the message is logged, nothing is retried (the announcement stays, its tile offers
+            // the download by hand). Not Error: an OutOfMemoryError is not ours to swallow.
+            android.util.Log.e("MmsTransport", "onResult: " + e.javaClass.simpleName)
         } finally {
             file?.delete()
         }

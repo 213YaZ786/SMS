@@ -37,7 +37,9 @@ import androidx.compose.foundation.text.input.maxLength
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusRequester
@@ -67,7 +69,9 @@ fun ZoneAlertDialog(
     title: (@Composable () -> Unit)? = null,
     text: (@Composable () -> Unit)? = null,
     shape: Shape = AlertDialogDefaults.shape,
-    properties: DialogProperties = DialogProperties()
+    properties: DialogProperties = DialogProperties(),
+    // A dangerous confirmation (delete, keys, invite): its window drops touches while another app's window covers it.
+    refuseObscuredTaps: Boolean = false
 ) {
     val glass = LocalGlass.current
     val blur = rememberCrossWindowBlur()
@@ -82,6 +86,19 @@ fun ZoneAlertDialog(
         properties = properties
     ) {
         if (glass != null) BlurBehind(blur = blur)
+        // Defense in depth against tapjacking, as Super Productivity's WebViewBlockActivity sets it on each of its dialogs
+        // (dialog.window?.decorView?.filterTouchesWhenObscured = true): the dialog's window drops a touch while another app's window covers it.
+        // https://raw.githubusercontent.com/super-productivity/super-productivity/master/android/app/src/main/java/com/superproductivity/superproductivity/webview/WebViewBlockActivity.kt#WebViewBlockActivity
+        // not ported: onCreate's layout, insets and texts (a native screen, not a dialog), showOpenWebViewConfirmation,
+        // showOpenWebViewAppInfoConfirmation, showOverrideConfirmation (its own dialogs: ours are ZoneAlertDialog), relaunchApp, present (the WebView check's own flow)
+        val dialog = LocalView.current
+        DisposableEffect(dialog, refuseObscuredTaps) {
+            val window = dialog.rootView
+            val decorView = window
+            val filterTouchesWhenObscured = decorView.filterTouchesWhenObscured
+            if (refuseObscuredTaps) decorView.filterTouchesWhenObscured = true
+            onDispose { decorView.filterTouchesWhenObscured = filterTouchesWhenObscured }
+        }
         ZoneAlertContent(
             confirmButton = confirmButton,
             dismissButton = dismissButton,

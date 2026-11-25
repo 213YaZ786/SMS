@@ -26,7 +26,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.yaz.sms.ui.component.rememberHaptics
 import com.yaz.sms.ui.icon.AppIcons
-import com.yaz.sms.ui.theme.harmonized
+import com.yaz.sms.ui.theme.rememberCustomColor
 import kotlinx.coroutines.launch
 
 /** The green of a phone call. */
@@ -132,7 +132,8 @@ fun CallButtons(
                                 reach.onTap()
                             }
                             // FloatingAction is the panes kit's glass round action (Kyant0/AndroidLiquidGlass's press lens), 48 dp.
-                            if (reach.green) GlassCallButton(reach.icon, reach.label, CallGreen.harmonized(), tap, iconTint = Color.White, diameter = 48.dp)
+                            val call = rememberCustomColor(CallGreen)
+                            if (reach.green) GlassCallButton(reach.icon, reach.label, call.color, tap, iconTint = call.onColor, diameter = 48.dp)
                             else com.yaz.sms.ui.component.FloatingAction(reach.icon, reach.label, tap)
                         }
                     }

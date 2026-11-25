@@ -244,6 +244,11 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinViewMo
                 checked = settings.hideInRecents, onChange = viewModel::setHideInRecents
             ),
             SettingsSwitchTile(
+                id = "screenshots", name = "Block screenshots", title = "Block screenshots", icon = AppIcons.Block,
+                summary = "Screenshots and screen recordings show nothing of the app.",
+                checked = settings.blockScreenshots, onChange = viewModel::setBlockScreenshots
+            ),
+            SettingsSwitchTile(
                 id = "glass", name = "Glass effects", title = "Glass effects", icon = AppIcons.AutoAwesome,
                 summary = "Buttons and panes in liquid glass.",
                 checked = settings.glass, onChange = viewModel::setGlass

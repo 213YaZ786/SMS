@@ -46,6 +46,8 @@ data class Settings(
     val welcomeSeen: Boolean = false,
     /** The app's picture in the recent apps screen stays blank: no messages to be seen there. */
     val hideInRecents: Boolean = true,
+    /** No screenshot or screen recording shows the app (FLAG_SECURE, as Signal's Screen security): off by default. */
+    val blockScreenshots: Boolean = false,
     /** Where the user left the new message button, fractions of its room; below 0, its usual place. */
     val composeX: Float = -1f,
     val composeY: Float = -1f,

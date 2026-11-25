@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import com.yaz.sms.core.chat.EncryptionInfo
 import com.yaz.sms.core.chat.RichChat
 import com.yaz.sms.core.security.ScreenGuard
+import com.yaz.sms.core.security.isSensitiveData
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
 import com.yaz.sms.ui.component.FloatingPane
@@ -89,11 +90,13 @@ fun EncryptionDialog(phone: String, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         // The keys are not for a screenshot, a recording or another app's overlay.
         properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
+        refuseObscuredTaps = true,
         icon = { Icon(AppIcons.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
         title = { Text("Encryption") },
         text = {
             ScreenGuard()
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // The keys reach only an accessibility tool (TalkBack), as Compose's createNodeInfo gives sensitive data.
+            Column(Modifier.isSensitiveData(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 // The words follow the engine's answer: encrypted or not; keys it could not read are said so.
                 if (asked && info == null) Text("Could not read the keys")
                 info?.let { i ->

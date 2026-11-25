@@ -2338,6 +2338,7 @@ internal fun DeleteDialog(
     val remote = isValidRemoteDeleteSend(setOf(messageRecord))
     ZoneAlertDialog(
         onDismissRequest = onDismiss,
+        refuseObscuredTaps = true,
         title = { Text(title) },
         text = message?.let { @Composable { Text(it) } },
         confirmButton = {

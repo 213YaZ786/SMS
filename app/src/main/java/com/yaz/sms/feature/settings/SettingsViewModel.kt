@@ -17,6 +17,9 @@ class SettingsViewModel(val store: SettingsStore) : ViewModel() {
     fun setTextScale(scale: Float) = store.update { it.copy(textScale = scale) }
     fun setUpdates(mode: UpdateMode) = store.update { it.copy(updates = mode) }
     fun setHideInRecents(on: Boolean) = store.update { it.copy(hideInRecents = on) }
+    // Signal's Screen security setting (isScreenSecurityEnabled), a switch kept in the settings store:
+    // https://raw.githubusercontent.com/signalapp/Signal-Android/main/core/ui/src/main/java/org/signal/core/ui/WindowExtensions.kt#initializeScreenshotSecurity
+    fun setBlockScreenshots(on: Boolean) = store.update { it.copy(blockScreenshots = on) }
     fun setQuietSales(on: Boolean) = store.update { it.copy(quietSales = on) }
     // A Boolean preference set from a switch, as Fossify Messages' blockUnknownNumbers
     // (https://github.com/FossifyOrg/Messages, helpers/Config.kt and SettingsActivity.kt).

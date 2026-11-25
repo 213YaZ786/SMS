@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
+import com.yaz.sms.core.security.initializeScreenshotSecurity
 import com.yaz.sms.core.sms.Lists
 import com.yaz.sms.core.sms.OpenRequest
 import com.yaz.sms.core.sms.OpenRequests
@@ -75,6 +76,15 @@ class MainActivity : ComponentActivity() {
                     setRecentsScreenshotEnabled(!hide)
                 }
             }
+        }
+        // Block screenshots, and on Android 12 (no setRecentsScreenshotEnabled) Hide in recents, are FLAG_SECURE on the window,
+        // as Signal's initializeScreenshotSecurity from its Screen security setting.
+        // https://raw.githubusercontent.com/signalapp/Signal-Android/main/core/ui/src/main/java/org/signal/core/ui/WindowExtensions.kt#initializeScreenshotSecurity
+        lifecycleScope.launch {
+            settings.settings.map { it.blockScreenshots || (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && it.hideInRecents) }
+                .distinctUntilChanged().collect { isScreenSecurityEnabled ->
+                    window.initializeScreenshotSecurity(isScreenSecurityEnabled)
+                }
         }
     }
 

@@ -123,6 +123,21 @@ public class PduParser {
      * null if parsing error happened or mandatory fields are not set.
      */
     public GenericPdu parse() {
+        // The helpers below throw on what the WSP encoding forbids (a value length over the quote, a Long-integer
+        // over 8 octets, the end of the data inside a value): one bad PDU is "parsing error", never a crash of the
+        // receiver that handed it over (a message of death). RuntimeException caught as the other maintained copy
+        // of this parser does around its header values, here once for the whole parse:
+        // https://raw.githubusercontent.com/klinker41/android-smsmms/master/library/src/main/java/com/google/android/mms/pdu_alt/PduParser.java#parse
+        try {
+            return parsePdu();
+        } catch (RuntimeException e) {
+            log("parse: " + e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /** AOSP's parse() as it was, the body of PduParser#parse in the file cited above. */
+    private GenericPdu parsePdu() {
         if (mPduDataStream == null) {
             return null;
         }
@@ -806,7 +821,7 @@ public class PduParser {
                         Log.v(LOG_TAG, "parseHeaders: headerField: " + headerField +
                                 " (" + Integer.toHexString(headerField) + ") ELEMENT_DESCRIPTOR");
                     }
-                    parseContentType(pduDataStream, null);
+                    parseContentType(pduDataStream, new SparseArray<Object>());
 
                     /* not store this header filed in "headers",
                     because now PduHeaders doesn't support it */
@@ -931,6 +946,11 @@ public class PduParser {
 
             /* get part's data */
             if (dataLength > 0) {
+                // A data length the rest of the PDU cannot hold is refused before anything is allocated.
+                if (dataLength > pduDataStream.available()) {
+                    log("Part data longer than the PDU");
+                    return null;
+                }
                 byte[] partData = new byte[dataLength];
                 String partContentType = new String(part.getContentType());
                 pduDataStream.read(partData, 0, dataLength);
@@ -1037,7 +1057,7 @@ public class PduParser {
          */
         assert (null != pduDataStream);
         int temp = pduDataStream.read();
-        assert (-1 != temp);
+        if (-1 == temp) throw new IllegalArgumentException("PDU ends here");
         int first = temp & 0xFF;
 
         if (first <= SHORT_LENGTH_MAX) {
@@ -1066,7 +1086,7 @@ public class PduParser {
         EncodedStringValue returnValue = null;
         int charset = 0;
         int temp = pduDataStream.read();
-        assert (-1 != temp);
+        if (-1 == temp) throw new IllegalArgumentException("PDU ends here");
         int first = temp & 0xFF;
         if (first == 0) {
             return null;    //  Blank subject, bail.
@@ -1125,7 +1145,7 @@ public class PduParser {
 
         // Check first char
         int temp = pduDataStream.read();
-        assert (-1 != temp);
+        if (-1 == temp) throw new IllegalArgumentException("PDU ends here");
         if ((TYPE_QUOTED_STRING == stringType) &&
                 (QUOTED_STRING_FLAG == temp)) {
             // Mark again if QUOTED_STRING_FLAG and ignore it
@@ -1230,7 +1250,7 @@ public class PduParser {
         assert (null != pduDataStream);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         int temp = pduDataStream.read();
-        assert (-1 != temp);
+        // The end of the data ends the string (the loop tests -1): a truncated PDU is not a failed assertion.
         while ((-1 != temp) && ('\0' != temp)) {
             // check each of the character
             if (stringType == TYPE_TOKEN_STRING) {
@@ -1244,7 +1264,6 @@ public class PduParser {
             }
 
             temp = pduDataStream.read();
-            assert (-1 != temp);
         }
 
         if (out.size() > 0) {
@@ -1263,7 +1282,7 @@ public class PduParser {
     protected static int extractByteValue(ByteArrayInputStream pduDataStream) {
         assert (null != pduDataStream);
         int temp = pduDataStream.read();
-        assert (-1 != temp);
+        if (-1 == temp) throw new IllegalArgumentException("PDU ends here");
         return temp & 0xFF;
     }
 
@@ -1283,7 +1302,7 @@ public class PduParser {
          */
         assert (null != pduDataStream);
         int temp = pduDataStream.read();
-        assert (-1 != temp);
+        if (-1 == temp) throw new IllegalArgumentException("PDU ends here");
         return temp & 0x7F;
     }
 
@@ -1306,7 +1325,7 @@ public class PduParser {
          */
         assert (null != pduDataStream);
         int temp = pduDataStream.read();
-        assert (-1 != temp);
+        if (-1 == temp) throw new IllegalArgumentException("PDU ends here");
         int count = temp & 0xFF;
 
         if (count > LONG_INTEGER_LENGTH_MAX) {
@@ -1317,7 +1336,7 @@ public class PduParser {
 
         for (int i = 0; i < count; i++) {
             temp = pduDataStream.read();
-            assert (-1 != temp);
+            if (-1 == temp) throw new IllegalArgumentException("PDU ends here");
             result <<= 8;
             result += (temp & 0xFF);
         }
@@ -1339,7 +1358,7 @@ public class PduParser {
         assert (null != pduDataStream);
         pduDataStream.mark(1);
         int temp = pduDataStream.read();
-        assert (-1 != temp);
+        if (-1 == temp) throw new IllegalArgumentException("PDU ends here");
         pduDataStream.reset();
         if (temp > SHORT_INTEGER_MAX) {
             return parseShortInteger(pduDataStream);
@@ -1357,6 +1376,10 @@ public class PduParser {
      */
     protected static int skipWapValue(ByteArrayInputStream pduDataStream, int length) {
         assert (null != pduDataStream);
+        // A length the data cannot hold is refused before anything is allocated.
+        if (length < 0 || length > pduDataStream.available()) {
+            return -1;
+        }
         byte[] area = new byte[length];
         int readLen = pduDataStream.read(area, 0, length);
         if (readLen < length) { //The actually read length is lower than the length
@@ -1395,14 +1418,14 @@ public class PduParser {
          * Untyped-value = Integer-value | Text-value
          */
         assert (null != pduDataStream);
-        assert (length > 0);
+        if (length <= 0) throw new IllegalArgumentException("Empty Content-Type parameters");
 
         int startPos = pduDataStream.available();
         int tempPos = 0;
         int lastLen = length;
         while (0 < lastLen) {
             int param = pduDataStream.read();
-            assert (-1 != param);
+            if (-1 == param) throw new IllegalArgumentException("PDU ends here");
             lastLen--;
 
             switch (param) {
@@ -1570,7 +1593,7 @@ public class PduParser {
         byte[] contentType = null;
         pduDataStream.mark(1);
         int temp = pduDataStream.read();
-        assert (-1 != temp);
+        if (-1 == temp) throw new IllegalArgumentException("PDU ends here");
         pduDataStream.reset();
 
         int cur = (temp & 0xFF);
@@ -1580,7 +1603,7 @@ public class PduParser {
             int startPos = pduDataStream.available();
             pduDataStream.mark(1);
             temp = pduDataStream.read();
-            assert (-1 != temp);
+            if (-1 == temp) throw new IllegalArgumentException("PDU ends here");
             pduDataStream.reset();
             int first = (temp & 0xFF);
 
@@ -1632,7 +1655,7 @@ public class PduParser {
             PduPart part, int length) {
         assert (null != pduDataStream);
         assert (null != part);
-        assert (length > 0);
+        if (length <= 0) throw new IllegalArgumentException("Empty part headers");
 
         /**
          * From oma-ts-mms-conf-v1_3.pdf, chapter 10.2.
@@ -1655,7 +1678,7 @@ public class PduParser {
         int lastLen = length;
         while (0 < lastLen) {
             int header = pduDataStream.read();
-            assert (-1 != header);
+            if (-1 == header) throw new IllegalArgumentException("PDU ends here");
             lastLen--;
 
             if (header > TEXT_MAX) {
@@ -1733,6 +1756,9 @@ public class PduParser {
                                 thisEndPos = pduDataStream.available();
                                 if (thisStartPos - thisEndPos < len) {
                                     int last = len - (thisStartPos - thisEndPos);
+                                    if (last > pduDataStream.available()) {
+                                        return false;
+                                    }
                                     byte[] temp = new byte[last];
                                     pduDataStream.read(temp, 0, last);
                                 }
