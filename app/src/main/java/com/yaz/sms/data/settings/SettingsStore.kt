@@ -119,9 +119,9 @@ data class Settings(
     /**
      * The encrypted call's media runs in the system WebView (Vanadium on GrapheneOS, kept current by the OS) on
      * Delta Chat's call page, instead of the native WebRTC library in this process (core/call/WebCallMedia).
-     * Off until tried on the phone; stored only, no tile yet.
+     * On by default, the safer engine; off falls back to the native library in this process.
      */
-    val callsInWebView: Boolean = false
+    val callsInWebView: Boolean = true
 )
 
 @Serializable
