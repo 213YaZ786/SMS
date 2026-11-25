@@ -3,6 +3,8 @@
 
     <!-- One request to GitHub when the app opens, for the newest release. Nothing else goes out. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Hides other apps' overlay windows while the keys or the invite code are shown (normal, granted at install). -->
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
     <!-- What the Contacts app may ask about the messages (keep in touch), and the private names it keeps: apps signed with the same key only. -->
     <permission
         android:name="${applicationId}.permission.PEOPLE"

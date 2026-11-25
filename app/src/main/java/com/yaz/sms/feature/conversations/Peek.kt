@@ -143,7 +143,7 @@ internal fun Peek(
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.45f * dim.value))
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.45f * dim.value))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
                 .imePadding(),
             contentAlignment = Alignment.Center

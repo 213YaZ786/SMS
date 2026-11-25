@@ -59,6 +59,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import com.yaz.sms.ui.component.BoldButton
+import com.yaz.sms.ui.theme.harmonized
 import com.yaz.sms.ui.component.QuietButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -1179,7 +1180,7 @@ private fun ThreadContent(
         val inset = LocalReadableInset.current
         // The conversation's own photo when one was chosen; else the person's light.
         if (picture != null) PictureGround(picture, com.yaz.sms.ui.glass.LocalGlass.current?.ground ?: MaterialTheme.colorScheme.background)
-        else if (doodles) DoodleGround(doodleInk(com.yaz.sms.ui.glass.LocalGlass.current?.dark ?: (MaterialTheme.colorScheme.background.luminance() < 0.5f)))
+        else if (doodles) DoodleGround(doodleInk(com.yaz.sms.ui.glass.LocalGlass.current?.dark ?: (MaterialTheme.colorScheme.background.luminance() < 0.5f), MaterialTheme.colorScheme.onSurface))
         // Their light: the colours of their photo (never the picture), else of their colour.
         else HeroGlow(if (group) null else entry?.photo, height = padding.calculateTopPadding() + 320.dp, color = if (group) null else entry?.look?.color?.let { androidx.compose.ui.graphics.Color(it) })
         // Near the oldest message shown, with more behind it: read the next page.
@@ -2642,7 +2643,7 @@ private fun SuspiciousCapsule(several: Boolean, dangerous: Boolean, onClick: () 
 
 /** The tone of a link that was not recognized: a warm red, a caution rather than an alarm. */
 @Composable
-internal fun cautionColor(): Color = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.error, Color(0xFFE8890C), 0.4f)
+internal fun cautionColor(): Color = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.error, Color(0xFFE8890C), 0.4f).harmonized()
 
 /**
  * A link tapped, in a message or in the shared tab: the links kit's sheet (LinkSheet, after URLCheck's

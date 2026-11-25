@@ -6,8 +6,10 @@ import android.util.LruCache
 import com.yaz.sms.core.common.readAtMost
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.net.HttpURLConnection
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.net.URL
+import java.util.concurrent.TimeUnit
 
 /**
  * What a link leads to, fetched by this phone only when the user taps
@@ -45,52 +47,54 @@ object LinkPreview {
     }
 
     /**
+     * One client for every preview: names resolved only to public addresses (PublicOnlyDns), the
+     * peer of each connection checked again (its connectionGuard), no cookie, no cache; redirects
+     * are followed by [get] so each hop is checked.
+     */
+    private val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .dns(PublicOnlyDns())
+            .addNetworkInterceptor(PublicOnlyDns.connectionGuard())
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /**
      * One https page, three redirects at most and each to https; the bytes,
      * where they came from, and whether the site refused (403) yet sent a page.
      */
     private fun get(url: String, limit: Int, html: Boolean): Triple<ByteArray, URL, Boolean>? = runCatching {
         var at = URL(url)
         repeat(4) {
-            if (at.protocol != "https" || !public(at.host)) return null
-            val connection = (at.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8_000
-                readTimeout = 10_000
-                instanceFollowRedirects = false
-                useCaches = false
+            if (at.protocol != "https" || !PublicOnlyDns.isPublicHost(at.host)) return null
+            val request = Request.Builder().url(at)
                 // As messaging apps ask (Signal's own name): sites answer it with
                 // their preview, where a generic one gets a "browser not supported" page.
-                setRequestProperty("User-Agent", "WhatsApp/2")
-                setRequestProperty("Accept", if (html) "text/html,application/xhtml+xml,*/*;q=0.8" else "image/*")
-                setRequestProperty("Accept-Language", java.util.Locale.getDefault().toLanguageTag() + ",en;q=0.5")
-            }
-            try {
-                when (connection.responseCode) {
-                    in 300..399 -> at = URL(at, connection.getHeaderField("Location") ?: return null)
+                .header("User-Agent", "WhatsApp/2")
+                .header("Accept", if (html) "text/html,application/xhtml+xml,*/*;q=0.8" else "image/*")
+                .header("Accept-Language", java.util.Locale.getDefault().toLanguageTag() + ",en;q=0.5")
+                .build()
+            client.newCall(request).execute().use { response ->
+                when (response.code) {
+                    in 300..399 -> at = URL(at, response.header("Location") ?: return null)
                     200, 403 -> {
-                        val refused = connection.responseCode == 403
+                        val refused = response.code == 403
                         if (refused && !html) return null
-                        val type = connection.contentType.orEmpty()
+                        val type = response.header("Content-Type").orEmpty()
                         if (html && !type.contains("html")) return null
                         if (!html && !type.startsWith("image/")) return null
-                        val stream = if (refused) connection.errorStream ?: return null else connection.inputStream
-                        return Triple(stream.use { it.readAtMost(limit) }, at, refused)
+                        return Triple(response.body.byteStream().use { it.readAtMost(limit) }, at, refused)
                     }
                     else -> return null
                 }
-            } finally {
-                connection.disconnect()
             }
         }
         null
     }.getOrNull()
-
-    /** A host on the internet: never this phone, the home network or a link-local address, which a link could aim at. */
-    private fun public(host: String): Boolean = runCatching {
-        java.net.InetAddress.getAllByName(host).none {
-            it.isLoopbackAddress || it.isSiteLocalAddress || it.isLinkLocalAddress || it.isAnyLocalAddress ||
-                it.isMulticastAddress || (it is java.net.Inet6Address && (it.address[0].toInt() and 0xfe) == 0xfc)
-        }
-    }.getOrDefault(false)
 
     /** The page's own charset when its head names one, else UTF-8. */
     private fun charsetOf(page: ByteArray): java.nio.charset.Charset = runCatching {

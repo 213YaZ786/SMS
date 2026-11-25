@@ -276,7 +276,7 @@ internal fun PictureViewer(uri: Uri, onClose: () -> Unit, part: MmsPart? = null)
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.92f * (1f - gone)))
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.92f * (1f - gone)))
                     // Where the picture is not (still loading) a tap flips the chrome too; on the picture Zoomable takes it.
                     .pointerInput(chrome) { detectTapGestures(onTap = { chrome.value = !chrome.value }) }
                     .pointerInput(zoomed) {

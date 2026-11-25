@@ -105,7 +105,9 @@ android {
 
 dependencies {
     // The encrypted calls' voice: WebRTC's Android build by webrtc-sdk (MIT, LiveKit's community).
-    implementation("io.github.webrtc-sdk:android:150.7871.04")
+    implementation("io.github.webrtc-sdk:android:150.7871.08")
+    // Link previews' own client (core/link/LinkPreview, PublicOnlyDns): the version Coil and Ktor already resolve.
+    implementation("com.squareup.okhttp3:okhttp:5.5.1")
     // Any emoji as a reaction: Android's own emoji picker (Apache-2.0).
     implementation("androidx.emoji2:emoji2-emojipicker:1.7.0")
     // A message of only emoji shows them big and moving: Lottie by Airbnb (Apache-2.0)

@@ -108,7 +108,7 @@ private fun skyAt(hour: Int): Palette = when (hour) {
 }
 
 /** The light of the background [code] over [base], the app's own when none or unknown. */
-internal fun sceneLook(code: String?, base: GlassLook, hour: Int): GlassLook {
+internal fun sceneLook(code: String?, base: GlassLook, hour: Int, surface: Color): GlassLook {
     if (code == null || code == Scene.YOURS.code) return base
     val dark = base.dark
     if (code.startsWith(PHOTO)) {
@@ -122,7 +122,7 @@ internal fun sceneLook(code: String?, base: GlassLook, hour: Int): GlassLook {
             b += (l.rgb and 0xFF) / 255f * l.share / total
         }
         val mean = Color(r, g, b)
-        val ground = lerp(mean, if (dark) Color(0xFF101114) else Color.White, 0.86f)
+        val ground = lerp(mean, surface, 0.86f)
         val halos = lights.map { l ->
             Halo(l.x, l.y, 0.35f + 0.45f * l.share, Color(0xFF000000 or l.rgb.toLong()).copy(alpha = if (dark) 0.40f else 0.62f))
         }
@@ -138,7 +138,7 @@ internal fun sceneLook(code: String?, base: GlassLook, hour: Int): GlassLook {
             val (x, y, radius) = spots[i]
             Halo(x, y, radius, l.copy(alpha = (if (dark) nightStrength else dayStrength)[i]))
         }
-        val ground = lerp(c, if (dark) Color(0xFF101114) else Color.White, if (dark) 0.88f else 0.9f)
+        val ground = lerp(c, surface, if (dark) 0.88f else 0.9f)
         return GlassLook(dark, ground, halos, base.zoneTint, base.floatTint, base.accentTint, quiet = base.quiet)
     }
     val scene = Scene.entries.firstOrNull { it.code == code } ?: return base
@@ -174,7 +174,8 @@ internal fun rememberSceneLook(code: String?, base: GlassLook?): GlassLook? {
             hour = hourNow()
         }
     }
-    return remember(code, base, hour) { sceneLook(code, base, hour) }
+    val surface = MaterialTheme.colorScheme.surface
+    return remember(code, base, hour, surface) { sceneLook(code, base, hour, surface) }
 }
 
 /** Where a conversation's own photo is kept: the app's private files, never shared. */
@@ -225,6 +226,7 @@ internal fun PictureGround(picture: androidx.compose.ui.graphics.ImageBitmap, ve
 internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: String?, theirColor: Int?, picture: java.io.File, onPick: (String?) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val haptics = rememberHaptics()
+    val surface = MaterialTheme.colorScheme.surface
     val scope = rememberCoroutineScope()
     var reading by remember { mutableStateOf(false) }
     fun fromPhoto(uri: Uri) {
@@ -248,20 +250,20 @@ internal fun BackgroundSheet(current: String?, base: GlassLook, theirPhoto: Stri
                 val tiles = buildList<SceneChoice> {
                     // Their colour, from the Contacts app: what the conversation shows unless chosen here.
                     theirColor?.let { argb ->
-                        add(SceneChoice(sceneLook(colorCode(argb), base, hour), "Their colour", current == null) {
+                        add(SceneChoice(sceneLook(colorCode(argb), base, hour, surface), "Their colour", current == null) {
                             haptics.tick()
                             onPick(null)
                         })
                     }
                     Scene.entries.forEach { scene ->
                         val chosen = (current ?: if (theirColor == null) Scene.YOURS.code else null) == scene.code
-                        add(SceneChoice(sceneLook(scene.code, base, hour), scene.label, chosen, doodles = scene == Scene.DOODLES) {
+                        add(SceneChoice(sceneLook(scene.code, base, hour, surface), scene.label, chosen, doodles = scene == Scene.DOODLES) {
                             haptics.tick()
                             onPick(if (scene == Scene.YOURS && theirColor == null) null else scene.code)
                         })
                     }
                     val photoChosen = current?.startsWith(PHOTO) == true
-                    add(SceneChoice(if (photoChosen) sceneLook(current, base, hour) else null, if (reading) "Reading…" else "From a photo", photoChosen) {
+                    add(SceneChoice(if (photoChosen) sceneLook(current, base, hour, surface) else null, if (reading) "Reading…" else "From a photo", photoChosen) {
                         haptics.tick()
                         pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     })
@@ -301,7 +303,7 @@ private fun SceneTile(look: GlassLook?, label: String, chosen: Boolean, order: I
         pop.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 420f))
     }
     val accent = MaterialTheme.colorScheme.primary
-    val bubble = if (look?.dark ?: false) Color.White.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.75f)
+    val bubble = if (look?.dark ?: false) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
     // Material 3's shape scale: https://github.com/androidx/androidx/blob/androidx-main/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/Shapes.kt
     val shape = ShapeDefaults.Large
     Column(
@@ -328,7 +330,7 @@ private fun SceneTile(look: GlassLook?, label: String, chosen: Boolean, order: I
                 },
             contentAlignment = Alignment.Center
         ) {
-            if (doodles) DoodleGround(doodleInk(look?.dark == true), cell = 26f)
+            if (doodles) DoodleGround(doodleInk(look?.dark == true, MaterialTheme.colorScheme.onSurface), cell = 26f)
             if (look == null) Icon(if (icon) AppIcons.Photo else AppIcons.Image, contentDescription = null, tint = accent, modifier = Modifier.size(28.dp))
         }
         TileLabel(label, MaterialTheme.typography.labelMedium, MaterialTheme.colorScheme.onSurface, Modifier.padding(top = 4.dp))
@@ -354,4 +356,4 @@ internal fun SceneWash(look: GlassLook?) {
 }
 
 /** The doodles' ink: faint over the light, darker by day, lighter by night. */
-internal fun doodleInk(dark: Boolean) = if (dark) Color.White.copy(alpha = 0.07f) else Color.Black.copy(alpha = 0.075f)
+internal fun doodleInk(dark: Boolean, onSurface: Color) = onSurface.copy(alpha = if (dark) 0.07f else 0.075f)

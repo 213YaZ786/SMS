@@ -88,8 +88,9 @@ fun glassLookOf(scheme: ColorScheme, quiet: Boolean = false): GlassLook {
     val dark = scheme.background.luminance() < 0.5f
     // Quiet: DialogContent's containerColor, Kyant0/AndroidLiquidGlass (Apache-2.0),
     // https://github.com/Kyant0/AndroidLiquidGlass/blob/kmp/app/src/commonMain/kotlin/com/kyant/backdrop/catalog/destinations/DialogContent.kt
-    // (0xFFFAFAFA at 0.6 by day, 0xFF121212 at 0.4 by night), laid over its blur, colour controls and lens.
-    val quietFill = if (dark) Color(0xFF121212).copy(alpha = 0.4f) else Color(0xFFFAFAFA).copy(alpha = 0.6f)
+    // (alpha 0.6 by day, 0.4 by night), laid over its blur, colour controls and lens. The colour is the
+    // scheme's surfaceContainer, not a fixed grey, so the glass follows Material You.
+    val quietFill = scheme.surfaceContainer.copy(alpha = if (dark) 0.4f else 0.6f)
     return GlassLook(
         dark = dark,
         ground = scheme.background,

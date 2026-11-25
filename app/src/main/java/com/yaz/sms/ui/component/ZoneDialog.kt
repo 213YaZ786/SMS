@@ -313,8 +313,9 @@ fun Modifier.dialogGlass(shape: Shape, look: com.yaz.sms.ui.glass.GlassLook, blu
         val outline = shape.createOutline(size, layoutDirection, this)
         val fill = when {
             !blur -> solid
-            look.dark -> Color(0xFF121212).copy(alpha = 0.62f)
-            else -> Color(0xFFFAFAFA).copy(alpha = 0.72f)
+            // The scheme's surfaceContainerHigh, as Material 3's AlertDialog, so the tint follows Material You.
+            look.dark -> solid.copy(alpha = 0.62f)
+            else -> solid.copy(alpha = 0.72f)
         }
         drawOutline(outline, fill)
         drawOutline(outline, com.yaz.sms.ui.glass.rimBrush(look, size.height), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.4f * density))

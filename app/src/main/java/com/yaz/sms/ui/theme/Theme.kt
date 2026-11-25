@@ -7,11 +7,13 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.isSpecified
+import com.yaz.sms.ui.effects.LocalEffectTint
 
 /** Material 3 with the wallpaper's colours, the same way as the other apps. */
 @Composable
@@ -44,7 +46,13 @@ fun AppTheme(
 
     val typography = remember(textScale) { AppTypography.scaled(textScale) }
 
-    MaterialTheme(colorScheme = colors, typography = typography, content = content)
+    // The screen effects' fixed colours lean toward the scheme's primary
+    // (Blend.harmonize, see Harmonize.kt).
+    val primary = colors.primary
+    val effectTint = remember(primary) { { design: Color -> harmonize(design, primary) } }
+    MaterialTheme(colorScheme = colors, typography = typography) {
+        CompositionLocalProvider(LocalEffectTint provides effectTint, content = content)
+    }
 }
 
 /** Text size steps offered in Settings. Applied on top of Android's own font size. */

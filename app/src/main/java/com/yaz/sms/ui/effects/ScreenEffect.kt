@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -38,6 +39,10 @@ import kotlin.random.Random
 /** The effects played over a whole screen: a conversation's, a video call's. */
 enum class ScreenKind { FIREWORKS, CONFETTI, BALLOONS, LOVE, LASERS, STARS, CELEBRATION, ECHO, SPOTLIGHT }
 
+// Blend.harmonize(designColor, sourceColor), as the app provides it: identity
+// by default, so an app without colour blending draws the design colours as they are.
+val LocalEffectTint = staticCompositionLocalOf<(Color) -> Color> { { designColor -> designColor } }
+
 /**
  * A screen effect over the conversation or the call, once: fireworks, confetti,
  * balloons, a heart, lasers, a shooting star, a celebration, the words'
@@ -61,9 +66,17 @@ fun ScreenEffect(effect: ScreenKind, words: String, origin: Offset?, single: Boo
         onDone()
     }
     val scheme = MaterialTheme.colorScheme
-    val palette = remember(scheme) {
-        listOf(scheme.primary, scheme.tertiary, scheme.secondary, scheme.primaryContainer, scheme.tertiaryContainer, Color(0xFFFFC94D), Color(0xFFFF6B8B), Color(0xFF5BC0FF))
+    val tint = LocalEffectTint.current
+    // Each design colour is harmonized once per scheme, then read from the map.
+    val harmonize = remember(tint) {
+        val outputHue = HashMap<Color, Color>()
+        val blend: (Color) -> Color = { designColor -> outputHue.getOrPut(designColor) { tint(designColor) } }
+        blend
     }
+    val palette = remember(scheme, harmonize) {
+        listOf(scheme.primary, scheme.tertiary, scheme.secondary, scheme.primaryContainer, scheme.tertiaryContainer, harmonize(Color(0xFFFFC94D)), harmonize(Color(0xFFFF6B8B)), harmonize(Color(0xFF5BC0FF)))
+    }
+    val scrim = scheme.scrim
     val measurer = rememberTextMeasurer()
     val seed = remember(effect, words) { Random(words.hashCode() xor effect.ordinal) }
     val pieces = remember(effect, words) { List(220) { floatArrayOf(seed.nextFloat(), seed.nextFloat(), seed.nextFloat(), seed.nextFloat(), seed.nextFloat()) } }
@@ -79,11 +92,11 @@ fun ScreenEffect(effect: ScreenKind, words: String, origin: Offset?, single: Boo
         when (effect) {
             ScreenKind.CONFETTI -> confetti(t, fade, pieces, palette)
             ScreenKind.BALLOONS -> balloons(t, pieces, palette)
-            ScreenKind.FIREWORKS -> fireworks(t, fade, pieces, palette)
-            ScreenKind.LOVE -> love(t, fade, origin)
-            ScreenKind.LASERS -> lasers(t, fade, palette)
-            ScreenKind.STARS -> stars(t, fade, pieces)
-            ScreenKind.CELEBRATION -> celebration(t, fade, pieces)
+            ScreenKind.FIREWORKS -> fireworks(t, fade, pieces, palette, harmonize, scrim)
+            ScreenKind.LOVE -> love(t, fade, origin, harmonize)
+            ScreenKind.LASERS -> lasers(t, fade, palette, scrim)
+            ScreenKind.STARS -> stars(t, fade, pieces, harmonize)
+            ScreenKind.CELEBRATION -> celebration(t, fade, pieces, harmonize)
             ScreenKind.SPOTLIGHT -> spotlight(t, origin)
             ScreenKind.ECHO -> {
                 val layout = measurer.measure(words.take(40), TextStyle(fontSize = 18.sp, color = textColor))
@@ -144,11 +157,11 @@ private fun DrawScope.balloons(t: Float, pieces: List<FloatArray>, palette: List
     }
 }
 
-private fun DrawScope.fireworks(t: Float, fade: Float, pieces: List<FloatArray>, palette: List<Color>) {
+private fun DrawScope.fireworks(t: Float, fade: Float, pieces: List<FloatArray>, palette: List<Color>, harmonize: (Color) -> Color, scrim: Color) {
     // Night falls a little, so the light reads.
-    drawRect(Color(0xFF05070F).copy(alpha = 0.55f * (if (t < 0.08f) t / 0.08f else 1f) * fade))
+    drawRect(scrim.copy(alpha = 0.55f * (if (t < 0.08f) t / 0.08f else 1f) * fade))
     // Bright, festive hues, not the theme's quiet ones.
-    val hues = listOf(Color(0xFFFFD54F), Color(0xFFFF5E7E), Color(0xFF64D8FF), Color(0xFFB388FF), Color(0xFF69F0AE), Color(0xFFFFAB40), palette.first())
+    val hues = listOf(Color(0xFFFFD54F), Color(0xFFFF5E7E), Color(0xFF64D8FF), Color(0xFFB388FF), Color(0xFF69F0AE), Color(0xFFFFAB40)).map(harmonize) + palette.first()
     val shells = 7
     for (b in 0 until shells) {
         val seed = pieces[b]
@@ -199,20 +212,20 @@ private fun heart(c: Offset, s: Float) = Path().apply {
     close()
 }
 
-private fun DrawScope.love(t: Float, fade: Float, origin: Offset?) {
+private fun DrawScope.love(t: Float, fade: Float, origin: Offset?, harmonize: (Color) -> Color) {
     val c = origin ?: Offset(size.width / 2, size.height * 0.55f)
     val grow = if (t < 0.35f) (t / 0.35f) else 1f
     val beat = 1f + 0.08f * sin(t * 18f)
     val s = size.minDimension * 0.42f * grow * beat
     val rise = if (t > 0.6f) (t - 0.6f) / 0.4f * size.height * 0.3f else 0f
     val at = Offset(size.width / 2 + (c.x - size.width / 2) * (1f - grow), c.y - rise - (c.y - size.height * 0.45f) * grow)
-    val red = Color(0xFFFF3B6B)
-    drawPath(heart(at, s), Brush.radialGradient(listOf(red.copy(alpha = 0.9f * fade), Color(0xFFC2185B).copy(alpha = 0.75f * fade)), center = at + Offset(-s * 0.3f, -s * 0.5f), radius = s * 1.6f))
+    val red = harmonize(Color(0xFFFF3B6B))
+    drawPath(heart(at, s), Brush.radialGradient(listOf(red.copy(alpha = 0.9f * fade), harmonize(Color(0xFFC2185B)).copy(alpha = 0.75f * fade)), center = at + Offset(-s * 0.3f, -s * 0.5f), radius = s * 1.6f))
     drawPath(heart(at + Offset(-s * 0.28f, -s * 0.45f), s * 0.22f), Color.White.copy(alpha = 0.4f * fade))
 }
 
-private fun DrawScope.lasers(t: Float, fade: Float, palette: List<Color>) {
-    drawRect(Color.Black.copy(alpha = 0.55f * (if (t < 0.08f) t / 0.08f else 1f) * fade))
+private fun DrawScope.lasers(t: Float, fade: Float, palette: List<Color>, scrim: Color) {
+    drawRect(scrim.copy(alpha = 0.55f * (if (t < 0.08f) t / 0.08f else 1f) * fade))
     val c = Offset(size.width / 2, size.height * 0.5f)
     for (i in 0 until 6) {
         val ang = t * 2.4f * PI.toFloat() * (if (i % 2 == 0) 1 else -1) + i * PI.toFloat() / 3
@@ -226,8 +239,8 @@ private fun DrawScope.lasers(t: Float, fade: Float, palette: List<Color>) {
     drawCircle(Color.White.copy(alpha = 0.8f * fade), 10.dp.toPx(), c)
 }
 
-private fun DrawScope.stars(t: Float, fade: Float, pieces: List<FloatArray>) {
-    val gold = Color(0xFFFFD36B)
+private fun DrawScope.stars(t: Float, fade: Float, pieces: List<FloatArray>, harmonize: (Color) -> Color) {
+    val gold = harmonize(Color(0xFFFFD36B))
     val k = (t / 0.55f).coerceIn(0f, 1f)
     val head = Offset(-40.dp.toPx() + k * (size.width + 80.dp.toPx()), size.height * (0.18f + 0.22f * k))
     // The trail, fading behind the star.
@@ -248,8 +261,8 @@ private fun DrawScope.stars(t: Float, fade: Float, pieces: List<FloatArray>) {
     }
 }
 
-private fun DrawScope.celebration(t: Float, fade: Float, pieces: List<FloatArray>) {
-    val gold = listOf(Color(0xFFFFD36B), Color(0xFFFFB74D), Color(0xFFFFF1B8))
+private fun DrawScope.celebration(t: Float, fade: Float, pieces: List<FloatArray>, harmonize: (Color) -> Color) {
+    val gold = listOf(Color(0xFFFFD36B), Color(0xFFFFB74D), Color(0xFFFFF1B8)).map(harmonize)
     val from = Offset(size.width, 0f)
     pieces.take(120).forEachIndexed { i, p ->
         val start = p[2] * 0.45f

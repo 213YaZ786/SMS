@@ -28,11 +28,13 @@ data class Settings(
     /**
      * Photos, films and sounds from a number in no contact shown at once,
      * as from a contact (still decoded in the isolated process); off, each
-     * waits for a tap. On by default (the user, 2026-10-17), as Signal's
-     * media auto-download choices (Signal-Android, preferences
-     * DataAndStorageSettingsFragment).
+     * waits for a tap. Off by default since 2026-11-25, also for a file saved before without
+     * the key (security pass: a sender nobody knows reaches no decoder before a tap). Why off:
+     * Signal's AttachmentUtil.isAutoDownloadPermitted, nothing automatic from an untrusted sender
+     * ("Not allowing download due to untrusted conversation"):
+     * https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/util/AttachmentUtil.kt#isAutoDownloadPermitted
      */
-    val showStrangerMedia: Boolean = true,
+    val showStrangerMedia: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     /** True black instead of dark grey in dark mode. */
     val pureBlack: Boolean = false,
@@ -124,7 +126,8 @@ enum class ReactionFormat { AUTOMATIC, GOOGLE, IPHONE }
 class SettingsStore(context: Context) {
 
     private val file = File(context.filesDir, "settings.json")
-    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+    // Defaults are written, so a choice that equals today's default stays written if the default moves.
+    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
 
     private val _settings = MutableStateFlow(load())
     val settings: StateFlow<Settings> = _settings.asStateFlow()
