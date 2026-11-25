@@ -117,6 +117,8 @@ dependencies {
     // with its own data, no network.
     implementation("com.googlecode.libphonenumber:libphonenumber:9.0.43")
     implementation(libs.androidx.core.ktx)
+    // The encrypted call's page in the system WebView: asset loader and the page's message listener.
+    implementation(libs.androidx.webkit)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

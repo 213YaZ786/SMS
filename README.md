@@ -72,7 +72,10 @@ MMS parser (PduFuzzTest, PduVectors) is vibb-launcher's (GPL-3.0). The encrypted
 chat runs chatmail core (github.com/chatmail/core), Mozilla Public
 License 2.0, downloaded unchanged at build time. Calls use WebRTC's
 Android library by webrtc-sdk, MIT License; the wait for a call's network candidates ports
-Delta Chat Android's (GPL-3.0). Doodles background: Material Symbols by Google, Apache 2.0. Big emoji and screen effects move with Google's Noto Animated Emoji, CC BY 4.0,
+Delta Chat Android's (GPL-3.0). Calls can also run in the system WebView on the call page of
+[calls-webapp](https://github.com/deltachat/calls-webapp) (GPL-3.0) and its host bridge from
+deltachat-desktop (GPL-3.0), the WebView set up after Element X (AGPL-3.0), its picture drawn into a private
+display after Flutter's platform views (BSD-3-Clause). Doodles background: Material Symbols by Google, Apache 2.0. Big emoji and screen effects move with Google's Noto Animated Emoji, CC BY 4.0,
 played by Lottie (Airbnb), Apache License 2.0. Links are checked before they open, after
 [URLCheck](https://github.com/TrianguloY/URLCheck) (CC BY 4.0); the tracking rules are
 [ClearURLs](https://github.com/ClearURLs/Rules) (LGPL-3.0), the site names come from the

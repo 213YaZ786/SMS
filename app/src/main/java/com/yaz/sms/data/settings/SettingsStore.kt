@@ -115,7 +115,13 @@ data class Settings(
      * How a reaction to a message goes out by SMS or MMS: as Google Messages writes it, as the iPhone's words,
      * or in the format last received in that conversation (Quik's "Reaction send format", PR #846).
      */
-    val reactionFormat: ReactionFormat = ReactionFormat.AUTOMATIC
+    val reactionFormat: ReactionFormat = ReactionFormat.AUTOMATIC,
+    /**
+     * The encrypted call's media runs in the system WebView (Vanadium on GrapheneOS, kept current by the OS) on
+     * Delta Chat's call page, instead of the native WebRTC library in this process (core/call/WebCallMedia).
+     * Off until tried on the phone; stored only, no tile yet.
+     */
+    val callsInWebView: Boolean = false
 )
 
 @Serializable

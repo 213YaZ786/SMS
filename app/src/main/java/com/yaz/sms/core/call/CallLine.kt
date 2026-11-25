@@ -11,6 +11,7 @@ import com.yaz.sms.core.chat.CallSignal
 import com.yaz.sms.core.chat.RichChat
 import com.yaz.sms.core.chat.RpcException
 import com.yaz.sms.core.dial.Sisters
+import com.yaz.sms.data.settings.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,7 +31,10 @@ object CallLine : KoinComponent {
     private val chat: RichChat by inject()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private const val TAG = "CallLine"
+    private val settings: SettingsStore by inject()
     @Volatile private var media: CallMedia? = null
+    /** The call's media in the system WebView, when the setting callsInWebView is on; then [media] is null. */
+    @Volatile private var web: WebCallMedia? = null
     @Volatile private var state = ""
     private var watching: Job? = null
 
@@ -75,7 +79,7 @@ object CallLine : KoinComponent {
             chat.calls.collect { signal ->
                 val id = CallBook.call.value?.msgId ?: return@collect
                 when (signal) {
-                    is CallSignal.Accepted -> if (signal.msgId == id) runCatching { media?.accepted(signal.answer) }
+                    is CallSignal.Accepted -> if (signal.msgId == id) runCatching { media?.accepted(signal.answer); web?.accepted(signal.answer) }
                     is CallSignal.Ended -> if (signal.msgId == id) onCallEnded(appContext, signal.msgId)
                     is CallSignal.TakenElsewhere -> if (signal.msgId == id) CallBook.connection?.finish(DisconnectCause.ANSWERED_ELSEWHERE)
                     else -> Unit
@@ -134,8 +138,13 @@ object CallLine : KoinComponent {
             runCatching {
                 // Delta Chat fetches the ICE servers and reports the failure ("Failed to initiate call: " + message):
                 // without them the call would go on without TURN and fail later with no word.
-                val line = CallMedia(context, chat.iceServers(), call.video, ::onState, ::onSize, ::onEffect).also { media = it }
-                val id = chat.placeCall(call.phone, line.offer(), call.video)
+                val ice = chat.iceServers()
+                val offer = if (settings.current.callsInWebView) {
+                    WebCallMedia(context.applicationContext, ice, call.video, ::onState, ::onSize, ::onEffect).also { web = it }.offer()
+                } else {
+                    CallMedia(context, ice, call.video, ::onState, ::onSize, ::onEffect).also { media = it }.offer()
+                }
+                val id = chat.placeCall(call.phone, offer, call.video)
                 CallBook.update { it.copy(msgId = id) }
             }.onFailure { error ->
                 CallNotices.failed(context, "Could not start the call", (error as? RpcException)?.message)
@@ -154,8 +163,13 @@ object CallLine : KoinComponent {
         CallBook.update { it.copy(phase = Phase.CONNECTING) }
         scope.launch {
             runCatching {
-                val line = CallMedia(context, chat.iceServers(), call.video, ::onState, ::onSize, ::onEffect).also { media = it }
-                chat.acceptCall(id, line.answer(offer))
+                val ice = chat.iceServers()
+                val answer = if (settings.current.callsInWebView) {
+                    WebCallMedia(context.applicationContext, ice, call.video, ::onState, ::onSize, ::onEffect).also { web = it }.answer(offer)
+                } else {
+                    CallMedia(context, ice, call.video, ::onState, ::onSize, ::onEffect).also { media = it }.answer(offer)
+                }
+                chat.acceptCall(id, answer)
             }.onFailure { error ->
                 CallNotices.failed(context, "Could not answer the call", (error as? RpcException)?.message)
                 CallBook.connection?.hangUp(DisconnectCause.ERROR)
@@ -165,12 +179,13 @@ object CallLine : KoinComponent {
 
     fun mute(on: Boolean) {
         media?.mute(on)
+        web?.mute(on)
     }
 
     // What Dialer's screen asks of a video call, through Telecom.
-    fun camera(id: String?) = runCatching { media?.camera(id) }
-    fun showRemote(surface: android.view.Surface?) = runCatching { media?.showRemote(surface) }
-    fun showLocal(surface: android.view.Surface?) = runCatching { media?.showLocal(surface) }
+    fun camera(id: String?) = runCatching { media?.camera(id); web?.camera(id) }
+    fun showRemote(surface: android.view.Surface?) = runCatching { media?.showRemote(surface); web?.showRemote(surface) }
+    fun showLocal(surface: android.view.Surface?) = runCatching { media?.showLocal(surface); web?.showLocal(surface) }
 
     /**
      * A screen effect chosen on Dialer's screen goes to the other side; one
@@ -178,7 +193,10 @@ object CallLine : KoinComponent {
      * plays, and at most one every 1.5 s from the other side.
      */
     fun sendEffect(name: String?) {
-        if (name in EFFECTS) media?.sendEffect(name!!)
+        if (name in EFFECTS) {
+            media?.sendEffect(name!!)
+            web?.sendEffect(name!!)
+        }
     }
 
     @Volatile private var lastEffect = 0L
@@ -200,6 +218,8 @@ object CallLine : KoinComponent {
     fun close(context: Context) {
         media?.close()
         media = null
+        web?.close()
+        web = null
         state = ""
         context.stopService(Intent(context, CallService::class.java))
     }
