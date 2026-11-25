@@ -32,8 +32,16 @@ class StrangerMediaTest {
 
     @Test
     fun `a stored true stays true`() {
-        file.writeText("""{"showStrangerMedia": true}""")
+        file.writeText("""{"showStrangerMedia": true, "defaultsVersion": 1}""")
         assertTrue(SettingsStore(context).current.showStrangerMedia)
+    }
+
+    // Test of the once-only step, after kotlinx.serialization's optional properties:
+    // https://raw.githubusercontent.com/Kotlin/kotlinx.serialization/master/docs/basic-serialization.md#optional-properties
+    @Test
+    fun `an old file without defaultsVersion becomes false`() {
+        file.writeText("""{"showStrangerMedia": true}""")
+        assertFalse(SettingsStore(context).current.showStrangerMedia)
     }
 
     @Test

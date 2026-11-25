@@ -21,8 +21,8 @@ data class Settings(
      * this one request is the app's only use of the internet.
      */
     val updates: UpdateMode = UpdateMode.INSTALL,
-    /** A picture message announced by the network downloads itself. */
-    val autoMmsDownload: Boolean = true,
+    /** A picture message announced by the network downloads itself: off by default since 2026-11-25, each waits for a tap. */
+    val autoMmsDownload: Boolean = false,
     /** It downloads itself abroad too (roaming data can cost). */
     val autoMmsRoaming: Boolean = false,
     /**
@@ -46,8 +46,8 @@ data class Settings(
     val welcomeSeen: Boolean = false,
     /** The app's picture in the recent apps screen stays blank: no messages to be seen there. */
     val hideInRecents: Boolean = true,
-    /** No screenshot or screen recording shows the app (FLAG_SECURE, as Signal's Screen security): off by default. */
-    val blockScreenshots: Boolean = false,
+    /** No screenshot or screen recording shows the app (FLAG_SECURE, as Signal's Screen security): on by default since 2026-11-25. */
+    val blockScreenshots: Boolean = true,
     /** Where the user left the new message button, fractions of its room; below 0, its usual place. */
     val composeX: Float = -1f,
     val composeY: Float = -1f,
@@ -95,13 +95,13 @@ data class Settings(
     val transcribeVoice: Boolean = true,
     /** The speech model chosen; empty: the one recommended for this phone. */
     val speechModel: String = "",
-    /** The user's name, photo and look go with the encrypted chat's messages (Android's "Me" contact). */
-    val shareCard: Boolean = true,
+    /** The user's name, photo and look go with the encrypted chat's messages (Android's "Me" contact): off by default since 2026-11-25. */
+    val shareCard: Boolean = false,
     /**
      * Read receipts of the encrypted chat: sent, and so seen from the others (the engine's
-     * mdns_enabled, on by default; Delta Chat Android's pref_read_receipts, see ReadReceipts).
+     * mdns_enabled; Delta Chat Android's pref_read_receipts, see ReadReceipts): off by default since 2026-11-25.
      */
-    val readReceipts: Boolean = true,
+    val readReceipts: Boolean = false,
     /** Live locations being shared: the engine's chat id to when the sharing ends (ms). The engine keeps the period itself. */
     val liveUntil: Map<Int, Long> = emptyMap(),
     /**
@@ -121,7 +121,12 @@ data class Settings(
      * Delta Chat's call page, instead of the native WebRTC library in this process (core/call/WebCallMedia).
      * On by default, the safer engine; off falls back to the native library in this process.
      */
-    val callsInWebView: Boolean = true
+    val callsInWebView: Boolean = true,
+    /**
+     * The last step of the secure defaults run on this file (Signal's ApplicationMigrations lastSeenVersion):
+     * 0 for a file written before the steps existed; each step runs once, in order.
+     */
+    val defaultsVersion: Int = 0
 )
 
 @Serializable
@@ -133,6 +138,40 @@ enum class ReactionFormat { AUTOMATIC, GOOGLE, IPHONE }
  */
 class SettingsStore(context: Context) {
 
+    companion object {
+        /**
+         * Signal's ApplicationMigrations.CURRENT_VERSION: the last step of the secure defaults.
+         * https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/migrations/ApplicationMigrations.java#ApplicationMigrations
+         * Not ported: MigrationJob classes and the Version constants, JobManager and its queue, the
+         * ApplicationMigrationService and its progress screen, isUpdate, onApplicationInitialized,
+         * getMigrationJobForVersion, resolveMigrationJobFor, getMigrationsToRun, runMigrations (jobs,
+         * a lot of them: ours is one step on a small file read at once, no service or job queue).
+         */
+        const val CURRENT_VERSION = 1
+
+        /**
+         * One number per step, as Signal's Version.
+         * https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/migrations/ApplicationMigrations.java#L46-L47
+         */
+        object Version { const val SECURE_DEFAULTS = 1 }
+
+        /** Step 1 of getMigrationJobs (L347-L356 of the same file): the most secure value of each, once. */
+        fun getMigrationJobs(settings: Settings, lastSeenVersion: Int): Settings {
+            var migrationJobs = settings
+            if (lastSeenVersion < Version.SECURE_DEFAULTS) {
+                migrationJobs = migrationJobs.copy(
+                    blockScreenshots = true,
+                    autoMmsDownload = false,
+                    shareCard = false,
+                    readReceipts = false,
+                    showStrangerMedia = false,
+                    vanishDefault = 2_419_200
+                )
+            }
+            return migrationJobs
+        }
+    }
+
     private val file = File(context.filesDir, "settings.json")
     // Defaults are written, so a choice that equals today's default stays written if the default moves.
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
@@ -143,9 +182,23 @@ class SettingsStore(context: Context) {
     val current: Settings get() = _settings.value
 
     private fun load(): Settings {
-        if (!file.exists()) return Settings()
-        return runCatching { json.decodeFromString<Settings>(file.readText()) }
-            .getOrDefault(Settings())
+        if (!file.exists()) return Settings(defaultsVersion = CURRENT_VERSION)
+        val read = runCatching { json.decodeFromString<Settings>(file.readText()) }
+            .getOrDefault(Settings(defaultsVersion = CURRENT_VERSION))
+        val migrated = onApplicationCreate(read)
+        if (migrated != read) runCatching { file.writeTextAtomically(json.encodeToString(migrated)) }
+        return migrated
+    }
+
+    /**
+     * Each step runs once, in order, from the lastSeenVersion; a file at CURRENT_VERSION runs none.
+     * https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/java/org/thoughtcrime/securesms/migrations/ApplicationMigrations.java#L233-L320
+     * Not ported: onApplicationCreate's JobManager, UI blocking and MigrationCompleteEvent parts, getUiBlockingMigrationStatus,
+     * isUiBlockingMigrationRunning, isUpdate, isLegacyUpdate (jobs and a service: ours is one step on a small file).
+     */
+    private fun onApplicationCreate(settings: Settings): Settings {
+        val migrationJobs = getMigrationJobs(settings, settings.defaultsVersion)
+        return migrationJobs.copy(defaultsVersion = CURRENT_VERSION)
     }
 
     fun update(transform: (Settings) -> Settings) {
