@@ -115,7 +115,7 @@ dependencies {
     implementation("com.airbnb.android:lottie-compose:6.7.1")
     // Numbers shown as the country writes them, offline: Google's libphonenumber (Apache-2.0),
     // with its own data, no network.
-    implementation("com.googlecode.libphonenumber:libphonenumber:9.0.43")
+    implementation("com.googlecode.libphonenumber:libphonenumber:9.0.44")
     implementation(libs.androidx.core.ktx)
     // The encrypted call's page in the system WebView: asset loader and the page's message listener.
     implementation(libs.androidx.webkit)
